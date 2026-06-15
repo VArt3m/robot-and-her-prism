@@ -5,10 +5,10 @@ import sys
 
 def main():
     if "--selftest" in sys.argv:
-        from .selftest import selftest
+        from .src.selftest import selftest
         sys.exit(0 if selftest() else 1)
     try:
-        from .gui import run_gui
+        from .src.ui.gui import run_gui
         run_gui()
     except Exception as exc:
         print("Could not start the GUI:", exc)

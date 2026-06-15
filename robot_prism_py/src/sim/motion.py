@@ -6,8 +6,8 @@ separate from the *physics of light* (the solver). It reads the scene from a
 settle to decide whether the move depends on a lock it would itself flip.
 """
 
-from .constants import EPS, PLAYER_R, BOX_R, BTN_R, BEAM_TOUCH
-from .geometry import seg_inter, first_block_t, dist, pt_seg_dist
+from ..core.constants import EPS, PLAYER_R, BOX_R, BTN_R, BEAM_TOUCH
+from ..core.geometry import seg_inter, first_block_t, dist, pt_seg_dist
 
 
 class Motion:

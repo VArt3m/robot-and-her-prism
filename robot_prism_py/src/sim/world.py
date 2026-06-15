@@ -11,8 +11,8 @@ Solver results (``emit``, ``lit``, ``pressed``, ``logic_val``, ``beams_draw``)
 are written back onto the World by the Engine so callers can read them here.
 """
 
-from .constants import BOX_R
-from .geometry import dist
+from ..core.constants import BOX_R
+from ..core.geometry import dist
 from .engine import Engine
 from .motion import Motion
 

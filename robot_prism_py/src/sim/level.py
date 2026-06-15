@@ -1,6 +1,6 @@
 """The hand-built sample level shipped with the editor / sandbox."""
 
-from .entities import Node, Wall, Barrier, ForceField
+from ..core.entities import Node, Wall, Barrier, ForceField
 from .world import World
 
 

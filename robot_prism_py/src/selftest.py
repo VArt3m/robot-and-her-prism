@@ -4,10 +4,10 @@ Kept so ``python -m robot_prism_py --selftest`` works without tkinter or pytest.
 The same scenarios are also expressed as proper pytest cases under ``tests/``.
 """
 
-from .entities import Node, ForceField
-from .world import World
-from .geometry import first_block_t
-from .level import build_level
+from .core.entities import Node, ForceField
+from .sim.world import World
+from .core.geometry import first_block_t
+from .sim.level import build_level
 
 
 def selftest():

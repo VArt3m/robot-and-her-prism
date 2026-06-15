@@ -17,11 +17,11 @@ bookkeeping is private to the engine.
 
 import time
 
-from .constants import (
+from ..core.constants import (
     EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, CUT_LINGER, CROSSING_CUT_INSTANT,
     LOGIC_KINDS,
 )
-from .geometry import seg_inter, first_block_t, dist
+from ..core.geometry import seg_inter, first_block_t, dist
 
 
 class Engine:

@@ -9,14 +9,14 @@ import math
 import os
 import time
 
-from .constants import (
+from ..core.constants import (
     COLORS, DIM, PALETTE, PLAYER_R, BOX_R, BTN_R, CONNECT_REACH,
     DWELL_THRESH, SPEED, TICK, LOGIC_KINDS, DEBUG_KEYS,
 )
-from .geometry import dist, pt_seg_dist
-from .entities import Node, Wall, Barrier, ForceField
+from ..core.geometry import dist, pt_seg_dist
+from ..core.entities import Node, Wall, Barrier, ForceField
 from .keymap import key_action, decode_mods, MOVE_DIRS, _X11
-from .level import build_level
+from ..sim.level import build_level
 
 
 def run_gui():

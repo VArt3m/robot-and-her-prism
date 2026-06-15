@@ -14,9 +14,9 @@ Run the package directly for the editor + sandbox::
     python -m robot_prism_py --selftest  # headless engine checks, no window
 """
 
-from .entities import Node, Wall, Barrier, ForceField
-from .world import World
-from .level import build_level
+from .src.core.entities import Node, Wall, Barrier, ForceField
+from .src.sim.world import World
+from .src.sim.level import build_level
 
 __all__ = ["Node", "Wall", "Barrier", "ForceField", "World", "build_level",
            "run_gui"]
@@ -24,5 +24,5 @@ __all__ = ["Node", "Wall", "Barrier", "ForceField", "World", "build_level",
 
 def run_gui():
     # Imported lazily so the engine / tests work without tkinter present.
-    from .gui import run_gui as _run_gui
+    from .src.ui.gui import run_gui as _run_gui
     return _run_gui()

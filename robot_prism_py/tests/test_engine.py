@@ -5,7 +5,7 @@ cases, so each behaviour fails independently and reports its own assertion.
 """
 
 from robot_prism_py import Node, ForceField, World, build_level
-from robot_prism_py.geometry import first_block_t
+from robot_prism_py.src.core.geometry import first_block_t
 
 
 # --------------------------------------------------------------------------- #
