@@ -8,9 +8,11 @@ and the per-beam state they need:
   * ``step()``   -- one real-time tick whose cuts apply with a CUT_LINGER delay,
                     so dependency chains are dynamic and paradox loops oscillate.
 
-It reads the scene from ``self.world`` and writes its results back onto it
-(``emit``, ``lit``, ``pressed``, ``logic_val``, ``beams_draw``); the lag /
-animation bookkeeping lives privately on the engine.
+It reads the scene from ``self.world`` and OWNS its computed results --
+``emit``, ``lit``, ``logic_val`` and ``beams_draw`` live here and are surfaced
+through read-only properties on the ``World`` facade. ``pressed`` stays on the
+World, since the movement dry-run temporarily overwrites it. The lag / animation
+bookkeeping is private to the engine.
 """
 
 import time
@@ -29,6 +31,9 @@ class Engine:
 
     def __init__(self, world):
         self.world = world
+        # computed results, owned here and read through World properties.
+        self.emit, self.lit, self.logic_val = {}, {}, {}
+        self.beams_draw = []
         # cut animation: per-beam drawn length lags a fresh cut by CUT_LINGER.
         self.beam_anim = {}             # (o,t) -> {"len","deliv","since"}
         self._last_solve = None         # cached (beams, length, delivery) for re-animating between solves
@@ -267,13 +272,13 @@ class Engine:
             if not changed:
                 break
         emit, (beams, length, delivery) = self.propagate()
-        w.emit = emit
-        w.lit = self._lit_map(beams, delivery)
-        w.logic_val = self.evaluate_logic(w.lit, w.pressed)
+        self.emit = emit
+        self.lit = self._lit_map(beams, delivery)
+        self.logic_val = self.evaluate_logic(self.lit, w.pressed)
         for ff in w.ffs:
-            ff.is_open = self.field_open(ff, w.logic_val)
+            ff.is_open = self.field_open(ff, self.logic_val)
         self._last_solve = (beams, length, delivery)
-        w.beams_draw = self._animate_beams(beams, length, delivery)
+        self.beams_draw = self._animate_beams(beams, length, delivery)
         # Keep the time-stepped store in sync with this settled snapshot, so a
         # later step() in play continues smoothly and only lags genuinely-new cuts
         # rather than re-lingering everything that was already settled.
@@ -325,8 +330,8 @@ class Engine:
         if self._last_solve is None:
             return False
         new_draw = self._animate_beams(*self._last_solve)
-        if new_draw != self.world.beams_draw:
-            self.world.beams_draw = new_draw
+        if new_draw != self.beams_draw:
+            self.beams_draw = new_draw
             return True
         return False
 
@@ -489,7 +494,7 @@ class Engine:
         if now is None:
             now = time.monotonic()
         w = self.world
-        old_emit = dict(w.emit)
+        old_emit = dict(self.emit)
         old_open = [ff.is_open for ff in w.ffs]
         w.pressed = {n.id: self.button_pressed(n.id)
                      for n in w.nodes.values() if n.kind == "button"}
@@ -506,14 +511,14 @@ class Engine:
             if not changed:
                 break
         emit, (beams, target, instant, eff, delivery) = self.propagate_timed()
-        w.emit = emit
-        w.lit = self._lit_map(beams, delivery)
-        w.logic_val = self.evaluate_logic(w.lit, w.pressed)
+        self.emit = emit
+        self.lit = self._lit_map(beams, delivery)
+        self.logic_val = self.evaluate_logic(self.lit, w.pressed)
         for ff in w.ffs:
-            ff.is_open = self.field_open(ff, w.logic_val)
+            ff.is_open = self.field_open(ff, self.logic_val)
         eff_changed = self._advance_eff(beams, target, instant, now)   # advance the lag
-        w.beams_draw = self._build_draw_timed(beams)
-        return (eff_changed or old_emit != w.emit
+        self.beams_draw = self._build_draw_timed(beams)
+        return (eff_changed or old_emit != self.emit
                 or old_open != [ff.is_open for ff in w.ffs])
 
     def refresh_timed(self, now=None):
@@ -529,5 +534,5 @@ class Engine:
         instant = [self._beam_instant.get((b["o"], b["t"]), b["hard_mat"])
                    for b in self._last_beams_t]
         changed = self._advance_eff(self._last_beams_t, target, instant, now)
-        self.world.beams_draw = self._build_draw_timed(self._last_beams_t)
+        self.beams_draw = self._build_draw_timed(self._last_beams_t)
         return changed

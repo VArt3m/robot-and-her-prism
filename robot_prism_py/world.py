@@ -29,13 +29,32 @@ class World:
         self.carrying = None
         self.player_block = False
         self._uid = 0
-        # solver outputs (filled in by the Engine; read by the GUI / tests)
-        self.emit, self.lit, self.pressed, self.logic_val = {}, {}, {}, {}
-        self.beams_draw = []
+        # `pressed` stays here: it is both an output and scratch state the
+        # movement dry-run temporarily overwrites. The other solver outputs
+        # (emit / lit / logic_val / beams_draw) are OWNED by the Engine and read
+        # back through the properties below.
+        self.pressed = {}
         # collaborators: the solver, and the movement rules (which lean on the
         # solver for its latching dry-runs).
         self.engine = Engine(self)
         self.motion = Motion(self, self.engine)
+
+    # ---- solver outputs (read-through to the Engine, read-only) ----
+    @property
+    def emit(self):
+        return self.engine.emit
+
+    @property
+    def lit(self):
+        return self.engine.lit
+
+    @property
+    def logic_val(self):
+        return self.engine.logic_val
+
+    @property
+    def beams_draw(self):
+        return self.engine.beams_draw
 
     def new_id(self, prefix):
         self._uid += 1
