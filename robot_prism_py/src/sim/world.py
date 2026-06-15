@@ -49,6 +49,16 @@ class World:
         return self.engine.lit
 
     @property
+    def active(self):
+        # receivers that are lit AND fully charged (the value the logic consumes).
+        return self.engine.active
+
+    @property
+    def charge(self):
+        # seconds of uninterrupted correct-colour beam each receiver has banked.
+        return self.engine.charge
+
+    @property
     def logic_val(self):
         return self.engine.logic_val
 
@@ -122,8 +132,8 @@ class World:
         return any(dist(nd.pos, bx) < BOX_R for bx in self.boxes)
 
     # ---- light / logic solving (delegated to Engine) ----
-    def solve(self, cold=False):
-        return self.engine.solve(cold=cold)
+    def solve(self, cold=False, fill_instant=True):
+        return self.engine.solve(cold=cold, fill_instant=fill_instant)
 
     def step(self, now=None):
         return self.engine.step(now)

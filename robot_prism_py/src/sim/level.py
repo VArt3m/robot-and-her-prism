@@ -20,10 +20,10 @@ def build_level():
     w.ffs.append(ForceField("ff_mid", (786, 380), (1005, 380)))
     w.ffs.append(ForceField("ff_bot", (786, 512), (1005, 512)))
 
-    w.add(Node("rcv_green", "receiver", (988, 195), color="green"))
-    w.add(Node("rcv_blue", "receiver", (988, 305), color="blue"))
-    w.add(Node("rcv_red", "receiver", (988, 440), color="red"))
-    w.add(Node("rcv_dead", "receiver", (24, 305), color="green"))
+    w.add(Node("rcv_green", "receiver", (988, 195), color="green", fill_time=1.0))
+    w.add(Node("rcv_blue", "receiver", (988, 305), color="blue", fill_time=1.0))
+    w.add(Node("rcv_red", "receiver", (988, 440), color="red", fill_time=1.0))
+    w.add(Node("rcv_dead", "receiver", (24, 305), color="green", fill_time=1.0))
 
     w.logic_links += [["rcv_green", "ff_top", False],
                       ["rcv_blue", "ff_mid", False],

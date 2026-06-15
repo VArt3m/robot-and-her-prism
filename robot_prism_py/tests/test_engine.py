@@ -209,3 +209,64 @@ def test_self_latching_loop():
     assert w.field_by_id("g").is_open       # latched via far source
     w.solve(cold=True)
     assert not w.field_by_id("g").is_open   # cold restart falls shut
+
+
+# --------------------------------------------------------------------------- #
+# receiver fill time: uninterrupted-beam charging
+# --------------------------------------------------------------------------- #
+def _fill_world(fill_time):
+    w = World()
+    w.add(Node("S", "source", (0, 0), color="red"))
+    w.add(Node("C", "connector", (40, 0)))
+    w.add(Node("R", "receiver", (120, 0), color="red", fill_time=fill_time))
+    w.ffs.append(ForceField("g", (200, -20), (200, 20)))
+    w.logic_links += [["R", "g", False]]
+    w.toggle_link("C", "S")
+    w.toggle_link("C", "R")
+    return w
+
+
+def test_fill_zero_is_instant():
+    # fill_time 0 reproduces legacy behaviour: active the instant it is lit.
+    w = _fill_world(0.0)
+    w.solve(cold=True, fill_instant=False)
+    w.step(now=0.0)
+    assert w.lit["R"]
+    assert w.active["R"]
+    assert w.field_by_id("g").is_open
+
+
+def test_fill_takes_time_then_latches_active():
+    w = _fill_world(1.0)
+    w.solve(cold=True, fill_instant=False)
+    w.step(now=0.0)
+    # lit immediately, but not yet filled -> not active, field shut
+    assert w.lit["R"] and not w.active["R"]
+    assert not w.field_by_id("g").is_open
+    # halfway through the fill, still not active
+    w.step(now=0.5)
+    assert not w.active["R"]
+    assert 0.4 < w.charge["R"] < 0.6
+    # past the fill time -> active and field opens
+    w.step(now=1.1)
+    assert w.active["R"]
+    assert w.field_by_id("g").is_open
+
+
+def test_fill_interruption_resets_to_zero():
+    w = _fill_world(1.0)
+    w.solve(cold=True, fill_instant=False)
+    w.step(now=0.0)
+    w.step(now=1.1)
+    assert w.active["R"]
+    # cut the relay (carry the connector) -> beam lost -> instant reset
+    w.carrying = "C"
+    w.step(now=1.2)
+    assert not w.lit["R"]
+    assert not w.active["R"]
+    assert w.charge["R"] == 0.0
+    # restore the beam: must fill all over again, no leftover charge
+    w.carrying = None
+    w.step(now=1.3)
+    assert w.lit["R"] and not w.active["R"]
+    assert w.charge["R"] < 0.2

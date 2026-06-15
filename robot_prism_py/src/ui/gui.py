@@ -34,6 +34,7 @@ def run_gui():
         os.environ["XMODIFIERS"] = "@im=none"
 
     import tkinter as tk
+    from tkinter import simpledialog
 
     w = build_level()
     state = {"mode": "play", "tool": "select", "color": "red",
@@ -67,7 +68,13 @@ def run_gui():
             w.player = list(w.player_start)
         w.player_block = False
         state["dwell"] = 0.0
-        w.solve(cold=True); refresh_bar(); redraw()
+        # In the editor, preview receivers as filled (fill_instant) so the
+        # designer sees the fully-solved state. Entering play requires the player
+        # to actually fill them over time, so mark the world live to start the
+        # charge clock ticking on any receiver a beam already reaches.
+        w.solve(cold=True, fill_instant=(m == "edit"))
+        state["live"] = (m == "play")
+        refresh_bar(); redraw()
 
     def set_tool(t):
         state.update(tool=t, pending=None, link_src=None)
@@ -150,10 +157,27 @@ def run_gui():
             if n.kind == "source":
                 cv.create_polygon(diamond(x, y), fill=COLORS.get(n.color, "#999"), outline="#222")
             elif n.kind == "receiver":
+                col = COLORS.get(n.color, "#999")
+                x0, y0, x1, y1 = x - 11, y - 13, x + 11, y + 13
+                active = w.active.get(n.id, False)
                 lit = w.lit.get(n.id, False)
-                cv.create_rectangle(x - 11, y - 13, x + 11, y + 13,
-                                    outline=COLORS.get(n.color, "#999"), width=3,
-                                    fill=COLORS[n.color] if lit else "#fff")
+                # Fill fraction: full when active (filled), otherwise the share of
+                # the fill time charged so far while the beam is present. fill_time
+                # 0 fills the instant it is lit.
+                if active:
+                    frac = 1.0
+                elif lit and n.fill_time > 0:
+                    frac = max(0.0, min(1.0, w.charge.get(n.id, 0.0) / n.fill_time))
+                else:
+                    frac = 0.0
+                cv.create_rectangle(x0, y0, x1, y1, fill="#fff", outline="")
+                if frac > 0:
+                    fh = (y1 - y0) * frac
+                    cv.create_rectangle(x0, y1 - fh, x1, y1, fill=col, outline="")
+                cv.create_rectangle(x0, y0, x1, y1, outline=col, width=3)
+                if state["mode"] == "edit":
+                    cv.create_text(x, y1 + 8, text=f"{n.fill_time:g}s",
+                                   font=("TkDefaultFont", 7), fill="#666")
             elif n.kind == "button":
                 pr = w.pressed.get(n.id, False)
                 cv.create_oval(x - BTN_R, y - BTN_R, x + BTN_R, y + BTN_R,
@@ -223,13 +247,31 @@ def run_gui():
         return None
 
     # ----- editing -----
+    def edit_receiver_time(n):
+        # Per-receiver fill time: seconds of uninterrupted correct-colour beam the
+        # player must sustain before it counts as active. 0 == instant.
+        v = simpledialog.askfloat(
+            "Receiver fill time",
+            f"Seconds of uninterrupted beam to fill {n.id} (0-60):",
+            initialvalue=n.fill_time, minvalue=0.0, maxvalue=60.0, parent=root)
+        if v is not None:
+            n.fill_time = max(0.0, min(60.0, float(v)))
+            state["msg"] = f"{n.id} fill time = {n.fill_time:g}s"
+
     def edit_click(x, y):
         t = state["tool"]
         if t == "select":
             n = node_at(x, y)
-            state["sel"] = n.id if (n and n.kind == "connector") else None
+            if n and n.kind == "receiver":
+                edit_receiver_time(n)
+                state["sel"] = None
+            else:
+                state["sel"] = n.id if (n and n.kind == "connector") else None
         elif t in ("source", "receiver"):
-            w.add(Node(w.new_id(t[:3] + "_"), t, (x, y), color=state["color"]))
+            # New receivers default to a 1s fill (matching the sample level);
+            # sources are unaffected by fill_time (0).
+            ft = 1.0 if t == "receiver" else 0.0
+            w.add(Node(w.new_id(t[:3] + "_"), t, (x, y), color=state["color"], fill_time=ft))
         elif t == "connector":
             w.add(Node(w.new_id("con_"), "connector", (x, y), label="+"))
         elif t == "button":
@@ -427,9 +469,9 @@ def run_gui():
                     state["msg"] = "move closer to clear that connector"
             elif a == "reset":
                 w.player = list(w.player_start); w.carrying = None
-                w.solve(cold=True); state["live"] = False; redraw()
+                w.solve(cold=True, fill_instant=False); state["live"] = True; redraw()
             elif a == "gates":
-                w.solve(cold=True); state["live"] = False
+                w.solve(cold=True, fill_instant=False); state["live"] = True
                 state["msg"] = "gates reset (latches cleared)"; redraw()
         if a == "dump":
             print_state()
@@ -512,5 +554,8 @@ def run_gui():
     root.bind("<FocusIn>", on_focus_in)
     root.bind("<FocusOut>", on_focus_out)
 
-    refresh_bar(); w.solve(cold=True); redraw(); tick()
+    # Start in play (the default mode): require receivers to fill in real time,
+    # and mark the world live so the charge clock starts on load.
+    refresh_bar(); w.solve(cold=True, fill_instant=False); state["live"] = True
+    redraw(); tick()
     root.mainloop()

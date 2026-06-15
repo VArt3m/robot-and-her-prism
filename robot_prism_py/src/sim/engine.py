@@ -33,6 +33,17 @@ class Engine:
         self.world = world
         # computed results, owned here and read through World properties.
         self.emit, self.lit, self.logic_val = {}, {}, {}
+        # receiver charging: ``charge`` is seconds of UNINTERRUPTED correct-colour
+        # beam accumulated so far (clamped to the receiver's fill_time); ``active``
+        # is the latched "filled" flag the logic actually consumes. A receiver is
+        # active only while lit AND fully charged; losing the beam drops both to
+        # zero at once (no slow discharge). Charge only advances in real-time
+        # step(); solve() is an instantaneous snapshot. ``_fill_instant`` makes a
+        # settle treat any lit receiver as filled (editor / cold previews), so the
+        # designer and the self-tests see the fully-solved state without waiting.
+        self.charge, self.active = {}, {}
+        self._fill_instant = False
+        self._charge_t = None           # monotonic time charge was last advanced
         self.beams_draw = []
         # cut animation: per-beam drawn length lags a fresh cut by CUT_LINGER.
         self.beam_anim = {}             # (o,t) -> {"len","deliv","since"}
@@ -216,13 +227,52 @@ class Engine:
         return any(n.kind == "connector" and n.id != w.carrying
                    and dist(n.pos, bp) < BTN_R for n in w.nodes.values())
 
+    # ---- receiver charging ----
+    def _receiver_on(self, nid, lit):
+        # Logic value of a receiver: it must be lit AND filled. fill_time 0 (and
+        # any _fill_instant preview) means "filled the instant it is lit", which
+        # reproduces the legacy behaviour exactly.
+        if not lit.get(nid, False):
+            return False
+        if self._fill_instant:
+            return True
+        ft = self.world.nodes[nid].fill_time
+        if ft <= 0:
+            return True
+        return self.charge.get(nid, 0.0) >= ft - 1e-9
+
+    def _update_charge(self, lit, now):
+        # Advance every receiver's charge by the real time since the last tick:
+        # accumulate while continuously lit (clamped to fill_time), snap straight
+        # back to zero the instant the beam is lost. Returns True if any charge
+        # moved, so the caller can keep the world "live" while filling proceeds.
+        dt = 0.0 if self._charge_t is None else max(0.0, now - self._charge_t)
+        self._charge_t = now
+        changed = False
+        for n in self.world.nodes.values():
+            if n.kind != "receiver":
+                continue
+            cur = self.charge.get(n.id, 0.0)
+            if lit.get(n.id, False) and n.fill_time > 0:
+                new = min(n.fill_time, cur + dt)
+            else:
+                new = 0.0
+            if abs(new - cur) > 1e-9:
+                changed = True
+            self.charge[n.id] = new
+        return changed
+
+    def _active_map(self, lit):
+        return {n.id: self._receiver_on(n.id, lit)
+                for n in self.world.nodes.values() if n.kind == "receiver"}
+
     # ---- boolean control logic ----
     def evaluate_logic(self, lit, pressed):
         w = self.world
         val = {}
         for nid, nd in w.nodes.items():
             if nd.kind == "receiver":
-                val[nid] = lit.get(nid, False)
+                val[nid] = self._receiver_on(nid, lit)
             elif nd.kind == "button":
                 val[nid] = pressed.get(nid, False)
             elif nd.kind in LOGIC_KINDS:
@@ -246,19 +296,29 @@ class Engine:
                for (src, dst, neg) in self.world.logic_links if dst == ff.id]
         return any(ins) if ins else False
 
-    def solve(self, cold=False):
+    def solve(self, cold=False, fill_instant=True):
         # Hysteresis / latching: by default we seed the iteration from the
         # CURRENT gate states, so a self-sustaining open loop (a source beyond a
         # gate feeding the connector that holds the gate open) stays open even
         # when the original trigger is removed -- light outruns the gate. cold=True
         # forces a fresh start (all shut), used on load / entering play / reset.
+        #
+        # ``solve`` is an INSTANTANEOUS snapshot: no real time passes, so receiver
+        # charge cannot advance here. fill_instant=True (the default, used by the
+        # editor and the self-tests) previews every lit receiver as already filled
+        # so the fully-solved state is visible at once. Entering play / resetting
+        # passes fill_instant=False so the player must actually fill them in real
+        # time via step(); cold additionally zeroes the accumulated charge.
         w = self.world
+        self._fill_instant = fill_instant
         w.pressed = {n.id: self.button_pressed(n.id)
                      for n in w.nodes.values() if n.kind == "button"}
         if cold:
             for ff in w.ffs:
                 ff.is_open = False
             self.beam_anim.clear()
+            self.charge = {n.id: 0.0 for n in w.nodes.values() if n.kind == "receiver"}
+            self._charge_t = None
         for _ in range(30):
             emit, (beams, length, delivery) = self.propagate()
             lit = self._lit_map(beams, delivery)
@@ -274,6 +334,7 @@ class Engine:
         emit, (beams, length, delivery) = self.propagate()
         self.emit = emit
         self.lit = self._lit_map(beams, delivery)
+        self.active = self._active_map(self.lit)
         self.logic_val = self.evaluate_logic(self.lit, w.pressed)
         for ff in w.ffs:
             ff.is_open = self.field_open(ff, self.logic_val)
@@ -494,6 +555,7 @@ class Engine:
         if now is None:
             now = time.monotonic()
         w = self.world
+        self._fill_instant = False           # play always honours real fill times
         old_emit = dict(self.emit)
         old_open = [ff.is_open for ff in w.ffs]
         w.pressed = {n.id: self.button_pressed(n.id)
@@ -513,12 +575,18 @@ class Engine:
         emit, (beams, target, instant, eff, delivery) = self.propagate_timed()
         self.emit = emit
         self.lit = self._lit_map(beams, delivery)
+        # Advance charge from this tick's settled beams, then re-derive the active
+        # (filled) state and the logic / fields from it -- so a receiver that just
+        # finished filling drives its field this tick, and one that just lost the
+        # beam drops out at once.
+        charge_changed = self._update_charge(self.lit, now)
+        self.active = self._active_map(self.lit)
         self.logic_val = self.evaluate_logic(self.lit, w.pressed)
         for ff in w.ffs:
             ff.is_open = self.field_open(ff, self.logic_val)
         eff_changed = self._advance_eff(beams, target, instant, now)   # advance the lag
         self.beams_draw = self._build_draw_timed(beams)
-        return (eff_changed or old_emit != self.emit
+        return (eff_changed or charge_changed or old_emit != self.emit
                 or old_open != [ff.is_open for ff in w.ffs])
 
     def refresh_timed(self, now=None):

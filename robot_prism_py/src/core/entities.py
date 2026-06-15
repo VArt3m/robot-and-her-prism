@@ -3,9 +3,15 @@
 
 class Node:
     # kinds: source / connector / receiver / button / and / or
-    def __init__(self, nid, kind, pos, color=None, label=None):
+    #
+    # ``fill_time`` (receivers only): seconds of UNINTERRUPTED correct-colour
+    # beam needed before the receiver counts as "active" for the logic. Any
+    # interruption drops the charge straight back to zero. 0 == instant (the
+    # legacy behaviour: lit is active at once).
+    def __init__(self, nid, kind, pos, color=None, label=None, fill_time=0.0):
         self.id, self.kind, self.pos = nid, kind, list(pos)
         self.color, self.label = color, label
+        self.fill_time = fill_time
 
 
 class Wall:
