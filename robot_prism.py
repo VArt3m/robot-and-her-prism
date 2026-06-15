@@ -45,7 +45,9 @@ Run
 """
 
 import math
+import os
 import sys
+import time
 
 EPS = 1e-7
 PLAYER_R = 8
@@ -57,6 +59,47 @@ DWELL_THRESH = 0.5
 SPEED = 150.0
 TICK = 0.033
 CONNECT_REACH = 42          # how close you must be to adjust a connector
+CUT_LINGER = 0.33           # a freshly-cut ray keeps its old length this long (s)
+DEBUG_KEYS = False          # print every key event (sym/code/mods); toggle live w/ F12
+
+# --------------------------------------------------------------------------- #
+# Keyboard mapping. Every key event resolves to a layout-independent ACTION by
+# PHYSICAL position first (X11/Linux keycodes == evdev + 8), falling back to the
+# lowercased keysym for arrow keys and non-Linux platforms. Matching the physical
+# key means WASD/E/C/R/G work on any keyboard layout AND survive a stuck Shift or
+# Caps Lock -- which would otherwise uppercase the keysym, silently kill the
+# (case-sensitive) movement test, and persist across a relaunch since lock state
+# is global to the X server, not the process.
+# --------------------------------------------------------------------------- #
+_X11 = sys.platform.startswith("linux")
+_KEYCODE_ACTION = {25: "up", 38: "left", 39: "down", 40: "right",   # W A S D
+                   26: "carry", 54: "clear", 27: "reset",           # E C R
+                   42: "gates", 65: "dump"}                         # G  space
+_KEYSYM_ACTION = {"w": "up", "a": "left", "s": "down", "d": "right",
+                  "up": "up", "left": "left", "down": "down", "right": "right",
+                  "e": "carry", "c": "clear", "r": "reset", "g": "gates",
+                  "space": "dump"}
+MOVE_DIRS = {"up", "down", "left", "right"}
+
+
+def key_action(e):
+    # physical key (layout/modifier independent) on X11; keysym elsewhere. We only
+    # trust keycodes on Linux: Windows/macOS virtual key codes differ (e.g. arrow
+    # keys collide with these numbers there), so off-Linux we fall to the keysym.
+    if _X11:
+        a = _KEYCODE_ACTION.get(e.keycode)
+        if a is not None:
+            return a
+    return _KEYSYM_ACTION.get(e.keysym.lower())
+
+
+_MOD_BITS = [(0x0001, "Shift"), (0x0002, "Caps"), (0x0004, "Ctrl"),
+             (0x0008, "Alt"), (0x0010, "NumLk"), (0x0040, "Super")]
+
+
+def decode_mods(statebits):
+    on = [name for bit, name in _MOD_BITS if statebits & bit]
+    return "+".join(on) if on else "none"
 
 COLORS = {
     "red": "#e23b3b", "green": "#27a838", "blue": "#2b5cd6",
@@ -159,6 +202,16 @@ class World:
         self._uid = 0
         self.emit, self.lit, self.pressed, self.logic_val = {}, {}, {}, {}
         self.beams_draw = []
+        # cut animation: per-beam drawn length lags a fresh cut by CUT_LINGER.
+        self.beam_anim = {}             # (o,t) -> {"len","deliv","since"}
+        self._last_solve = None         # cached (beams, length, delivery) for re-animating between solves
+        # time-stepped play: a beam's EFFECTIVE (logical) length lags a fresh cut
+        # by CUT_LINGER too, so the delay is real -- it feeds back into who-cuts-
+        # whom and what each beam delivers, which lets dependency chains be dynamic
+        # and paradoxical loops oscillate instead of freezing. Driven by step().
+        self.beam_eff = {}              # (o,t) -> {"len","since"}  (logical truth in play)
+        self._beam_targets = {}         # (o,t) -> geometric target length to relax toward
+        self._last_beams_t = []         # last beam geometry list seen by the timed solver
 
     def new_id(self, prefix):
         self._uid += 1
@@ -259,7 +312,11 @@ class World:
         return 1 if (self._conn_elevated(o) or self._conn_elevated(t)) else 0
 
     # ---- light: beams + crossings with partial lengths ----
-    def resolve(self, emit):
+    def _beams_and_cross(self, emit):
+        # Build every live beam (geometry, hard-blocker length, level, direction)
+        # and the list of crossings between same-level beams. Shared by both the
+        # instantaneous solver (resolve) and the time-stepped one (resolve_timed);
+        # only the cut RESOLUTION differs between them.
         blockers = self._leveled_blockers()
         beams = []
         for (a, b) in self.links:
@@ -271,7 +328,12 @@ class World:
                 # nor is tracked as a target by any other ray.
                 if o == self.carrying or t == self.carrying:
                     continue
-                if emit.get(o) is None or no.kind == "receiver" or nt.kind == "source":
+                # An emitter still radiates ALONG a link aimed at a source: the
+                # beam travels toward that source (and can be cut on the way) --
+                # it just delivers nothing there, since sources don't receive.
+                # Suppressing it would stop a connector that has (re)acquired a
+                # colour from lighting up the segment back toward the source.
+                if emit.get(o) is None or no.kind == "receiver":
                     continue
                 O, T = no.pos, nt.pos
                 dl = dist(O, T)
@@ -303,6 +365,11 @@ class World:
                 _, tA, tB = r
                 if EPS < tA < 1 - EPS and EPS < tB < 1 - EPS:
                     cross.append((i, j, tA * bi["hard"], tB * bj["hard"]))
+        return beams, cross
+
+    def resolve(self, emit):
+        beams, cross = self._beams_and_cross(emit)
+        n = len(beams)
         length = [b["hard"] for b in beams]
         for _ in range(4 * n + 10):
             newl = [b["hard"] for b in beams]
@@ -401,6 +468,7 @@ class World:
         if cold:
             for ff in self.ffs:
                 ff.is_open = False
+            self.beam_anim.clear()
         for _ in range(30):
             emit, (beams, length, delivery) = self.propagate()
             lit = self._lit_map(beams, delivery)
@@ -419,10 +487,224 @@ class World:
         self.logic_val = self.evaluate_logic(self.lit, self.pressed)
         for ff in self.ffs:
             ff.is_open = self.field_open(ff, self.logic_val)
-        self.beams_draw = []
+        self._last_solve = (beams, length, delivery)
+        self.beams_draw = self._animate_beams(beams, length, delivery)
+        # Keep the time-stepped store in sync with this settled snapshot, so a
+        # later step() in play continues smoothly and only lags genuinely-new cuts
+        # rather than re-lingering everything that was already settled.
+        self.beam_eff = {(b["o"], b["t"]): {"len": length[k], "since": None}
+                         for k, b in enumerate(beams)}
+        self._beam_targets = {(b["o"], b["t"]): length[k] for k, b in enumerate(beams)}
+        self._last_beams_t = beams
+
+    # ---- cut animation ----
+    def _animate_beams(self, beams, length, delivery, now=None):
+        # Build the drawn beam list, lagging any FRESH shortening (a new cut)
+        # by CUT_LINGER seconds: an existing ray keeps its old length for a
+        # third of a second, then the cut-off part disappears. Growth (a cut
+        # being removed) is applied at once.
+        if now is None:
+            now = time.monotonic()
+        out, seen = [], set()
         for k, b in enumerate(beams):
-            end = (b["O"][0] + b["dx"] * length[k], b["O"][1] + b["dy"] * length[k])
-            self.beams_draw.append((tuple(b["O"]), end, b["color"], delivery[k]))
+            key = (b["o"], b["t"])
+            seen.add(key)
+            Lnew, dnew = length[k], delivery[k]
+            st = self.beam_anim.get(key)
+            if st is None:
+                st = {"len": Lnew, "deliv": dnew, "since": None}
+                self.beam_anim[key] = st
+            if Lnew >= st["len"] - 1e-6:
+                st["len"], st["deliv"], st["since"] = Lnew, dnew, None
+            else:
+                # a shorter result than what we're drawing == a fresh cut
+                if st["since"] is None:
+                    st["since"] = now
+                if now - st["since"] >= CUT_LINGER:
+                    st["len"], st["deliv"], st["since"] = Lnew, dnew, None
+                # else: keep the old (longer) len & delivery for now
+            end = (b["O"][0] + b["dx"] * st["len"], b["O"][1] + b["dy"] * st["len"])
+            out.append((tuple(b["O"]), end, b["color"], st["deliv"]))
+        for key in list(self.beam_anim):
+            if key not in seen:
+                del self.beam_anim[key]
+        return out
+
+    def refresh_beams(self):
+        # Re-run the cut animation against the last solve so a pending linger
+        # still resolves on frames where nothing else triggers a solve(). Returns
+        # True if the drawn beams changed.
+        if self._last_solve is None:
+            return False
+        new_draw = self._animate_beams(*self._last_solve)
+        if new_draw != self.beams_draw:
+            self.beams_draw = new_draw
+            return True
+        return False
+
+    # ---- time-stepped solve (logical cut delay -> dynamic / oscillating chains) ----
+    def resolve_timed(self, emit):
+        # Like resolve(), but with a logical distinction between an EXISTING ray and
+        # a NEWCOMER. An existing beam keeps its lagged effective length (so a fresh
+        # cut on it lingers ~CUT_LINGER before applying). A newcomer is born ALREADY
+        # cut by whatever it crosses -- it never pokes out the far side of a beam
+        # that was already there, not even for one frame -- so we solve the new
+        # beams' extents against the (fixed) extents of the existing ones. `target`
+        # is the geometry each beam relaxes toward; `eff` is the length in play now.
+        beams, cross = self._beams_and_cross(emit)
+        n = len(beams)
+        is_new = [(b["o"], b["t"]) not in self.beam_eff for b in beams]
+        eff = [b["hard"] if is_new[k] else self.beam_eff[(b["o"], b["t"])]["len"]
+               for k, b in enumerate(beams)]
+        # Cut only the NEW beams down to where an already-present beam blocks them
+        # (existing beams stay pinned at their lagged length here).
+        for _ in range(4 * n + 10):
+            changed = False
+            for (i, j, di, dj) in cross:
+                if is_new[i] and eff[j] >= dj - EPS and eff[i] > di + EPS:
+                    eff[i] = di
+                    changed = True
+                if is_new[j] and eff[i] >= di - EPS and eff[j] > dj + EPS:
+                    eff[j] = dj
+                    changed = True
+            if not changed:
+                break
+        # Geometric target: nearest crossing whose other beam currently reaches it.
+        # Existing beams linger toward this; new beams are already sitting at it.
+        target = [b["hard"] for b in beams]
+        for (i, j, di, dj) in cross:
+            if eff[j] >= dj - EPS and di < target[i]:   # j reaches -> cuts i
+                target[i] = di
+            if eff[i] >= di - EPS and dj < target[j]:
+                target[j] = dj
+        delivery = [eff[k] >= beams[k]["dl"] - 1e-6 for k in range(n)]
+        return beams, target, eff, delivery
+
+    def propagate_timed(self):
+        conns = [n.id for n in self.connectors() if n.id != self.carrying]
+        emit = {nid: (nd.color if nd.kind == "source" else None)
+                for nid, nd in self.nodes.items()}
+        last = None
+        for _ in range(2 * len(conns) + 6):
+            beams, target, eff, delivery = self.resolve_timed(emit)
+            incoming = {c: set() for c in conns}
+            for k, b in enumerate(beams):
+                if delivery[k] and self.nodes[b["t"]].kind == "connector":
+                    incoming[b["t"]].add(b["color"])
+            changed = False
+            for c in conns:
+                s = incoming[c]
+                nc = next(iter(s)) if len(s) == 1 else None
+                if nc != emit[c]:
+                    emit[c] = nc
+                    changed = True
+            last = (beams, target, eff, delivery)
+            if not changed:
+                break
+        if last is None:
+            last = self.resolve_timed(emit)
+        return emit, last
+
+    def _advance_eff(self, beams, target, now):
+        # Relax each beam's effective length toward its geometric target: growth
+        # (a cut removed) applies at once; shortening (a fresh cut) is held for
+        # CUT_LINGER, then applied. This asymmetry is what makes paradox loops
+        # oscillate -- the "uncut" edge is instant, the "cut" edge is delayed.
+        changed = False
+        seen = set()
+        for k, b in enumerate(beams):
+            key = (b["o"], b["t"])
+            seen.add(key)
+            tgt = target[k]
+            st = self.beam_eff.get(key)
+            if st is None:                       # newcomer: enters already cut to its
+                st = {"len": target[k], "since": None}   # target, with no linger
+                self.beam_eff[key] = st
+                changed = True
+            if tgt >= st["len"] - 1e-6:          # grow / steady -> immediate
+                if abs(st["len"] - tgt) > 1e-6 or st["since"] is not None:
+                    changed = True
+                st["len"], st["since"] = tgt, None
+            else:                                # shrink (cut) -> linger, then apply
+                if st["since"] is None:
+                    st["since"] = now
+                    changed = True
+                elif now - st["since"] >= CUT_LINGER:
+                    if abs(st["len"] - tgt) > 1e-6:
+                        changed = True
+                    st["len"], st["since"] = tgt, None
+        for key in list(self.beam_eff):
+            if key not in seen:
+                del self.beam_eff[key]
+                changed = True
+        self._beam_targets = {(beams[k]["o"], beams[k]["t"]): target[k]
+                              for k in range(len(beams))}
+        self._last_beams_t = beams
+        return changed
+
+    def _build_draw_timed(self, beams):
+        out = []
+        for b in beams:
+            L = self.beam_eff.get((b["o"], b["t"]), {}).get("len", b["hard"])
+            end = (b["O"][0] + b["dx"] * L, b["O"][1] + b["dy"] * L)
+            out.append((tuple(b["O"]), end, b["color"], L >= b["dl"] - 1e-6))
+        return out
+
+    def beams_live(self):
+        # True while any cut is mid-linger -- i.e. the world is still evolving and
+        # should keep being stepped even if the player isn't doing anything.
+        return any(st["since"] is not None for st in self.beam_eff.values())
+
+    def step(self, now=None):
+        # One real-time tick of the solver. Identical control logic to solve(), but
+        # the CUT is applied to the logic with a CUT_LINGER delay (growth instant).
+        # Because that lagged effective length feeds back into both who-cuts-whom
+        # and what each beam delivers, dependency chains are dynamic and a loop with
+        # no stable assignment (A cuts B ... D cuts A, which un-cuts B) oscillates in
+        # real time. Returns True if anything changed (used to keep stepping). Call
+        # once per frame during play; solve(cold=True) for instant settles/resets.
+        if now is None:
+            now = time.monotonic()
+        old_emit = dict(self.emit)
+        old_open = [ff.is_open for ff in self.ffs]
+        self.pressed = {n.id: self.button_pressed(n.id)
+                        for n in self.nodes.values() if n.kind == "button"}
+        for _ in range(30):                      # field-latching loop (eff frozen here)
+            emit, (beams, target, eff, delivery) = self.propagate_timed()
+            lit = self._lit_map(beams, delivery)
+            val = self.evaluate_logic(lit, self.pressed)
+            changed = False
+            for ff in self.ffs:
+                nw = self.field_open(ff, val)
+                if nw != ff.is_open:
+                    ff.is_open = nw
+                    changed = True
+            if not changed:
+                break
+        emit, (beams, target, eff, delivery) = self.propagate_timed()
+        self.emit = emit
+        self.lit = self._lit_map(beams, delivery)
+        self.logic_val = self.evaluate_logic(self.lit, self.pressed)
+        for ff in self.ffs:
+            ff.is_open = self.field_open(ff, self.logic_val)
+        eff_changed = self._advance_eff(beams, target, now)   # advance the lag
+        self.beams_draw = self._build_draw_timed(beams)
+        return (eff_changed or old_emit != self.emit
+                or old_open != [ff.is_open for ff in self.ffs])
+
+    def refresh_timed(self, now=None):
+        # Advance only the lag toward the last targets (no re-solve) and rebuild the
+        # drawn beams -- lets an in-flight cut finish on a frame we choose not to
+        # fully re-step. Returns True if a beam snapped (logic should be re-stepped).
+        if not self._last_beams_t:
+            return False
+        if now is None:
+            now = time.monotonic()
+        target = [self._beam_targets.get((b["o"], b["t"]), b["hard"])
+                  for b in self._last_beams_t]
+        changed = self._advance_eff(self._last_beams_t, target, now)
+        self.beams_draw = self._build_draw_timed(self._last_beams_t)
+        return changed
 
     # ---- player / boxes ----
     def _static_blocked(self, old, new, carry):
@@ -459,6 +741,125 @@ class World:
                 return True
         return False
 
+    def _press_set(self, player_pos, boxes):
+        # which buttons would be held down for this player/box configuration.
+        out = {}
+        for n in self.nodes.values():
+            if n.kind != "button":
+                continue
+            bp = n.pos
+            out[n.id] = bool(
+                (player_pos and dist(player_pos, bp) < BTN_R)
+                or any(dist(b, bp) < BTN_R for b in boxes)
+                or any(c.kind == "connector" and c.id != self.carrying
+                       and dist(c.pos, bp) < BTN_R for c in self.nodes.values()))
+        return out
+
+    def _hypothetical_open(self, player_pos, boxes):
+        # Dry-run: which force-fields end up OPEN if the player and boxes were
+        # in this configuration, settling with the SAME latching the live solver
+        # uses (seeded from current gate states). All touched state is restored.
+        if not self.ffs:
+            return {}
+        saved = (self.player, self.boxes, self.pressed,
+                 [ff.is_open for ff in self.ffs])
+        self.player = list(player_pos) if player_pos else None
+        self.boxes = [list(b) for b in boxes]
+        try:
+            for _ in range(30):
+                self.pressed = {n.id: self.button_pressed(n.id)
+                                for n in self.nodes.values() if n.kind == "button"}
+                emit, (beams, length, delivery) = self.propagate()
+                lit = self._lit_map(beams, delivery)
+                val = self.evaluate_logic(lit, self.pressed)
+                changed = False
+                for ff in self.ffs:
+                    nw = self.field_open(ff, val)
+                    if nw != ff.is_open:
+                        ff.is_open = nw
+                        changed = True
+                if not changed:
+                    break
+            return {ff.id: ff.is_open for ff in self.ffs}
+        finally:
+            self.player, self.boxes, self.pressed = saved[0], saved[1], saved[2]
+            for ff, s in zip(self.ffs, saved[3]):
+                ff.is_open = s
+
+    def _box_critical_fields(self, box_index, boxes):
+        # Force-fields that are OPEN right now but would CLOSE if this particular
+        # box stopped holding its button(s) -- i.e. gates this box itself props
+        # open. The player may not reach across, step across, or shove the box
+        # through such a gate, because doing so depends on the very lock the move
+        # is about to flip. This is independent of the per-step push distance, so
+        # it also stops the box from being walked off the button one nudge at a
+        # time.
+        if not self.ffs or box_index is None:
+            return []
+        open_now = {ff.id for ff in self.ffs if ff.is_open}
+        if not open_now:
+            return []
+        far = [list(b) for b in boxes]
+        far[box_index] = [1e7, 1e7]            # lift this box out of the world
+        after = self._hypothetical_open(self.player, far)
+        return [(ff.p1, ff.p2) for ff in self.ffs
+                if ff.id in open_now and not after.get(ff.id, True)]
+
+    def _theft_blocked(self, old, new, reach_to, boxes_after,
+                       push_idx=None, box_new=None):
+        # Delimiting surfaces (walls, tan, purple, force-fields) must not be used
+        # to reach across and "steal" a box, nor may a single move slip the player
+        # across a field that the very same move causes to shut. A currently-open
+        # immediate path is fine; a path that depends on a lock the move itself
+        # flips is not.
+        def crosses(a, b, segs):
+            for (s1, s2) in segs:
+                r = seg_inter(a, b, s1, s2)
+                if r:
+                    _, t, u = r
+                    if -EPS <= t <= 1 + EPS and -EPS <= u <= 1 + EPS:
+                        return True
+            return False
+
+        closed_now = [(ff.p1, ff.p2) for ff in self.ffs if not ff.is_open]
+        # Only pay for a latching dry-run when the move can actually move a gate:
+        # a shoved box (light may shift), the player's body blocking light, or a
+        # change in which buttons are held.
+        need_dry = bool(self.ffs) and (
+            reach_to is not None
+            or self.player_block
+            or self._press_set(old, self.boxes) != self._press_set(new, boxes_after))
+        if need_dry:
+            after_open = self._hypothetical_open(new, boxes_after)
+            closed_after = [(ff.p1, ff.p2) for ff in self.ffs
+                            if not after_open.get(ff.id, True)]
+        else:
+            closed_after = closed_now
+
+        # The player's own step may not ride a closing gate across.
+        if crosses(old, new, closed_after):
+            return True
+        # Reaching out to shove a box may not cross any delimiting surface, nor a
+        # field that is shut now or becomes shut once the box has been moved.
+        barrier_segs = [(b.p1, b.p2) for b in self.barriers]   # tan + purple
+        wall_segs = [(wl.p1, wl.p2) for wl in self.walls]
+        if reach_to is not None and crosses(
+                old, reach_to, wall_segs + barrier_segs + closed_now + closed_after):
+            return True
+
+        # A box may not be reached across, walked across, or pushed through a gate
+        # that the box itself is currently holding open: taking it that way relies
+        # on a lock the move flips. Robust against nudging the box off one step at
+        # a time, since "held open by this box" doesn't depend on the step size.
+        if push_idx is not None:
+            crit = self._box_critical_fields(push_idx, self.boxes)
+            if crit and (crosses(old, reach_to, crit)        # reach across the gate
+                         or crosses(old, new, crit)          # player body across it
+                         or (box_new is not None
+                             and crosses(reach_to, box_new, crit))):  # box through it
+                return True
+        return False
+
     def move_player(self, dx, dy):
         if not self.player:
             return
@@ -471,22 +872,33 @@ class World:
                 hit = i
                 break
         if hit is not None:
-            bx = self.boxes[hit]
+            bx = tuple(self.boxes[hit])
             nb = (bx[0] + dx, bx[1] + dy)
             if self._box_blocked(hit, bx, nb) or self._static_blocked(old, new, carry):
+                return
+            boxes_after = [list(b) for b in self.boxes]
+            boxes_after[hit] = [nb[0], nb[1]]
+            if self._theft_blocked(old, new, bx, boxes_after,
+                                   push_idx=hit, box_new=nb):
                 return
             self.boxes[hit] = [nb[0], nb[1]]
             self.player = [new[0], new[1]]
             return
         if self._static_blocked(old, new, carry):
             return
+        if self._theft_blocked(old, new, None, self.boxes):
+            return
         self.player = [new[0], new[1]]
 
     def reach_blocked(self, a, b):
-        # line-of-sight for the player's hands: walls and ALL force-fields
-        # (open or closed) get in the way, so you can't grab through them.
+        # Line-of-sight for the player's hands: you cannot grab (and thus pull /
+        # "teleport") an object through a delimiting surface. Walls and ALL
+        # force-fields -- open or closed -- block, and so do tan and purple
+        # barriers: a barrier you cannot carry an object *through* is equally a
+        # barrier you cannot reach across to snatch one from the far side.
         segs = [(w.p1, w.p2) for w in self.walls]
         segs += [(ff.p1, ff.p2) for ff in self.ffs]
+        segs += [(bar.p1, bar.p2) for bar in self.barriers]
         return first_block_t(a, b, segs) is not None
 
     def at_goal(self):
@@ -716,12 +1128,26 @@ def selftest():
 # GUI (editor + sandbox)
 # --------------------------------------------------------------------------- #
 def run_gui():
+    # --- input-method bypass (the "WASD randomly goes dead" fix) -------------
+    # On X11 a stuck input-method pre-edit (IBus / fcitx / XIM) silently eats key
+    # events before they reach the window: movement dies, a full relaunch does NOT
+    # restore it (the IME daemon outlives the game, so the state is global, not
+    # per-process), changing layout does nothing, and the only thing that revives
+    # it is tabbing to another app, typing, and pressing Enter -- which commits or
+    # cancels that global pre-edit. A WASD game never wants its movement keys run
+    # through a composer, so we detach this process from the IME and take raw key
+    # events; the IME can then never swallow a keystroke. This must be set before
+    # Tk wires up XIM (i.e. before tk.Tk()). Set ROBOT_PRISM_KEEP_IME=1 to opt out.
+    if _X11 and not os.environ.get("ROBOT_PRISM_KEEP_IME"):
+        os.environ["XMODIFIERS"] = "@im=none"
+
     import tkinter as tk
 
     w = build_level()
     state = {"mode": "play", "tool": "select", "color": "red",
              "pending": None, "link_src": None, "sel": None,
-             "dwell": 0.0, "dirty": False, "msg": ""}
+             "dwell": 0.0, "dirty": False, "msg": "", "live": False,
+             "has_focus": True, "debug_keys": DEBUG_KEYS}
     held = set()
     mouse = {"x": 0, "y": 0}
 
@@ -735,6 +1161,13 @@ def run_gui():
         if w.carrying == nid:
             return True
         return bool(w.player) and dist(w.player, w.nodes[nid].pos) < CONNECT_REACH
+
+    def step_now():
+        # Play-mode solve: advance the world one real-time tick (cuts apply with the
+        # CUT_LINGER delay, so dynamic / oscillating chains work). Mark the world
+        # "live" so tick() keeps stepping until everything settles.
+        w.step(time.monotonic())
+        state["live"] = True
 
     def set_mode(m):
         state.update(mode=m, pending=None, link_src=None)
@@ -1047,23 +1480,33 @@ def run_gui():
                         drag["link_hit"] = tgt.id
                         linked = tuple(sorted((cid, tgt.id))) in w.links
                         state["msg"] = f"{'linked' if linked else 'unlinked'} {cid} <-> {tgt.id}"
-                w.solve(cold=False)
+                w.solve(cold=True) if state["mode"] == "edit" else step_now()
         redraw()
 
     def on_release(e):
         if drag["moved"]:
-            cold = state["mode"] == "edit"
-            drag["id"] = None; w.solve(cold=cold); redraw(); return
+            drag["id"] = None
+            w.solve(cold=True) if state["mode"] == "edit" else step_now()
+            redraw(); return
         drag["id"] = None
         (edit_click if state["mode"] == "edit" else play_click)(e.x, e.y)
-        w.solve(cold=(state["mode"] == "edit")); redraw()
+        w.solve(cold=True) if state["mode"] == "edit" else step_now()
+        redraw()
 
     def on_key(e):
-        k = e.keysym
-        held.add(k)
+        if state["debug_keys"]:
+            print(f"[key] press   sym={e.keysym!r:>12}  code={e.keycode:<4} "
+                  f"mods={decode_mods(e.state):<12} ({e.state:#06x})")
+        if e.keysym == "F12":               # live-toggle the key trace, even mid-bug
+            state["debug_keys"] = not state["debug_keys"]
+            print(f"[key] debug trace {'ON' if state['debug_keys'] else 'OFF'}")
+            return
+        a = key_action(e)
+        if a in MOVE_DIRS:
+            held.add(a)
+            return
         if state["mode"] == "play":
-            kl = k.lower()
-            if kl == "e":
+            if a == "carry":
                 if w.carrying:
                     cid = w.carrying
                     # set-down: snap onto an adjacent box so the connector rests
@@ -1084,21 +1527,40 @@ def run_gui():
                             best, bd = n, d
                     if best:
                         w.carrying = best.id
-                w.solve(cold=False); redraw()
-            elif kl == "c":
+                step_now(); redraw()
+            elif a == "clear":
                 if state["sel"] and in_reach(state["sel"]):
-                    w.clear_links_of(state["sel"]); w.solve(cold=False); redraw()
+                    w.clear_links_of(state["sel"]); step_now(); redraw()
                 elif state["sel"]:
                     state["msg"] = "move closer to clear that connector"
-            elif kl == "r":
-                w.player = list(w.player_start); w.carrying = None; w.solve(cold=True); redraw()
-            elif kl == "g":
-                w.solve(cold=True); state["msg"] = "gates reset (latches cleared)"; redraw()
-        if k == "space":
+            elif a == "reset":
+                w.player = list(w.player_start); w.carrying = None
+                w.solve(cold=True); state["live"] = False; redraw()
+            elif a == "gates":
+                w.solve(cold=True); state["live"] = False
+                state["msg"] = "gates reset (latches cleared)"; redraw()
+        if a == "dump":
             print_state()
 
     def on_key_release(e):
-        held.discard(e.keysym)
+        if state["debug_keys"]:
+            print(f"[key] release sym={e.keysym!r:>12}  code={e.keycode:<4} "
+                  f"mods={decode_mods(e.state):<12} ({e.state:#06x})")
+        a = key_action(e)
+        if a in MOVE_DIRS:
+            held.discard(a)
+
+    def on_focus_out(e):
+        # Lost focus to another app (e.g. alt-tabbing to Discord): drop every held
+        # key. Otherwise a movement key whose RELEASE lands in the other window
+        # stays in `held` and the robot keeps running by itself. Guarded with
+        # focus_displayof so focus moves between our own widgets don't count.
+        if root.focus_displayof() is None:
+            held.clear()
+            state["has_focus"] = False
+
+    def on_focus_in(e):
+        state["has_focus"] = True
 
     def print_state():
         print("--- state ---")
@@ -1109,11 +1571,19 @@ def run_gui():
             print(f"  gate {ff.id:10} {'OPEN' if ff.is_open else 'shut'} inputs={ins}")
 
     def tick():
+        # Self-heal a wedged focus flag. A <FocusIn> can occasionally go missing
+        # across a window-manager transition, leaving has_focus stuck False so WASD
+        # stays dead until relaunch. If we think we're unfocused but the OS says one
+        # of our widgets actually holds focus, recover. This only ever flips toward
+        # "focused", so a transient None can never wrongly freeze movement.
+        if not state["has_focus"] and root.focus_displayof() is not None:
+            state["has_focus"] = True
         if state["mode"] == "play" and w.player:
-            vx = (("d" in held or "Right" in held) - ("a" in held or "Left" in held))
-            vy = (("s" in held or "Down" in held) - ("w" in held or "Up" in held))
+            now = time.monotonic()
+            vx = ("right" in held) - ("left" in held)
+            vy = ("down" in held) - ("up" in held)
             moved = False
-            if vx or vy:
+            if (vx or vy) and state["has_focus"]:
                 step = SPEED * TICK
                 before = tuple(w.player)
                 w.move_player(vx * step, 0); w.move_player(0, vy * step)
@@ -1123,12 +1593,20 @@ def run_gui():
                 state["dirty"] = True
             if state["sel"] and not in_reach(state["sel"]):
                 state["sel"] = None
-            if moved or state["dirty"]:
-                w.solve(cold=False); state["dirty"] = False
+            # Update dwell / player-as-blocker first, since it feeds the solver.
             state["dwell"] = state["dwell"] + TICK if w.player_touching_beam() else 0.0
             want = state["dwell"] >= DWELL_THRESH
-            if want != w.player_block:
-                w.player_block = want; w.solve(cold=False)
+            block_changed = want != w.player_block
+            if block_changed:
+                w.player_block = want
+            # Step the world while anything is in motion: the player moved, geometry
+            # changed, a cut is mid-linger, or the previous step was still settling
+            # (an oscillator keeps beams_live() true forever, so its clock runs). A
+            # fully static scene steps nothing and burns no CPU.
+            if (moved or state["dirty"] or block_changed
+                    or w.beams_live() or state["live"]):
+                state["live"] = w.step(now)
+                state["dirty"] = False
             redraw()
         root.after(int(TICK * 1000), tick)
 
@@ -1139,6 +1617,8 @@ def run_gui():
                                     redraw() if state["pending"] else None))
     root.bind("<KeyPress>", on_key)
     root.bind("<KeyRelease>", on_key_release)
+    root.bind("<FocusIn>", on_focus_in)
+    root.bind("<FocusOut>", on_focus_out)
 
     refresh_bar(); w.solve(cold=True); redraw(); tick()
     root.mainloop()
