@@ -60,6 +60,15 @@ SPEED = 150.0
 TICK = 0.033
 CONNECT_REACH = 42          # how close you must be to adjust a connector
 CUT_LINGER = 0.33           # a freshly-cut ray keeps its old length this long (s)
+# CUT_LINGER applies ONLY to a cut made by the player's own body, so a brief pass
+# is forgiven and a committed block fades in/out smoothly. Cuts made by MATERIAL
+# (boxes, set-down connectors, walls) and by FORCE-FIELDS closing are instant --
+# they snap the moment the obstacle enters the beam. A carried connector is lifted
+# out of play and blocks nothing, so carrying a tool through a beam never cuts it.
+CROSSING_CUT_INSTANT = False  # beam-vs-beam crossings: keep them lingering (this is
+                              # what makes paradox loops oscillate instead of
+                              # freezing). Set True to make ray-on-ray cuts instant
+                              # too -- simpler, but oscillators settle/flicker.
 DEBUG_KEYS = False          # print every key event (sym/code/mods); toggle live w/ F12
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +220,10 @@ class World:
         # and paradoxical loops oscillate instead of freezing. Driven by step().
         self.beam_eff = {}              # (o,t) -> {"len","since"}  (logical truth in play)
         self._beam_targets = {}         # (o,t) -> geometric target length to relax toward
+        self._beam_instant = {}         # (o,t) -> length justified by INSTANT cuts only
+                                        # (material / fields / -- optionally -- crossings);
+                                        # the player's body may cut below this, and only
+                                        # that extra cut lingers.
         self._last_beams_t = []         # last beam geometry list seen by the timed solver
 
     def new_id(self, prefix):
@@ -283,10 +296,15 @@ class World:
             return False
         return any(dist(nd.pos, bx) < BOX_R for bx in self.boxes)
 
+    PLAYER_OWNER = "__player__"     # owner tag for the player's body as a blocker;
+                                    # never a node id, so beams still respect it, but
+                                    # the timed solver can single it out for lingering.
+
     def _leveled_blockers(self):
         # (p1, p2, level, owner): level None blocks every beam (tall: walls /
         # closed fields); 0 = ground material; 1 = elevated material. owner lets
-        # a beam ignore the body it starts or ends inside.
+        # a beam ignore the body it starts or ends inside, and lets the timed
+        # solver tell the player's (forgiving) body apart from material blockers.
         segs = [(w.p1, w.p2, None, None) for w in self.walls]
         for ff in self.ffs:
             if not ff.is_open:
@@ -302,7 +320,7 @@ class World:
                 segs.append((s1, s2, lvl, n.id))
         if self.player_block and self.player:
             for (s1, s2) in self._square(self.player, PLAYER_R):
-                segs.append((s1, s2, 0, None))
+                segs.append((s1, s2, 0, self.PLAYER_OWNER))
         return segs
 
     def light_blockers(self):
@@ -342,10 +360,19 @@ class World:
                 level = self.beam_level(o, t)
                 blk = [(s1, s2) for (s1, s2, lvl, own) in blockers
                        if (lvl is None or lvl == level) and own != o and own != t]
+                # ...and the same set with the player's (forgiving) body removed, so
+                # the timed solver knows how far the beam reaches on MATERIAL/FIELD
+                # blockers alone -- everything down to that point cuts instantly; only
+                # the player can cut nearer than that, and that nearer cut lingers.
+                blk_mat = [(s1, s2) for (s1, s2, lvl, own) in blockers
+                           if (lvl is None or lvl == level) and own != o and own != t
+                           and own != self.PLAYER_OWNER]
                 bt = first_block_t(O, T, blk)
+                bt_mat = first_block_t(O, T, blk_mat)
                 hard = dl if bt is None else bt * dl
+                hard_mat = dl if bt_mat is None else bt_mat * dl
                 beams.append({"o": o, "t": t, "color": emit[o], "O": O, "T": T,
-                              "dl": dl, "hard": hard, "level": level,
+                              "dl": dl, "hard": hard, "hard_mat": hard_mat, "level": level,
                               "dx": (T[0] - O[0]) / dl, "dy": (T[1] - O[1]) / dl})
         n = len(beams)
         cross = []
@@ -495,6 +522,9 @@ class World:
         self.beam_eff = {(b["o"], b["t"]): {"len": length[k], "since": None}
                          for k, b in enumerate(beams)}
         self._beam_targets = {(b["o"], b["t"]): length[k] for k, b in enumerate(beams)}
+        # a settled scene is, by definition, sitting on its floor: no cut is pending,
+        # so the instant floor equals the resolved length for every beam.
+        self._beam_instant = {(b["o"], b["t"]): length[k] for k, b in enumerate(beams)}
         self._last_beams_t = beams
 
     # ---- cut animation ----
@@ -571,14 +601,27 @@ class World:
                 break
         # Geometric target: nearest crossing whose other beam currently reaches it.
         # Existing beams linger toward this; new beams are already sitting at it.
+        # `target` is the full geometry (incl. the player's body). `instant` is the
+        # floor justified by MATERIAL + FORCE-FIELD blockers only (b["hard_mat"]) --
+        # the timed advance applies any cut down to `instant` immediately, and lets
+        # only the deeper, player-made cut (target < instant) linger.
         target = [b["hard"] for b in beams]
+        instant = [b["hard_mat"] for b in beams]
         for (i, j, di, dj) in cross:
             if eff[j] >= dj - EPS and di < target[i]:   # j reaches -> cuts i
                 target[i] = di
             if eff[i] >= di - EPS and dj < target[j]:
                 target[j] = dj
+            if CROSSING_CUT_INSTANT:                    # opt-in: ray-on-ray is instant too
+                if eff[j] >= dj - EPS and di < instant[i]:
+                    instant[i] = di
+                if eff[i] >= di - EPS and dj < instant[j]:
+                    instant[j] = dj
+        # the player can only cut a beam SHORTER than material does; keep the floor
+        # at or above the final target so the lingering region is exactly that gap.
+        instant = [max(instant[k], target[k]) for k in range(n)]
         delivery = [eff[k] >= beams[k]["dl"] - 1e-6 for k in range(n)]
-        return beams, target, eff, delivery
+        return beams, target, instant, eff, delivery
 
     def propagate_timed(self):
         conns = [n.id for n in self.connectors() if n.id != self.carrying]
@@ -586,7 +629,7 @@ class World:
                 for nid, nd in self.nodes.items()}
         last = None
         for _ in range(2 * len(conns) + 6):
-            beams, target, eff, delivery = self.resolve_timed(emit)
+            beams, target, instant, eff, delivery = self.resolve_timed(emit)
             incoming = {c: set() for c in conns}
             for k, b in enumerate(beams):
                 if delivery[k] and self.nodes[b["t"]].kind == "connector":
@@ -598,46 +641,67 @@ class World:
                 if nc != emit[c]:
                     emit[c] = nc
                     changed = True
-            last = (beams, target, eff, delivery)
+            last = (beams, target, instant, eff, delivery)
             if not changed:
                 break
         if last is None:
             last = self.resolve_timed(emit)
         return emit, last
 
-    def _advance_eff(self, beams, target, now):
-        # Relax each beam's effective length toward its geometric target: growth
-        # (a cut removed) applies at once; shortening (a fresh cut) is held for
-        # CUT_LINGER, then applied. This asymmetry is what makes paradox loops
-        # oscillate -- the "uncut" edge is instant, the "cut" edge is delayed.
+    def _advance_eff(self, beams, target, instant, now):
+        # Relax each beam's effective length toward its geometry. The motion splits
+        # into two parts:
+        #   * down to `instant` (the material/field floor): applied AT ONCE -- a box,
+        #     a set-down connector, a wall, or a closing force-field cuts the beam the
+        #     instant it intrudes. Growth (any cut removed) is likewise immediate.
+        #   * below `instant` down to `target`: this only happens when the PLAYER'S
+        #     body is the nearer blocker, and THAT cut is held for CUT_LINGER before
+        #     it bites -- so a brief pass (which never even sets player_block) is free,
+        #     and a committed block fades smoothly. Stepping aside restores instantly.
+        # `instant >= target` always (the player can only cut nearer than material).
         changed = False
         seen = set()
         for k, b in enumerate(beams):
             key = (b["o"], b["t"])
             seen.add(key)
-            tgt = target[k]
+            tgt, inst = target[k], instant[k]
             st = self.beam_eff.get(key)
-            if st is None:                       # newcomer: enters already cut to its
-                st = {"len": target[k], "since": None}   # target, with no linger
+            if st is None:                       # newcomer: born already cut to its
+                st = {"len": tgt, "since": None}     # final target, with no linger
                 self.beam_eff[key] = st
                 changed = True
-            if tgt >= st["len"] - 1e-6:          # grow / steady -> immediate
-                if abs(st["len"] - tgt) > 1e-6 or st["since"] is not None:
+                continue
+            cur = st["len"]
+            if tgt >= cur - 1e-6:                # growing / steady -> immediate
+                if abs(cur - tgt) > 1e-6 or st["since"] is not None:
                     changed = True
                 st["len"], st["since"] = tgt, None
-            else:                                # shrink (cut) -> linger, then apply
-                if st["since"] is None:
-                    st["since"] = now
-                    changed = True
-                elif now - st["since"] >= CUT_LINGER:
-                    if abs(st["len"] - tgt) > 1e-6:
+            elif cur > inst + 1e-6:              # an INSTANT (material/field) cut is
+                # pending -- snap straight down to the floor now. If the player wants
+                # to cut deeper still, start its linger clock from here.
+                st["len"] = inst
+                st["since"] = now if tgt < inst - 1e-6 else None
+                changed = True
+            else:                                # only the player's deeper cut remains
+                if tgt >= inst - 1e-6:           # no player cut wanted -> sit on floor
+                    if st["since"] is not None:
                         changed = True
-                    st["len"], st["since"] = tgt, None
+                    st["since"] = None
+                else:                            # player cut: linger, then apply
+                    if st["since"] is None:
+                        st["since"] = now
+                        changed = True
+                    elif now - st["since"] >= CUT_LINGER:
+                        if abs(st["len"] - tgt) > 1e-6:
+                            changed = True
+                        st["len"], st["since"] = tgt, None
         for key in list(self.beam_eff):
             if key not in seen:
                 del self.beam_eff[key]
                 changed = True
         self._beam_targets = {(beams[k]["o"], beams[k]["t"]): target[k]
+                              for k in range(len(beams))}
+        self._beam_instant = {(beams[k]["o"], beams[k]["t"]): instant[k]
                               for k in range(len(beams))}
         self._last_beams_t = beams
         return changed
@@ -670,7 +734,7 @@ class World:
         self.pressed = {n.id: self.button_pressed(n.id)
                         for n in self.nodes.values() if n.kind == "button"}
         for _ in range(30):                      # field-latching loop (eff frozen here)
-            emit, (beams, target, eff, delivery) = self.propagate_timed()
+            emit, (beams, target, instant, eff, delivery) = self.propagate_timed()
             lit = self._lit_map(beams, delivery)
             val = self.evaluate_logic(lit, self.pressed)
             changed = False
@@ -681,13 +745,13 @@ class World:
                     changed = True
             if not changed:
                 break
-        emit, (beams, target, eff, delivery) = self.propagate_timed()
+        emit, (beams, target, instant, eff, delivery) = self.propagate_timed()
         self.emit = emit
         self.lit = self._lit_map(beams, delivery)
         self.logic_val = self.evaluate_logic(self.lit, self.pressed)
         for ff in self.ffs:
             ff.is_open = self.field_open(ff, self.logic_val)
-        eff_changed = self._advance_eff(beams, target, now)   # advance the lag
+        eff_changed = self._advance_eff(beams, target, instant, now)   # advance the lag
         self.beams_draw = self._build_draw_timed(beams)
         return (eff_changed or old_emit != self.emit
                 or old_open != [ff.is_open for ff in self.ffs])
@@ -702,7 +766,9 @@ class World:
             now = time.monotonic()
         target = [self._beam_targets.get((b["o"], b["t"]), b["hard"])
                   for b in self._last_beams_t]
-        changed = self._advance_eff(self._last_beams_t, target, now)
+        instant = [self._beam_instant.get((b["o"], b["t"]), b["hard_mat"])
+                   for b in self._last_beams_t]
+        changed = self._advance_eff(self._last_beams_t, target, instant, now)
         self.beams_draw = self._build_draw_timed(self._last_beams_t)
         return changed
 
