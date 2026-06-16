@@ -135,10 +135,7 @@ export class Renderer2D {
     }
 
     // Beams
-    for (const [a, b, col, delivered, bo, bt] of w.beams_draw) {
-      // A connector killed by conflicting incoming colours is inert: show
-      // its links as the dotted wire only, like a carried connector.
-      if (w.dead_conns && (w.dead_conns.has(bo) || w.dead_conns.has(bt))) continue;
+    for (const [a, b, col, delivered] of w.beams_draw) {
       const shade = delivered ? COLORS[col] : (DIM[col] ?? '#999');
       ctx.beginPath();
       ctx.moveTo(a[0], a[1]);
@@ -266,7 +263,9 @@ export class Renderer2D {
       } else if (n.kind === 'connector') {
         const near = mode === 'play' && w.player
           && (w.carrying===n.id || dist(w.player, n.pos)<CONNECT_REACH);
-        const ring = sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222');
+        const dead = Boolean(w.dead_conns && w.dead_conns.has(n.id));
+        const ring = dead ? '#e23b3b'
+          : (sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222'));
         const col = w.emit[n.id];
         if (w._conn_elevated(n.id)) {
           ctx.beginPath(); ctx.arc(x, y, 16, 0, 2*Math.PI);
@@ -279,7 +278,19 @@ export class Renderer2D {
         ctx.strokeStyle = ring; ctx.lineWidth = 3; ctx.stroke();
         ctx.fillStyle = '#111'; ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('c', x, y);   // identical for every connector (still tracked separately)
+        if (dead) {
+          // Colour conflict — dead until the incoming colours reduce to one.
+          // The incoming rays are still real (drawn solid, still blocking);
+          // only this connector's own output is inert. The X marks that.
+          const xr = CONN_R - 4;
+          ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x-xr, y-xr); ctx.lineTo(x+xr, y+xr);
+          ctx.moveTo(x+xr, y-xr); ctx.lineTo(x-xr, y+xr);
+          ctx.stroke(); ctx.lineCap = 'butt';
+        } else {
+          ctx.fillText('c', x, y);   // identical for every connector (still tracked separately)
+        }
         if (w.carrying === n.id) {
           ctx.fillStyle = '#666'; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';

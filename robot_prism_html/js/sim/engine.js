@@ -332,7 +332,7 @@ export class Engine {
         if (st.since === null) st.since = now;
         if (now - st.since >= CUT_LINGER) { st.len = Lnew; st.deliv = dnew; st.since = null; }
       }
-      out.push([[...b.O], [b.O[0]+b.dx*st.len, b.O[1]+b.dy*st.len], b.color, st.deliv, b.o, b.t]);
+      out.push([[...b.O], [b.O[0]+b.dx*st.len, b.O[1]+b.dy*st.len], b.color, st.deliv]);
     }
     for (const key of [...this.beam_anim.keys()])
       if (!seen.has(key)) this.beam_anim.delete(key);
@@ -458,7 +458,7 @@ export class Engine {
   _build_draw_timed(beams) {
     return beams.map(b => {
       const L = this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard;
-      return [[...b.O], [b.O[0]+b.dx*L, b.O[1]+b.dy*L], b.color, L >= b.dl - 1e-6, b.o, b.t];
+      return [[...b.O], [b.O[0]+b.dx*L, b.O[1]+b.dy*L], b.color, L >= b.dl - 1e-6];
     });
   }
 
