@@ -302,6 +302,18 @@ export class Renderer2D {
       ctx.beginPath(); ctx.arc(px, py, PLAYER_R, 0, 2*Math.PI);
       ctx.fillStyle = w.player_block ? '#c0392b' : '#222'; ctx.fill();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      // Little face: two eyes toward the direction she last moved.
+      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+      const fl = Math.hypot(f[0], f[1]) || 1;
+      const fx = f[0] / fl, fy = f[1] / fl;
+      const perpx = -fy, perpy = fx;
+      const fwd = PLAYER_R * 0.40, spread = PLAYER_R * 0.42;
+      ctx.fillStyle = '#fff';
+      for (const s of [-1, 1]) {
+        const ex = px + fx*fwd + perpx*spread*s;
+        const ey = py + fy*fwd + perpy*spread*s;
+        ctx.beginPath(); ctx.arc(ex, ey, 1.8, 0, 2*Math.PI); ctx.fill();
+      }
       if (mode === 'play') {
         ctx.beginPath(); ctx.arc(px, py, CONNECT_REACH, 0, 2*Math.PI);
         ctx.strokeStyle = '#e7e7e7'; ctx.lineWidth = 1;

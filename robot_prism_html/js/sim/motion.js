@@ -1,5 +1,6 @@
-import { EPS, PLAYER_R, BOX_R, BTN_R, BEAM_TOUCH } from '../core/constants.js';
+import { EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH } from '../core/constants.js';
 import { seg_inter, first_block_t, dist, pt_seg_dist } from '../core/geometry.js';
+import { OBJECT_TYPES } from './objects.js';
 
 export class Motion {
   constructor(world, engine) {
@@ -140,20 +141,27 @@ export class Motion {
     const old = [...w.player];
     const new_ = [old[0]+dx, old[1]+dy];
     const carry = w.carrying !== null;
-    let hit = null;
+    // Material objects block the player. Boxes are not pushable (see
+    // OBJECT_TYPES); the push branch stays here for future pushable kinds.
     for (let i = 0; i < w.boxes.length; i++) {
-      if (dist(new_, w.boxes[i]) < PLAYER_R + BOX_R - 2) { hit = i; break; }
+      if (dist(new_, w.boxes[i]) < PLAYER_R + BOX_R - 2) {
+        if (OBJECT_TYPES.box.pushable) {
+          const bx = [...w.boxes[i]];
+          const nb = [bx[0]+dx, bx[1]+dy];
+          if (this._box_blocked(i, bx, nb) || this._static_blocked(old, new_, carry)) return;
+          const boxes_after = w.boxes.map(b => [...b]);
+          boxes_after[i] = [...nb];
+          if (this._theft_blocked(old, new_, bx, boxes_after, i, nb)) return;
+          w.boxes[i] = [...nb];
+          w.player = [...new_];
+        }
+        return;   // non-pushable: the box simply stops the player
+      }
     }
-    if (hit !== null) {
-      const bx = [...w.boxes[hit]];
-      const nb = [bx[0]+dx, bx[1]+dy];
-      if (this._box_blocked(hit, bx, nb) || this._static_blocked(old, new_, carry)) return;
-      const boxes_after = w.boxes.map(b => [...b]);
-      boxes_after[hit] = [...nb];
-      if (this._theft_blocked(old, new_, bx, boxes_after, hit, nb)) return;
-      w.boxes[hit] = [...nb];
-      w.player = [...new_];
-      return;
+    // Ground connectors are material and not pushable, too.
+    for (const c of w.connectors()) {
+      if (c.id === w.carrying) continue;
+      if (dist(new_, c.pos) < PLAYER_R + CONN_R - 2) return;
     }
     if (this._static_blocked(old, new_, carry)) return;
     if (this._theft_blocked(old, new_, null, w.boxes)) return;

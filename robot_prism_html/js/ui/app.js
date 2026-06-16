@@ -6,7 +6,7 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
 import { dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
@@ -104,17 +104,22 @@ export class App {
   // charge, gate open/shut) is recomputed by solve() on restore.
   _captureState() {
     const w = this.world;
-    const nodePos = {};
-    for (const id in w.nodes) nodePos[id] = [...w.nodes[id].pos];
+    const nodePos = {}, elevated = {};
+    for (const id in w.nodes) {
+      nodePos[id] = [...w.nodes[id].pos];
+      if (w.nodes[id].kind === 'connector') elevated[id] = !!w.nodes[id].elevated;
+    }
     return {
       player: w.player ? [...w.player] : null,
       player_block: w.player_block,
       carrying: w.carrying,
       carry_box: w.carry_box ? [...w.carry_box] : null,
+      facing: w.facing ? [...w.facing] : [0, 1],
       boxes: w.boxes.map(b => [...b]),
       links: [...w.links],
       logic_links: w.logic_links.map(l => [...l]),
       nodePos,
+      elevated,
     };
   }
 
@@ -124,12 +129,16 @@ export class App {
     w.player_block = s.player_block;
     w.carrying = s.carrying;
     w.carry_box = s.carry_box ? [...s.carry_box] : null;
+    w.facing = s.facing ? [...s.facing] : [0, 1];
     w.boxes = s.boxes.map(b => [...b]);
     w.links = new Set(s.links);
     w.logic_links = s.logic_links.map(l => [...l]);
     for (const id in s.nodePos) {
       const n = w.nodes[id];
       if (n) { n.pos[0] = s.nodePos[id][0]; n.pos[1] = s.nodePos[id][1]; }
+    }
+    if (s.elevated) for (const id in s.elevated) {
+      if (w.nodes[id]) w.nodes[id].elevated = s.elevated[id];
     }
     w.solve(true, false);
   }
@@ -236,21 +245,12 @@ export class App {
     if ((vx || vy) && hasFocus) {
       const step = SPEED * TICK;
       const before = [...w.player];
-      // Snapshot before moving so a box-push can be rewound. Only bother when
-      // boxes exist — pure walking must never create an undo point.
-      const preMove = w.boxes.length ? this._captureState() : null;
-      const boxesBefore = w.boxes.map(b => [...b]);
       w.move_player(vx * step, 0);
       w.move_player(0, vy * step);
       moved = w.player[0] !== before[0] || w.player[1] !== before[1];
-      if (w.boxes.length) {
-        const pushed = w.boxes.some((b, i) =>
-          b[0] !== boxesBefore[i][0] || b[1] !== boxesBefore[i][1]);
-        if (pushed && !this._pushRun) { this._pushUndo(preMove); this._pushRun = true; }
-        if (!pushed) this._pushRun = false;
-      }
-    } else {
-      this._pushRun = false;
+      // Face the direction of travel. (Boxes are no longer pushable, so a walk
+      // never moves another object and is never itself an undo point.)
+      if (moved) { const m = Math.hypot(vx, vy); w.facing = [vx / m, vy / m]; }
     }
 
     // Sync carried connector / box to the player
@@ -291,27 +291,10 @@ export class App {
     const w = this.world;
     const ui = this.uiState;
     if (action === 'carry') {
-      if (w.carrying) {
-        // Drop the connector on the spot (snap onto a box at the feet, as before).
-        this._pushUndo();
-        const cid = w.carrying;
-        let best = null, bd = BOX_R + 8 + 8; // PLAYER_R
-        for (const bx of w.boxes) {
-          const d = dist(w.player, bx);
-          if (d < bd) { best = bx; bd = d; }
-        }
-        if (best) { w.nodes[cid].pos[0] = best[0]; w.nodes[cid].pos[1] = best[1]; }
-        w.carrying = null;
-        ui.sel = null;                       // dropped — no longer operable
-        ui.live = true; w.step(now);
-      } else if (w.carry_box) {
-        // Drop the carried box at the player's feet.
-        this._pushUndo();
-        w.carry_box[0] = w.player[0];
-        w.carry_box[1] = w.player[1];
-        w.boxes.push(w.carry_box);
-        w.carry_box = null;
-        ui.live = true; w.step(now);
+      if (w.carrying || w.carry_box) {
+        // Drop the carried item at the closest free spot in the facing
+        // direction (clockwise fallback). See _dropCarriedDirectional().
+        this._dropCarriedDirectional();
       } else {
         // Pick up the nearest object in the active radius, armed by default.
         this._nearestPickup();
@@ -413,6 +396,9 @@ export class App {
 
   _dragPlayerTo(tx, ty) {
     const w = this.world;
+    const fdx = tx - w.player[0], fdy = ty - w.player[1];
+    const fd = Math.hypot(fdx, fdy);
+    if (fd > 0.5) w.facing = [fdx / fd, fdy / fd];
     for (let i = 0; i < 60; i++) {
       const [px, py] = w.player;
       const dx = tx-px, dy = ty-py;
@@ -523,12 +509,15 @@ export class App {
     this._pushUndo();
     if (item.kind === 'connector') {
       w.carrying = item.id;
-      ui.sel = item.id;            // armed (ready) by default
+      w.nodes[item.id].elevated = false;   // carried — not on a box anymore
+      ui.sel = item.id;                    // armed (ready) by default
     } else {
-      // Lift the box off the field. Any connector resting on it de-elevates
-      // automatically, since elevation is read from box proximity each frame.
+      // Lift the box off the field; de-elevate any connector that rested on it.
       const idx = w.boxes.indexOf(item.box);
       if (idx !== -1) w.boxes.splice(idx, 1);
+      for (const c of w.connectors()) {
+        if (c.elevated && dist(c.pos, item.box) < BOX_R) c.elevated = false;
+      }
       w.carry_box = item.box;      // now rides with the player
       ui.sel = null;
     }
@@ -568,7 +557,7 @@ export class App {
     }
     if (box) {
       const occupied = w.connectors().some(
-        c => c.id !== excludeId && dist(c.pos, box) < BOX_R);
+        c => c.id !== excludeId && c.elevated && dist(c.pos, box) < BOX_R);
       return { type: occupied ? 'box+connector' : 'box', point: [box[0], box[1]] };
     }
     let conn = null, cd = 16;
@@ -596,14 +585,30 @@ export class App {
     if (w.reach_blocked(w.player, tgt.point)) { this._setFlash("Can't place there — blocked"); return false; }
     if (!canPlace(carried, tgt.type)) { this._handsFull(); return false; }
 
-    this._pushUndo();
     if (carried === 'connector') {
       const cid = w.carrying;
-      w.nodes[cid].pos[0] = tgt.point[0];
-      w.nodes[cid].pos[1] = tgt.point[1];
+      if (tgt.type === 'box') {
+        // Stack onto the (empty) box → elevated. The box's cell is clear of
+        // anything else (it is material), so no extra room check is needed.
+        this._pushUndo();
+        w.nodes[cid].pos[0] = tgt.point[0];
+        w.nodes[cid].pos[1] = tgt.point[1];
+        w.nodes[cid].elevated = true;
+      } else {
+        // Ground placement — a connector is material, so it needs room.
+        if (w.object_pos_blocked(tgt.point, CONN_R, { ignoreConn: cid })) {
+          this._setFlash('No room there'); return false;
+        }
+        this._pushUndo();
+        w.nodes[cid].pos[0] = tgt.point[0];
+        w.nodes[cid].pos[1] = tgt.point[1];
+        w.nodes[cid].elevated = false;
+      }
       w.carrying = null;
       ui.sel = null;
     } else {
+      if (w.object_pos_blocked(tgt.point, BOX_R)) { this._setFlash('No room there'); return false; }
+      this._pushUndo();
       w.carry_box[0] = tgt.point[0];
       w.carry_box[1] = tgt.point[1];
       w.boxes.push(w.carry_box);
@@ -611,6 +616,97 @@ export class App {
     }
     ui.live = true; w.step(performance.now() / 1000);
     return true;
+  }
+
+  // Drop the carried item (connector or box) at the closest free spot in the
+  // direction the player faces. If the facing spot is impossible, search
+  // clockwise; if a whole ring is blocked, step farther out. A box must land
+  // somewhere material-legal; a connector just needs a clear straight line and
+  // avoids landing on a box (use a click to stack a connector onto a box).
+  _dropCarriedDirectional() {
+    const w = this.world;
+    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    if (!carried || !w.player) return false;
+
+    // Auto-stack: if a carried connector faces a stackable (empty) box that is
+    // in reach, E sets it onto that box's centre (elevated). Otherwise the
+    // directional ground-drop below runs.
+    if (carried === 'connector') {
+      const box = this._boxAheadForStack();
+      if (box) {
+        const cid = w.carrying;
+        this._pushUndo();
+        w.nodes[cid].pos[0] = box[0];
+        w.nodes[cid].pos[1] = box[1];
+        w.nodes[cid].elevated = true;
+        w.carrying = null;
+        this.uiState.sel = null;
+        this.uiState.live = true; w.step(performance.now() / 1000);
+        return true;
+      }
+    }
+
+    const r = carried === 'box' ? BOX_R : CONN_R;
+    const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+    const base = Math.atan2(f[1], f[0]);
+    const gap = PLAYER_R + r + 2;
+    const STEP_A = Math.PI / 12;   // 15°, clockwise (screen y points down)
+    for (let extra = 0; extra <= r * 6; extra += r) {
+      const radius = gap + extra;
+      for (let k = 0; k < 24; k++) {
+        const ang = base + k * STEP_A;
+        const spot = [w.player[0] + Math.cos(ang) * radius,
+                      w.player[1] + Math.sin(ang) * radius];
+        // Everything material now (boxes and connectors): the spot must be
+        // clear of all solids and other objects.
+        if (!w.object_pos_blocked(spot, r, { ignoreConn: w.carrying })) {
+          this._commitDrop(carried, spot); return true;
+        }
+      }
+    }
+    this._setFlash('No room to drop it');
+    this._beep();
+    return false;
+  }
+
+  // The empty, in-reach box most aligned with the facing direction (within a
+  // ~45° cone), or null. Used by E to auto-stack a carried connector.
+  _boxAheadForStack() {
+    const w = this.world;
+    const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+    const base = Math.atan2(f[1], f[0]);
+    const norm = a => Math.atan2(Math.sin(a), Math.cos(a));
+    let best = null, bestDiff = Math.PI / 4;   // 45° cone
+    for (const b of w.boxes) {
+      if (dist(w.player, b) >= CONNECT_REACH) continue;
+      if (w.reach_blocked(w.player, b)) continue;
+      const occupied = w.connectors().some(
+        c => c.id !== w.carrying && c.elevated && dist(c.pos, b) < BOX_R);
+      if (occupied) continue;
+      const diff = Math.abs(norm(Math.atan2(b[1] - w.player[1], b[0] - w.player[0]) - base));
+      if (diff < bestDiff) { best = b; bestDiff = diff; }
+    }
+    return best;
+  }
+
+  _commitDrop(carried, spot) {
+    const w = this.world;
+    const ui = this.uiState;
+    this._pushUndo();
+    if (carried === 'connector') {
+      const cid = w.carrying;
+      w.nodes[cid].pos[0] = spot[0];
+      w.nodes[cid].pos[1] = spot[1];
+      w.nodes[cid].elevated = false;   // dropped on the ground
+      w.carrying = null;
+      ui.sel = null;
+    } else {
+      w.carry_box[0] = spot[0];
+      w.carry_box[1] = spot[1];
+      w.boxes.push(w.carry_box);
+      w.carry_box = null;
+    }
+    ui.live = true; w.step(performance.now() / 1000);
   }
 
   // Disallowed grab/stack while carrying: a beep and a brief notice, no change.

@@ -7,6 +7,7 @@ export class Node {
     this.color = color;
     this.label = label;
     this.fill_time = fill_time;
+    this.elevated = false;   // connector: true only while placed on a box
   }
 }
 

@@ -1,5 +1,6 @@
-import { BOX_R } from '../core/constants.js';
-import { dist } from '../core/geometry.js';
+import { BOX_R, CONN_R, PLAYER_R } from '../core/constants.js';
+import { dist, pt_seg_dist } from '../core/geometry.js';
+import { OBJECT_TYPES } from './objects.js';
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
@@ -17,6 +18,7 @@ export class World {
     this.player_start = null;
     this.carrying = null;
     this.carry_box = null;     // a box [x,y] when one is being carried (else null)
+    this.facing = [0, 1];      // unit vector: direction the player last moved
     this.player_block = false;
     this.pressed = {};
     this._uid = 0;
@@ -96,10 +98,31 @@ export class World {
     return ff ? ff.mid() : null;
   }
 
+  // A connector is elevated only when it has been placed onto a box (an
+  // explicit state set at placement time) — not merely by being near one.
   _conn_elevated(nid) {
     const nd = this.nodes[nid];
     if (!nd || nd.kind !== 'connector' || nid === this.carrying) return false;
-    return this.boxes.some(bx => dist(nd.pos, bx) < BOX_R);
+    return nd.elevated === true;
+  }
+
+  // Would a material object of radius r placed at `pos` overlap anything solid
+  // (walls / barriers / closed force fields), another material object, or the
+  // player? Validates where dropped or placed objects may legally rest.
+  object_pos_blocked(pos, r, opts = {}) {
+    const { ignoreConn = null, ignoreBox = null } = opts;
+    const segs = this.walls.map(wl => [wl.p1, wl.p2]);
+    for (const ff of this.ffs) if (!ff.is_open) segs.push([ff.p1, ff.p2]);
+    for (const bar of this.barriers) segs.push([bar.p1, bar.p2]);
+    for (const [s1, s2] of segs) if (pt_seg_dist(pos, s1, s2) < r) return true;
+    const boxR = OBJECT_TYPES.box.radius, connR = OBJECT_TYPES.connector.radius;
+    for (const b of this.boxes) { if (b === ignoreBox) continue; if (dist(pos, b) < r + boxR) return true; }
+    for (const c of this.connectors()) {
+      if (c.id === this.carrying || c.id === ignoreConn) continue;
+      if (dist(pos, c.pos) < r + connR) return true;
+    }
+    if (this.player && dist(pos, this.player) < r + PLAYER_R) return true;
+    return false;
   }
 
   // ---- solving ----
