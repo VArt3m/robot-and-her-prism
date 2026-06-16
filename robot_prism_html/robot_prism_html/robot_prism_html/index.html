@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Robot and her Prism</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="shell">
+  <div id="toolbar">
+    <button id="btn-play" class="active">PLAY</button>
+    <!--
+      EDIT button: editor not yet implemented.
+      Placeholder kept so the layout slot exists for when it's added.
+    -->
+    <!-- <button id="btn-edit">EDIT</button> -->
+    <div class="sep"></div>
+    <span id="hint">
+      WASD / arrows — move &nbsp;|&nbsp;
+      E — pick up nearest / drop in front &nbsp;|&nbsp;
+      click an item or E to grab; hold ½ s over a stack to choose &nbsp;|&nbsp;
+      carrying: click it = toggle ready, click node = program, click spot/box = place &nbsp;|&nbsp;
+      C — clear links &nbsp;|&nbsp;
+      Z — rewind &nbsp;|&nbsp;
+      hold R (3s) — full reset &nbsp;|&nbsp;
+      G — reset gates
+    </span>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <div id="statusbar" id="statusbar"></div>
+</div>
+
+<script type="module">
+  import { App } from './js/ui/app.js';
+
+  const canvas    = document.getElementById('gameCanvas');
+  const statusEl  = document.getElementById('statusbar');
+
+  // Size the canvas's CSS box to fill the available space while preserving
+  // the 1018×640 internal resolution. The canvas element itself stays at
+  // 1018×640 px; the wrapping div does the centering via CSS.
+
+  const app = new App(canvas, statusEl);
+  app.start();
+</script>
+</body>
+</html>
