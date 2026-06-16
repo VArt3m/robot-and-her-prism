@@ -28,6 +28,11 @@ export class InputHandler {
     // app.js uses this to require a continuous 3-second hold for a full reset.
     this.resetHeldSince = null;
 
+    // Timestamp (ms) when E was pressed; null when not held. app.js uses this
+    // for the half-second long-press that opens the stack chooser; the actual
+    // pick-up / drop fires on release via the 'carry_release' action.
+    this.carryHeldSince = null;
+
     // Set by App to convert CSS canvas coords → world coords.
     // If null, raw CSS coords are used (fallback for tests / headless).
     this.toWorld = null;
@@ -53,6 +58,10 @@ export class InputHandler {
       } else if (action === 'reset') {
         // Full reset is a timed hold, not a one-shot tap (handled in app.js).
         if (this.resetHeldSince === null) this.resetHeldSince = performance.now();
+      } else if (action === 'carry') {
+        // E is a timed hold too: a long hold opens the chooser; the pick-up /
+        // drop fires on release.
+        if (this.carryHeldSince === null) this.carryHeldSince = performance.now();
       } else {
         this._actions.push(action);
       }
@@ -64,12 +73,14 @@ export class InputHandler {
       const action = KEY_MAP[e.code];
       if (action) this.held.delete(action);
       if (action === 'reset') this.resetHeldSince = null;
+      if (action === 'carry') { this.carryHeldSince = null; this._actions.push('carry_release'); }
     });
 
     window.addEventListener('blur', () => {
       this.held.clear();
       this.hasFocus = false;
       this.resetHeldSince = null;
+      this.carryHeldSince = null;
     });
 
     window.addEventListener('focus', () => { this.hasFocus = true; });

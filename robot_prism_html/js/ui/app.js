@@ -17,8 +17,8 @@ import { InputHandler } from './input.js';
 const UNDO_MAX = 3;
 const RESET_HOLD_SEC = 3;
 
-// A mouse press shorter than this (ms) is a "click"; longer is a "hold".
-const HOLD_MS = 250;
+// Long-press duration (ms) that opens the stack chooser (mouse or E key).
+const MENU_HOLD_MS = 500;
 
 // Stacking rules: may an object of type `carried` be set down onto a target of
 // type `onto`? Target types: 'ground', 'box' (empty), 'box+connector' (a box
@@ -71,6 +71,10 @@ export class App {
     this._resetConsumed = false;
     // Transient status-bar message: { text, until } in seconds.
     this._flash = null;
+    // Long-press (chooser) tracking for the left mouse button and the E key.
+    this._press = null;            // { active, t, x, y, moved, consumed } | null
+    this._carryConsumed = false;   // true once an E hold has opened the chooser
+    this._prevCarrySince = null;
 
     this._lastTick = null;
     this._frameId  = null;
@@ -212,6 +216,7 @@ export class App {
 
   _frame(ts) {
     this._updateResetHold();
+    this._updateHoldMenu();
     const now = ts / 1000;
     if (this._lastTick === null) this._lastTick = now;
     // requestAnimationFrame is paused/throttled while the tab is hidden, so on
@@ -290,7 +295,9 @@ export class App {
   _handleAction(action, now) {
     const w = this.world;
     const ui = this.uiState;
-    if (action === 'carry') {
+    if (action === 'carry_release') {
+      // E released. If the hold already opened the chooser, consume it silently.
+      if (this._carryConsumed) return;
       if (w.carrying || w.carry_box) {
         // Drop the carried item at the closest free spot in the facing
         // direction (clockwise fallback). See _dropCarriedDirectional().
@@ -322,7 +329,8 @@ export class App {
   // ---- mouse ----
   _onMouseDown([x, y], e) {
     const w = this.world;
-    this._downT = performance.now();         // for click-vs-hold on release
+    // Track the press for the long-hold chooser (resolved in _onMouseUp).
+    this._press = { active: true, t: performance.now(), x, y, moved: false, consumed: false };
     this._drag.moved = false;
     this._drag.linkHit = null;
     if (w.player && dist([x,y], w.player) < 14) {
@@ -342,6 +350,10 @@ export class App {
     const w = this.world;
     const ui = this.uiState;
     ui.mouse = [x, y];
+    if (this._press && this._press.active
+        && Math.hypot(x - this._press.x, y - this._press.y) > 6) {
+      this._press.moved = true;
+    }
     if (this._drag.active && this._drag.kind === 'player' && w.player) {
       this._drag.moved = true;
       this._dragPlayerTo(x, y);
@@ -383,14 +395,15 @@ export class App {
   _onMouseUp([x, y], e) {
     const w = this.world;
     const ui = this.uiState;
+    const consumed = this._press && this._press.consumed;   // hold opened a menu
+    this._press = null;
     if (this._drag.moved) {
       this._drag.active = false;
       ui.live = true; w.step(performance.now()/1000);
       return;
     }
     this._drag.active = false;
-    const held = (performance.now() - (this._downT ?? performance.now())) >= HOLD_MS;
-    if (ui.mode === 'play') this._playClick(x, y, held);
+    if (!consumed && ui.mode === 'play') this._playClick(x, y);
     ui.live = true; w.step(performance.now()/1000);
   }
 
@@ -411,7 +424,7 @@ export class App {
     }
   }
 
-  _playClick(x, y, held) {
+  _playClick(x, y) {
     const w = this.world;
     const ui = this.uiState;
 
@@ -420,7 +433,7 @@ export class App {
 
     // Empty-handed: pick something up. A quick click takes the top of the
     // stack; a hold on a real stack (2+ items) opens a chooser menu.
-    if (!w.carrying && !w.carry_box) { this._clickPickup(x, y, held); return; }
+    if (!w.carrying && !w.carry_box) { this._clickPickup(x, y); return; }
 
     // Carrying a connector: operate it.
     if (w.carrying) {
@@ -467,16 +480,15 @@ export class App {
     return items;            // top (connector) first, box underneath
   }
 
-  // Empty-handed click: take the top item, or — on a hold over a 2+ stack —
-  // open a chooser menu. Honors radius + no-teleport-through-barriers.
-  _clickPickup(x, y, held) {
+  // Empty-handed click: take the top item under the cursor. (The stack chooser
+  // is opened by a long hold instead — see _updateHoldMenu.)
+  _clickPickup(x, y) {
     const w = this.world;
     const items = this._stackAt(x, y);
     if (items.length === 0) return false;
     const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
     if (dist(w.player, loc) >= CONNECT_REACH) return false;
     if (w.reach_blocked(w.player, loc)) { this._setFlash("Can't reach that — blocked"); return false; }
-    if (held && items.length >= 2) { this._openMenu(loc[0], loc[1], items); return true; }
     return this._pickItem(items[0]);
   }
 
@@ -544,6 +556,67 @@ export class App {
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) { this._pickItem(it); return; }
     }
     // clicked outside the menu → just cancel
+  }
+
+  // Each frame: a ~half-second long-press on the left mouse button OR the E key
+  // opens the stack chooser, when the player is empty-handed and a stack is in
+  // reach. The mouse targets the stack under the cursor; E targets the nearest
+  // in-reach stack.
+  _updateHoldMenu() {
+    const ui = this.uiState;
+    const now = performance.now();
+
+    // E key hold
+    const since = this.input.carryHeldSince;
+    if (since !== this._prevCarrySince) {
+      if (since !== null) this._carryConsumed = false;   // a fresh press began
+      this._prevCarrySince = since;
+    }
+    if (!ui.menu && since !== null && !this._carryConsumed && now - since >= MENU_HOLD_MS) {
+      if (this._tryOpenMenuForE()) this._carryConsumed = true;
+    }
+
+    // Left mouse hold
+    const p = this._press;
+    if (!ui.menu && p && p.active && !p.consumed && !p.moved && now - p.t >= MENU_HOLD_MS) {
+      if (this._tryOpenMenuAt(p.x, p.y)) p.consumed = true;
+    }
+  }
+
+  // Open the chooser for the stack under (x, y), if it is a real (2+) stack in
+  // reach. Returns true if a menu opened.
+  _tryOpenMenuAt(x, y) {
+    const w = this.world;
+    if (w.carrying || w.carry_box) return false;
+    const items = this._stackAt(x, y);
+    if (items.length < 2) return false;
+    const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
+    if (dist(w.player, loc) >= CONNECT_REACH) return false;
+    if (w.reach_blocked(w.player, loc)) return false;
+    this._openMenu(loc[0], loc[1], items);
+    return true;
+  }
+
+  // Open the chooser for the nearest in-reach stack (box with a connector on
+  // it). Used by an E long-press. Returns true if a menu opened.
+  _tryOpenMenuForE() {
+    const w = this.world;
+    if (w.carrying || w.carry_box) return false;
+    let best = null, bd = CONNECT_REACH;
+    for (const b of w.boxes) {
+      const conn = w.connectors().find(c => c.elevated && dist(c.pos, b) < BOX_R);
+      if (!conn) continue;
+      const d = dist(w.player, b);
+      if (d >= bd) continue;
+      if (w.reach_blocked(w.player, b)) continue;
+      best = { box: b, conn }; bd = d;
+    }
+    if (!best) return false;
+    this._openMenu(best.box[0], best.box[1], [
+      { kind: 'connector', id: best.conn.id, label: 'Connector' },
+      { kind: 'box', box: best.box, label: 'Box' },
+    ]);
+    return true;
   }
 
   // Classify what sits under (x, y) for placement, ignoring `excludeId`.

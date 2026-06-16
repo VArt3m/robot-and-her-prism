@@ -60,7 +60,7 @@ If you have Node.js available, `npx serve .` also works.
 | E | Pick up the nearest object in radius / drop the carried one just ahead (clockwise if blocked) |
 | Boxes | Solid and not pushable — walk around them, or carry them to move them |
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
-| Hold the mouse over a stack | Open a chooser to pick which item (top connector or the box) |
+| Hold the mouse (or E) ~0.5 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
 | Click carried connector | Toggle its "ready" state (ready = yellow = programmable) |
 | Click a node while carrying + ready | Aim / link the carried connector at that node |

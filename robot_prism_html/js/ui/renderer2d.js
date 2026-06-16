@@ -276,7 +276,7 @@ export class Renderer2D {
         ctx.strokeStyle = ring; ctx.lineWidth = 3; ctx.stroke();
         ctx.fillStyle = '#111'; ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(n.label ?? 'C', x, y);
+        ctx.fillText('c', x, y);   // identical for every connector (still tracked separately)
         if (w.carrying === n.id) {
           ctx.fillStyle = '#666'; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
