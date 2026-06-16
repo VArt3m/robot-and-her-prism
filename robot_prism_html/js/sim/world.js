@@ -16,6 +16,7 @@ export class World {
     this.player = null;
     this.player_start = null;
     this.carrying = null;
+    this.carry_box = null;     // a box [x,y] when one is being carried (else null)
     this.player_block = false;
     this.pressed = {};
     this._uid = 0;

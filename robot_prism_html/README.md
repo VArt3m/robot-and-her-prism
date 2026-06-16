@@ -57,11 +57,17 @@ If you have Node.js available, `npx serve .` also works.
 | Key / action | Effect |
 |---|---|
 | WASD / arrow keys | Move player |
-| E | Pick up / put down nearest connector |
-| Click connector (in reach) | Select it |
-| Click node while connector selected | Aim selected connector at that node |
+| E | Pick up the nearest object in radius / put the carried one down on the spot |
+| Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
+| Hold the mouse over a stack | Open a chooser to pick which item (top connector or the box) |
+| Take the box from under a connector | The connector de-elevates (drops to the ground) |
+| Click carried connector | Toggle its "ready" state (ready = yellow = programmable) |
+| Click a node while carrying + ready | Aim / link the carried connector at that node |
+| Click a spot / box in radius while carrying | Set the connector down there / stack it onto the box (no teleport through walls/fields/barriers) |
+| Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
-| Drag carried connector over node | Toggle link (auto-wires on pass-through) |
+| Drag carried connector over node (while ready) | Toggle link (auto-wires on pass-through) |
 | C | Clear all links of selected connector |
-| R | Reset player position and carried item |
+| Z | Rewind — undo the last meaningful action (up to 3 steps) |
+| Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |

@@ -6,11 +6,33 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, BOX_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
+import { SPEED, TICK, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
 import { dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
+
+// How many rewind (undo) steps to retain, and how long the full-reset key
+// must be held continuously (seconds) before the playfield is rebuilt.
+const UNDO_MAX = 3;
+const RESET_HOLD_SEC = 3;
+
+// A mouse press shorter than this (ms) is a "click"; longer is a "hold".
+const HOLD_MS = 250;
+
+// Stacking rules: may an object of type `carried` be set down onto a target of
+// type `onto`? Target types: 'ground', 'box' (empty), 'box+connector' (a box
+// that already carries a connector), 'connector'. The relation is one-way by
+// design — a connector may rest on a box, a box may not rest on a connector,
+// and (for now) no two connectors share a box and no connector rests on a
+// connector. Extend this table as new objects and rules are introduced.
+const STACK_RULES = {
+  connector: { ground: true,  box: true,  'box+connector': false, connector: false },
+  box:       { ground: true,  box: false, 'box+connector': false, connector: false },
+};
+function canPlace(carried, onto) {
+  return Boolean(STACK_RULES[carried] && STACK_RULES[carried][onto]);
+}
 
 export class App {
   constructor(canvas, statusEl) {
@@ -34,10 +56,21 @@ export class App {
       dirty:   false,
       pending: null,     // first point of a 2-click segment tool
       mouse:   [0, 0],
+      resetProgress: 0,  // 0..1 fill of the full-reset hold (R)
+      menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
     };
 
     // Mouse drag tracking
     this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+
+    // Rewind (undo) stack of pre-action snapshots, newest last (max UNDO_MAX).
+    this._undo = [];
+    // True while a contiguous box-push is underway (so one push = one undo).
+    this._pushRun = false;
+    // True once a hold has fired a full reset, until the key is released.
+    this._resetConsumed = false;
+    // Transient status-bar message: { text, until } in seconds.
+    this._flash = null;
 
     this._lastTick = null;
     this._frameId  = null;
@@ -66,13 +99,119 @@ export class App {
     this._frameId = null;
   }
 
+  // ---- rewind (undo) ----
+  // Snapshot only the *input* state of the puzzle; derived state (beams,
+  // charge, gate open/shut) is recomputed by solve() on restore.
+  _captureState() {
+    const w = this.world;
+    const nodePos = {};
+    for (const id in w.nodes) nodePos[id] = [...w.nodes[id].pos];
+    return {
+      player: w.player ? [...w.player] : null,
+      player_block: w.player_block,
+      carrying: w.carrying,
+      carry_box: w.carry_box ? [...w.carry_box] : null,
+      boxes: w.boxes.map(b => [...b]),
+      links: [...w.links],
+      logic_links: w.logic_links.map(l => [...l]),
+      nodePos,
+    };
+  }
+
+  _restoreState(s) {
+    const w = this.world;
+    w.player = s.player ? [...s.player] : null;
+    w.player_block = s.player_block;
+    w.carrying = s.carrying;
+    w.carry_box = s.carry_box ? [...s.carry_box] : null;
+    w.boxes = s.boxes.map(b => [...b]);
+    w.links = new Set(s.links);
+    w.logic_links = s.logic_links.map(l => [...l]);
+    for (const id in s.nodePos) {
+      const n = w.nodes[id];
+      if (n) { n.pos[0] = s.nodePos[id][0]; n.pos[1] = s.nodePos[id][1]; }
+    }
+    w.solve(true, false);
+  }
+
+  // Signature of the *meaningful* puzzle state, excluding raw player position
+  // (so plain walking is never an undo point) and the live position of a
+  // carried connector (which tracks the player every frame). Used to decide
+  // whether a mouse drag actually changed anything worth rewinding.
+  _sig() {
+    const w = this.world;
+    const boxes = w.boxes.map(b => `${Math.round(b[0])},${Math.round(b[1])}`).join('|');
+    const links = [...w.links].sort().join('|');
+    const logic = w.logic_links.map(l => l.join(',')).sort().join('|');
+    return `${w.carrying}#${w.carry_box ? 'B' : '-'}#${boxes}#${links}#${logic}`;
+  }
+
+  // Push a pre-action snapshot, keeping at most UNDO_MAX of them.
+  _pushUndo(snap = null) {
+    this._undo.push(snap ?? this._captureState());
+    while (this._undo.length > UNDO_MAX) this._undo.shift();
+  }
+
+  _rewind() {
+    const ui = this.uiState;
+    if (this._undo.length === 0) { this._setFlash('Nothing to rewind'); return; }
+    const snap = this._undo.pop();
+    this._restoreState(snap);
+    ui.sel = null;
+    ui.live = true;
+    this._pushRun = false;
+    const left = this._undo.length;
+    this._setFlash(`Rewound — ${left} step${left === 1 ? '' : 's'} left`);
+  }
+
+  // ---- full reset (3-second hold of R) ----
+  _updateResetHold() {
+    const ui = this.uiState;
+    const since = this.input.resetHeldSince;
+    if (since === null) { ui.resetProgress = 0; this._resetConsumed = false; return; }
+    if (this._resetConsumed) { ui.resetProgress = 0; return; }
+    const elapsed = (performance.now() - since) / 1000;
+    ui.resetProgress = Math.max(0, Math.min(1, elapsed / RESET_HOLD_SEC));
+    if (elapsed >= RESET_HOLD_SEC) {
+      this._fullReset();
+      this._resetConsumed = true;
+      ui.resetProgress = 0;
+    }
+  }
+
+  _fullReset() {
+    this.world = build_level();
+    this.world.solve(true, false);
+    const ui = this.uiState;
+    ui.sel = null;
+    ui.live = true;
+    ui.dirty = false;
+    ui.dwell = 0;
+    this._undo = [];
+    this._pushRun = false;
+    this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+    this._setFlash('Playfield fully reset');
+  }
+
+  _setFlash(text, dur = 1.6) {
+    this._flash = { text, until: performance.now() / 1000 + dur };
+  }
+
   _scheduleFrame() {
     this._frameId = requestAnimationFrame(ts => this._frame(ts));
   }
 
   _frame(ts) {
+    this._updateResetHold();
     const now = ts / 1000;
     if (this._lastTick === null) this._lastTick = now;
+    // requestAnimationFrame is paused/throttled while the tab is hidden, so on
+    // return `now` can be seconds ahead of _lastTick. Without this guard the
+    // fixed-step loop would replay that whole backlog a few ticks per frame for
+    // a while, briefly moving the player several times too fast. If we're more
+    // than a few ticks behind (a hidden tab, a debugger pause, a GC hitch), drop
+    // the backlog and resume at one tick per frame instead of replaying it.
+    if (now - this._lastTick > TICK * 3) this._lastTick = now - TICK;
     // Fixed-step game logic while catching up (capped at 3 ticks to avoid spiral)
     let steps = 0;
     while (now - this._lastTick >= TICK && steps < 3) {
@@ -97,20 +236,39 @@ export class App {
     if ((vx || vy) && hasFocus) {
       const step = SPEED * TICK;
       const before = [...w.player];
+      // Snapshot before moving so a box-push can be rewound. Only bother when
+      // boxes exist — pure walking must never create an undo point.
+      const preMove = w.boxes.length ? this._captureState() : null;
+      const boxesBefore = w.boxes.map(b => [...b]);
       w.move_player(vx * step, 0);
       w.move_player(0, vy * step);
       moved = w.player[0] !== before[0] || w.player[1] !== before[1];
+      if (w.boxes.length) {
+        const pushed = w.boxes.some((b, i) =>
+          b[0] !== boxesBefore[i][0] || b[1] !== boxesBefore[i][1]);
+        if (pushed && !this._pushRun) { this._pushUndo(preMove); this._pushRun = true; }
+        if (!pushed) this._pushRun = false;
+      }
+    } else {
+      this._pushRun = false;
     }
 
-    // Sync carried connector to player
+    // Sync carried connector / box to the player
     if (w.carrying) {
       w.nodes[w.carrying].pos[0] = w.player[0];
       w.nodes[w.carrying].pos[1] = w.player[1];
       ui.dirty = true;
     }
+    if (w.carry_box) {
+      w.carry_box[0] = w.player[0];
+      w.carry_box[1] = w.player[1];
+      ui.dirty = true;
+    }
 
-    // Drop selection if out of reach
-    if (ui.sel && !this._inReach(ui.sel)) ui.sel = null;
+    // A connector can only be "ready" (selected) while it is being carried.
+    if (ui.sel && ui.sel !== w.carrying) ui.sel = null;
+    // Close the stack chooser if the player walks away.
+    if (ui.menu && moved) ui.menu = null;
 
     // Dwell / player-as-blocker
     ui.dwell = w.player_touching_beam() ? ui.dwell + TICK : 0;
@@ -134,6 +292,8 @@ export class App {
     const ui = this.uiState;
     if (action === 'carry') {
       if (w.carrying) {
+        // Drop the connector on the spot (snap onto a box at the feet, as before).
+        this._pushUndo();
         const cid = w.carrying;
         let best = null, bd = BOX_R + 8 + 8; // PLAYER_R
         for (const bx of w.boxes) {
@@ -142,25 +302,32 @@ export class App {
         }
         if (best) { w.nodes[cid].pos[0] = best[0]; w.nodes[cid].pos[1] = best[1]; }
         w.carrying = null;
+        ui.sel = null;                       // dropped — no longer operable
+        ui.live = true; w.step(now);
+      } else if (w.carry_box) {
+        // Drop the carried box at the player's feet.
+        this._pushUndo();
+        w.carry_box[0] = w.player[0];
+        w.carry_box[1] = w.player[1];
+        w.boxes.push(w.carry_box);
+        w.carry_box = null;
+        ui.live = true; w.step(now);
       } else {
-        let best = null, bd = 30;
-        for (const n of w.connectors()) {
-          const d = dist(w.player, n.pos);
-          if (d < bd && !w.reach_blocked(w.player, n.pos)) { best = n; bd = d; }
-        }
-        if (best) w.carrying = best.id;
+        // Pick up the nearest object in the active radius, armed by default.
+        this._nearestPickup();
       }
-      ui.live = true; w.step(now);
     } else if (action === 'clear') {
-      if (ui.sel && this._inReach(ui.sel)) {
+      if (ui.sel && ui.sel === w.carrying) {
+        this._pushUndo();
         w.clear_links_of(ui.sel); ui.live = true; w.step(now);
       }
-    } else if (action === 'reset') {
-      w.player = [...w.player_start]; w.carrying = null;
-      w.solve(true, false); ui.live = true;
+    } else if (action === 'undo') {
+      this._rewind();
     } else if (action === 'gates') {
       w.solve(true, false); ui.live = true;
     }
+    // Note: 'reset' is no longer a one-shot action — a full reset is driven by
+    // a continuous 3-second hold of R, handled in _updateResetHold().
   }
 
   _inReach(nid) {
@@ -172,10 +339,17 @@ export class App {
   // ---- mouse ----
   _onMouseDown([x, y], e) {
     const w = this.world;
+    this._downT = performance.now();         // for click-vs-hold on release
     this._drag.moved = false;
     this._drag.linkHit = null;
     if (w.player && dist([x,y], w.player) < 14) {
-      this._drag = { active:true, kind:'player', ref:null, moved:false, linkHit:null };
+      // Capture a pre-drag snapshot + signature; committed to the undo stack
+      // only if the drag actually changes the puzzle (a wire toggle or a box
+      // push), so a drag that only walks the player is never an undo point.
+      this._drag = {
+        active: true, kind: 'player', ref: null, moved: false, linkHit: null,
+        preSnap: this._captureState(), preSig: this._sig(), committed: false,
+      };
     } else {
       this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
     }
@@ -192,18 +366,32 @@ export class App {
         const cid = w.carrying;
         w.nodes[cid].pos[0] = w.player[0];
         w.nodes[cid].pos[1] = w.player[1];
-        // Toggle link when dragged connector passes over a node (debounced)
-        let tgt = null, best = 18;
-        for (const nd of Object.values(w.nodes)) {
-          if (nd.id===cid || !['source','receiver','connector'].includes(nd.kind)) continue;
-          const d = dist(w.player, nd.pos);
-          if (d < best) { tgt = nd; best = d; }
+        // Auto-wire on pass-over only while the connector is "ready" (selected).
+        // Toggled off-ready, a drag just repositions without rewiring.
+        if (ui.sel === cid) {
+          let tgt = null, best = 18;
+          for (const nd of Object.values(w.nodes)) {
+            if (nd.id===cid || !['source','receiver','connector'].includes(nd.kind)) continue;
+            const d = dist(w.player, nd.pos);
+            if (d < best) { tgt = nd; best = d; }
+          }
+          if (tgt === null) { this._drag.linkHit = null; }
+          else if (tgt.id !== this._drag.linkHit) {
+            w.toggle_link(cid, tgt.id);
+            this._drag.linkHit = tgt.id;
+          }
+        } else {
+          this._drag.linkHit = null;
         }
-        if (tgt === null) { this._drag.linkHit = null; }
-        else if (tgt.id !== this._drag.linkHit) {
-          w.toggle_link(cid, tgt.id);
-          this._drag.linkHit = tgt.id;
-        }
+      }
+      if (w.carry_box) {
+        w.carry_box[0] = w.player[0];
+        w.carry_box[1] = w.player[1];
+      }
+      // Commit one undo point per drag, the first time it changes anything.
+      if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
+        this._pushUndo(this._drag.preSnap);
+        this._drag.committed = true;
       }
       ui.live = true; w.step(performance.now()/1000);
     }
@@ -218,7 +406,8 @@ export class App {
       return;
     }
     this._drag.active = false;
-    if (ui.mode === 'play') this._playClick(x, y);
+    const held = (performance.now() - (this._downT ?? performance.now())) >= HOLD_MS;
+    if (ui.mode === 'play') this._playClick(x, y, held);
     ui.live = true; w.step(performance.now()/1000);
   }
 
@@ -236,23 +425,218 @@ export class App {
     }
   }
 
-  _playClick(x, y) {
+  _playClick(x, y, held) {
     const w = this.world;
     const ui = this.uiState;
-    if (ui.sel && !this._inReach(ui.sel)) ui.sel = null;
-    const n = this._nodeAt(x, y);
-    if (!n) { ui.sel = null; return; }
-    if (n.kind === 'connector') {
-      if (ui.sel && ui.sel !== n.id) {
-        w.toggle_link(ui.sel, n.id);
-      } else if (ui.sel === n.id) {
-        ui.sel = null;
-      } else if (this._inReach(n.id)) {
-        ui.sel = n.id;
+
+    // A click while a chooser menu is open resolves (or cancels) the menu.
+    if (ui.menu) { this._handleMenuClick(x, y); return; }
+
+    // Empty-handed: pick something up. A quick click takes the top of the
+    // stack; a hold on a real stack (2+ items) opens a chooser menu.
+    if (!w.carrying && !w.carry_box) { this._clickPickup(x, y, held); return; }
+
+    // Carrying a connector: operate it.
+    if (w.carrying) {
+      const cid = w.carrying;
+      // Click the carried connector itself (on the player) → toggle ready.
+      if (dist([x, y], w.player) < CONN_R + 4) {
+        ui.sel = (ui.sel === cid) ? null : cid;
+        return;
       }
-    } else if (ui.sel) {
-      w.toggle_link(ui.sel, n.id);
+      // Ready + click a node → program a link (aim). Not distance-limited.
+      const n = this._nodeAt(x, y);
+      if (ui.sel === cid && n && n.id !== cid) {
+        this._pushUndo();
+        w.toggle_link(cid, n.id);
+        ui.live = true; w.step(performance.now() / 1000);
+        return;
+      }
     }
+
+    // Carrying a connector (not a link) or a box: set it down at the click.
+    this._placeCarriedAt(x, y);
+  }
+
+  // The pickable items under (x, y), top of the stack first. The only stack
+  // type today is a box with a connector resting on it → [connector, box].
+  _stackAt(x, y) {
+    const w = this.world;
+    let conn = null, cd = 16;
+    for (const c of w.connectors()) {
+      const d = dist([x, y], c.pos);
+      if (d < cd) { conn = c; cd = d; }
+    }
+    let box = null, bd = BOX_R + 4;
+    for (const bx of w.boxes) {
+      const d = dist([x, y], bx);
+      if (d < bd) { box = bx; bd = d; }
+    }
+    const items = [];
+    if (conn) {
+      const lbl = (w.nodes[conn.id].label || '').trim();
+      items.push({ kind: 'connector', id: conn.id, label: lbl ? `Connector ${lbl}` : 'Connector' });
+    }
+    if (box) items.push({ kind: 'box', box, label: 'Box' });
+    return items;            // top (connector) first, box underneath
+  }
+
+  // Empty-handed click: take the top item, or — on a hold over a 2+ stack —
+  // open a chooser menu. Honors radius + no-teleport-through-barriers.
+  _clickPickup(x, y, held) {
+    const w = this.world;
+    const items = this._stackAt(x, y);
+    if (items.length === 0) return false;
+    const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
+    if (dist(w.player, loc) >= CONNECT_REACH) return false;
+    if (w.reach_blocked(w.player, loc)) { this._setFlash("Can't reach that — blocked"); return false; }
+    if (held && items.length >= 2) { this._openMenu(loc[0], loc[1], items); return true; }
+    return this._pickItem(items[0]);
+  }
+
+  // E key: nearest object — every connector (the top of any stack), plus boxes
+  // that have no connector on them (an occupied box's top connector is already
+  // a candidate). Honors radius + no-teleport safeguard.
+  _nearestPickup() {
+    const w = this.world;
+    let pick = null, best = CONNECT_REACH, blocked = false;
+    const consider = (loc, item) => {
+      const d = dist(w.player, loc);
+      if (d >= best) return;
+      if (w.reach_blocked(w.player, loc)) { blocked = true; return; }
+      pick = item; best = d;
+    };
+    for (const c of w.connectors()) consider(c.pos, { kind: 'connector', id: c.id });
+    for (const bx of w.boxes) {
+      const occupied = w.connectors().some(c => dist(c.pos, bx) < BOX_R);
+      if (!occupied) consider(bx, { kind: 'box', box: bx });
+    }
+    if (!pick) { if (blocked) this._setFlash("Can't reach that — blocked"); return false; }
+    return this._pickItem(pick);
+  }
+
+  // Take a specific item into the player's hands (enforces the single-item rule).
+  _pickItem(item) {
+    const w = this.world;
+    const ui = this.uiState;
+    if (w.carrying || w.carry_box) { this._handsFull(); return false; }
+    this._pushUndo();
+    if (item.kind === 'connector') {
+      w.carrying = item.id;
+      ui.sel = item.id;            // armed (ready) by default
+    } else {
+      // Lift the box off the field. Any connector resting on it de-elevates
+      // automatically, since elevation is read from box proximity each frame.
+      const idx = w.boxes.indexOf(item.box);
+      if (idx !== -1) w.boxes.splice(idx, 1);
+      w.carry_box = item.box;      // now rides with the player
+      ui.sel = null;
+    }
+    ui.live = true; w.step(performance.now() / 1000);
+    return true;
+  }
+
+  // ---- stack chooser menu ----
+  _openMenu(x, y, items) {
+    const MW = 116, MH = 26, GAP = 4;
+    const laid = items.map((it, i) => ({
+      ...it,
+      rect: [x - MW / 2, y + 14 + i * (MH + GAP), MW, MH],
+    }));
+    this.uiState.menu = { x, y, items: laid };
+  }
+
+  _handleMenuClick(x, y) {
+    const menu = this.uiState.menu;
+    this.uiState.menu = null;
+    if (!menu) return;
+    for (const it of menu.items) {
+      const [rx, ry, rw, rh] = it.rect;
+      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) { this._pickItem(it); return; }
+    }
+    // clicked outside the menu → just cancel
+  }
+
+  // Classify what sits under (x, y) for placement, ignoring `excludeId`.
+  // Returns { type, point } where type is one of the STACK_RULES target kinds.
+  _targetUnder(x, y, excludeId) {
+    const w = this.world;
+    let box = null, bd = BOX_R + 4;
+    for (const bx of w.boxes) {
+      const d = dist([x, y], bx);
+      if (d < bd) { box = bx; bd = d; }
+    }
+    if (box) {
+      const occupied = w.connectors().some(
+        c => c.id !== excludeId && dist(c.pos, box) < BOX_R);
+      return { type: occupied ? 'box+connector' : 'box', point: [box[0], box[1]] };
+    }
+    let conn = null, cd = 16;
+    for (const c of w.connectors()) {
+      if (c.id === excludeId) continue;
+      const d = dist([x, y], c.pos);
+      if (d < cd) { conn = c; cd = d; }
+    }
+    if (conn) return { type: 'connector', point: [conn.pos[0], conn.pos[1]] };
+    return { type: 'ground', point: [x, y] };
+  }
+
+  // Set the carried object (connector or box) down at (x, y), classifying the
+  // target and applying the stacking rules. Honors the no-teleport safeguards:
+  // the drop point must be inside the active radius and reachable in a straight
+  // line (no wall / force field / barrier between the player and the point).
+  _placeCarriedAt(x, y) {
+    const w = this.world;
+    const ui = this.uiState;
+    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    if (!carried || !w.player) return false;
+    const tgt = this._targetUnder(x, y, w.carrying);
+
+    if (dist(w.player, tgt.point) >= CONNECT_REACH) { this._setFlash('Out of reach'); return false; }
+    if (w.reach_blocked(w.player, tgt.point)) { this._setFlash("Can't place there — blocked"); return false; }
+    if (!canPlace(carried, tgt.type)) { this._handsFull(); return false; }
+
+    this._pushUndo();
+    if (carried === 'connector') {
+      const cid = w.carrying;
+      w.nodes[cid].pos[0] = tgt.point[0];
+      w.nodes[cid].pos[1] = tgt.point[1];
+      w.carrying = null;
+      ui.sel = null;
+    } else {
+      w.carry_box[0] = tgt.point[0];
+      w.carry_box[1] = tgt.point[1];
+      w.boxes.push(w.carry_box);
+      w.carry_box = null;
+    }
+    ui.live = true; w.step(performance.now() / 1000);
+    return true;
+  }
+
+  // Disallowed grab/stack while carrying: a beep and a brief notice, no change.
+  _handsFull() {
+    this._beep();
+    this._setFlash('My hands are full');
+  }
+
+  _beep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!this._audioCtx) this._audioCtx = new Ctx();
+      const ctx = this._audioCtx;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = 196;
+      const t = ctx.currentTime;
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.13);
+    } catch (e) { /* audio unavailable — fail silently */ }
   }
 
   _nodeAt(x, y, kinds = null) {
@@ -275,6 +659,11 @@ export class App {
     const w = this.world;
     const gates = w.ffs.map(ff => `${ff.id}: ${ff.is_open ? 'open' : 'shut'}`).join('  ');
     const goal = w.at_goal() ? '   *** GOAL REACHED ***' : '';
-    if (this.statusEl) this.statusEl.textContent = `gates: ${gates}${goal}`;
+    let flash = '';
+    if (this._flash) {
+      if (performance.now() / 1000 < this._flash.until) flash = `   —   ${this._flash.text}`;
+      else this._flash = null;
+    }
+    if (this.statusEl) this.statusEl.textContent = `gates: ${gates}${goal}${flash}`;
   }
 }

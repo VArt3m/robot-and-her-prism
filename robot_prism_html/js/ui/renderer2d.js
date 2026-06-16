@@ -199,6 +199,16 @@ export class Renderer2D {
       ctx.strokeRect(x-BOX_R, y-BOX_R, 2*BOX_R, 2*BOX_R);
     }
 
+    // Carried box (rides on the player) — dashed outline to read as "held".
+    if (w.carry_box) {
+      const [bxc, byc] = w.carry_box;
+      ctx.fillStyle = '#c9a96a';
+      ctx.fillRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
+      ctx.strokeStyle = '#5b4523'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
+      ctx.strokeRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
+      ctx.setLineDash([]);
+    }
+
     // Nodes
     for (const n of Object.values(w.nodes)) {
       const [x, y] = n.pos;
@@ -307,6 +317,43 @@ export class Renderer2D {
       ctx.lineTo(uiState.mouse[0], uiState.mouse[1]);
       ctx.strokeStyle = '#888'; ctx.lineWidth = 1;
       ctx.setLineDash([2,2]); ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    // Stack chooser menu (opened by holding the mouse over a stack).
+    if (uiState.menu && uiState.menu.items) {
+      ctx.setLineDash([]);
+      for (const it of uiState.menu.items) {
+        const [rx, ry, rw, rh] = it.rect;
+        ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(rx, ry, rw, rh);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(it.label, rx + 10, ry + rh / 2);
+      }
+    }
+
+    // Full-reset hold gauge (centered). Visible while R is held; fills over 3s.
+    const rp = uiState.resetProgress ?? 0;
+    if (rp > 0) {
+      const bw = 380, bh = 56;
+      const bx = (WORLD_W - bw) / 2, by = (WORLD_H - bh) / 2;
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(20, 22, 28, 0.85)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 2;
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText('RESETTING \u2014 keep holding R', bx + 16, by + 17);
+      const tx = bx + 16, ty = by + 32, tw = bw - 32, th = 12;
+      ctx.fillStyle = '#3a3f4b';
+      ctx.fillRect(tx, ty, tw, th);
+      ctx.fillStyle = '#e23b3b';
+      ctx.fillRect(tx, ty, tw * Math.min(1, rp), th);
     }
 
     // Reset transform so nothing leaks between frames.

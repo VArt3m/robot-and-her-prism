@@ -12,6 +12,7 @@ const KEY_MAP = {
   'KeyC': 'clear',
   'KeyR': 'reset',
   'KeyG': 'gates',
+  'KeyZ': 'undo',
 };
 
 export class InputHandler {
@@ -22,6 +23,10 @@ export class InputHandler {
     this.held = new Set();
     this.mouse = [0, 0];
     this.hasFocus = true;
+
+    // Timestamp (ms) when the reset key was pressed; null when not held.
+    // app.js uses this to require a continuous 3-second hold for a full reset.
+    this.resetHeldSince = null;
 
     // Set by App to convert CSS canvas coords → world coords.
     // If null, raw CSS coords are used (fallback for tests / headless).
@@ -45,6 +50,9 @@ export class InputHandler {
       if (!action) return;
       if (['up','down','left','right'].includes(action)) {
         this.held.add(action);
+      } else if (action === 'reset') {
+        // Full reset is a timed hold, not a one-shot tap (handled in app.js).
+        if (this.resetHeldSince === null) this.resetHeldSince = performance.now();
       } else {
         this._actions.push(action);
       }
@@ -55,11 +63,13 @@ export class InputHandler {
     window.addEventListener('keyup', e => {
       const action = KEY_MAP[e.code];
       if (action) this.held.delete(action);
+      if (action === 'reset') this.resetHeldSince = null;
     });
 
     window.addEventListener('blur', () => {
       this.held.clear();
       this.hasFocus = false;
+      this.resetHeldSince = null;
     });
 
     window.addEventListener('focus', () => { this.hasFocus = true; });

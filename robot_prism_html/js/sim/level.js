@@ -37,6 +37,8 @@ export function build_level() {
   w.add(new Node('con_1', 'connector', [845,590], { label:'1' }));
   w.add(new Node('con_2', 'connector', [915,590], { label:'2' }));
 
+  w.boxes.push([580, 500]);   // test box in the open area near the player start
+
   w.goal = [840, 70];
   w.player_start = [470, 500];
   w.player = [...w.player_start];
