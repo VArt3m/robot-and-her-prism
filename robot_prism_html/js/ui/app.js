@@ -65,6 +65,7 @@ export class App {
       resetProgress: 0,  // 0..1 fill of the full-reset hold (R)
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
+      placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
     };
 
     // Mouse drag tracking
@@ -265,15 +266,10 @@ export class App {
       // and is never itself an undo point.)
     }
 
-    // Sync carried connector / box to the player
-    if (w.carrying) {
-      w.nodes[w.carrying].pos[0] = w.player[0];
-      w.nodes[w.carrying].pos[1] = w.player[1];
-      ui.dirty = true;
-    }
-    if (w.carry_box) {
-      w.carry_box[0] = w.player[0];
-      w.carry_box[1] = w.player[1];
+    // Glue the carried connector / box to its live placement preview (the
+    // "shadow") so it is shown where it would be set down — not on top of her.
+    if (w.carrying || w.carry_box) {
+      this._syncCarried();
       ui.dirty = true;
     }
 
@@ -306,9 +302,10 @@ export class App {
       // E released. If the hold already opened the chooser, consume it silently.
       if (this._carryConsumed) return;
       if (w.carrying || w.carry_box) {
-        // Drop the carried item at the closest free spot in the facing
-        // direction (clockwise fallback). See _dropCarriedDirectional().
-        this._dropCarriedDirectional();
+        // Set the carried item down where it is being previewed (the shadow).
+        // The preview is recomputed continuously and is always a legal, in-reach
+        // spot, so the commit needs no further reach / teleport test.
+        this._commitPlacement(this.uiState.placePreview || this._resolvePlacement(this.uiState.mouse));
       } else {
         // Pick up the nearest object in the active radius, armed by default.
         this._nearestPickup();
@@ -443,6 +440,13 @@ export class App {
       }
       ui.live = true; w.step(performance.now() / 1000);
     }
+
+    // Plain carrying (no active drag gesture): the cursor aims the placement
+    // shadow, so refresh it immediately for a crisp, frame-accurate preview.
+    if (!this._drag.active && (w.carrying || w.carry_box)) {
+      this._syncCarried();
+      ui.live = true;
+    }
   }
 
   _onMouseUp([x, y], e) {
@@ -507,8 +511,10 @@ export class App {
       if (!n && this._deleteIntentAt(x, y)) return;
     }
 
-    // Carrying a connector (not a link) or a box: set it down at the click.
-    this._placeCarriedAt(x, y);
+    // Carrying a connector (not a link) or a box: set it down. A click predicts
+    // the same shadow the cursor was previewing — the item lands at the legal,
+    // in-reach spot in that direction, never across a wall.
+    this._commitPlacement(this._resolvePlacement([x, y]));
   }
 
   // Delete the intent ray(s) under a click while carrying a connector. The hit
@@ -716,107 +722,123 @@ export class App {
     return { type: 'ground', point: [x, y] };
   }
 
-  // Set the carried object (connector or box) down at (x, y), classifying the
-  // target and applying the stacking rules. Honors the no-teleport safeguards:
-  // the drop point must be inside the active radius and reachable in a straight
-  // line (no wall / force field / barrier between the player and the point).
-  _placeCarriedAt(x, y) {
+  // Keep the carried item glued to its live placement preview (the "shadow").
+  // While a drag gesture is in progress (walking her, or pulling a wire) the
+  // item rides on the player exactly as before; otherwise it floats at the spot
+  // where it would land, and she looks that way. Called every tick and on every
+  // bare mouse move, so the preview is always current.
+  _syncCarried() {
     const w = this.world;
     const ui = this.uiState;
-    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
-    if (!carried || !w.player) return false;
-    const tgt = this._targetUnder(x, y, w.carrying);
-
-    if (dist(w.player, tgt.point) >= CONNECT_REACH) { this._setFlash('Out of reach'); return false; }
-    if (w.reach_blocked(w.player, tgt.point)) { this._setFlash("Can't place there — blocked"); return false; }
-    if (!canPlace(carried, tgt.type)) { this._handsFull(); return false; }
-
-    if (carried === 'connector') {
-      const cid = w.carrying;
-      if (tgt.type === 'box') {
-        // Stack onto the (empty) box → elevated. The box's cell is clear of
-        // anything else (it is material), so no extra room check is needed.
-        this._pushUndo();
-        w.nodes[cid].pos[0] = tgt.point[0];
-        w.nodes[cid].pos[1] = tgt.point[1];
-        w.nodes[cid].elevated = true;
-      } else {
-        // Ground placement — a connector is material, so it needs room.
-        if (w.object_pos_blocked(tgt.point, CONN_R, { ignoreConn: cid })) {
-          this._setFlash('No room there'); return false;
-        }
-        this._pushUndo();
-        w.nodes[cid].pos[0] = tgt.point[0];
-        w.nodes[cid].pos[1] = tgt.point[1];
-        w.nodes[cid].elevated = false;
-      }
-      w.carrying = null;
-      ui.sel = null;
-    } else {
-      if (w.object_pos_blocked(tgt.point, BOX_R)) { this._setFlash('No room there'); return false; }
-      this._pushUndo();
-      w.carry_box[0] = tgt.point[0];
-      w.carry_box[1] = tgt.point[1];
-      w.boxes.push(w.carry_box);
-      w.carry_box = null;
+    if (!(w.carrying || w.carry_box) || !w.player) { ui.placePreview = null; return; }
+    const sit = (p) => {
+      if (w.carrying) { w.nodes[w.carrying].pos[0] = p[0]; w.nodes[w.carrying].pos[1] = p[1]; }
+      if (w.carry_box) { w.carry_box[0] = p[0]; w.carry_box[1] = p[1]; }
+    };
+    if (this._drag.active) {
+      // Active gesture: the drag handlers keep the item on the player.
+      ui.placePreview = null;
+      sit(w.player);
+      return;
     }
-    ui.live = true; w.step(performance.now() / 1000);
-    return true;
+    // Aim at the cursor. Her eyes follow it ONLY while it is inside the
+    // operating radius (mouse-placement). Outside it, E-logic holds: her gaze
+    // freezes, and the held item stays put in that direction instead of
+    // chasing the far cursor.
+    const aim = ui.mouse;
+    const dx = aim[0] - w.player[0], dy = aim[1] - w.player[1];
+    const dl = Math.hypot(dx, dy);
+    if (dl > PLAYER_R && dl < CONNECT_REACH) w.facing = [dx / dl, dy / dl];
+    const place = this._resolvePlacement(aim);
+    ui.placePreview = place;
+    sit(place ? place.spot : w.player);   // nowhere legal → keep it on her
   }
 
-  // Drop the carried item (connector or box) at the closest free spot in the
-  // direction the player faces. If the facing spot is impossible, search
-  // clockwise; if a whole ring is blocked, step farther out. A box must land
-  // somewhere material-legal; a connector just needs a clear straight line and
-  // avoids landing on a box (use a click to stack a connector onto a box).
-  _dropCarriedDirectional() {
+  // Compute where the carried item would be set down if dropped right now,
+  // given an aim point (the cursor). The returned spot is, by construction,
+  // legal AND reachable: clear of every solid and other object, with an
+  // unobstructed straight line from the player to it — which is why the commit
+  // step needs no separate "in reach / not teleporting" test.
+  //
+  // The prediction follows whichever action the cursor position implies:
+  //   • cursor OUTSIDE the operating radius  → predict the E-drop: the item is
+  //     set down right next to her, in the direction she is looking (facing).
+  //     Drawn SOLID (translucent === false); the cursor out here is ignored.
+  //   • cursor INSIDE the operating radius   → predict the mouse-click drop: the
+  //     item lands right at the cursor (clamped to a legal, in-reach spot).
+  //     Drawn TRANSLUCENT, a ghost of where a click would set it.
+  // Returns { carried, spot, type, elevated, translucent } or null when there
+  // is genuinely no legal spot in reach.
+  _resolvePlacement(aim) {
     const w = this.world;
     const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
-    if (!carried || !w.player) return false;
-
-    // Auto-stack: if a carried connector faces a stackable (empty) box that is
-    // in reach, E sets it onto that box's centre (elevated). Otherwise the
-    // directional ground-drop below runs.
-    if (carried === 'connector') {
-      const box = this._boxAheadForStack();
-      if (box) {
-        const cid = w.carrying;
-        this._pushUndo();
-        w.nodes[cid].pos[0] = box[0];
-        w.nodes[cid].pos[1] = box[1];
-        w.nodes[cid].elevated = true;
-        w.carrying = null;
-        this.uiState.sel = null;
-        this.uiState.live = true; w.step(performance.now() / 1000);
-        return true;
-      }
-    }
-
+    if (!carried || !w.player) return null;
     const r = carried === 'box' ? BOX_R : CONN_R;
-    const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
-    const base = Math.atan2(f[1], f[0]);
-    const gap = PLAYER_R + r + 2;
-    const STEP_A = Math.PI / 12;   // 15°, clockwise (screen y points down)
-    for (let extra = 0; extra <= r * 6; extra += r) {
-      const radius = gap + extra;
-      for (let k = 0; k < 24; k++) {
-        const ang = base + k * STEP_A;
-        const spot = [w.player[0] + Math.cos(ang) * radius,
-                      w.player[1] + Math.sin(ang) * radius];
-        // Everything material now (boxes and connectors): the spot must be
-        // clear of all solids and other objects.
-        if (!w.object_pos_blocked(spot, r, { ignoreConn: w.carrying })) {
-          this._commitDrop(carried, spot); return true;
-        }
+    const P = w.player;
+    const gap = PLAYER_R + r + 2;            // closest the centre may sit to her
+    const maxD = Math.max(gap, CONNECT_REACH - 1);  // centre stays within reach
+
+    // Inside the operating radius the cursor is a precise click target; outside
+    // it E-logic takes over and the cursor is ignored entirely.
+    const clickMode = dist(P, aim) < CONNECT_REACH;
+
+    // Aim direction:
+    //   • click-mode → toward the cursor (the precise target the click implies).
+    //   • E-mode     → her eyes (facing). The cursor's position out here does
+    //     NOT steer the drop, so a far-roaming cursor never drags the item; it
+    //     stays put next to her, in the direction she is looking.
+    let ux, uy, d;
+    if (clickMode) {
+      let dx = aim[0] - P[0], dy = aim[1] - P[1];
+      d = Math.hypot(dx, dy);
+      if (d < 1e-6) {                       // cursor on top of her → use facing
+        const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+        dx = f[0]; dy = f[1]; d = Math.hypot(dx, dy) || 1;
+      }
+      ux = dx / d; uy = dy / d;
+    } else {
+      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+      const fl = Math.hypot(f[0], f[1]) || 1;
+      ux = f[0] / fl; uy = f[1] / fl;
+      d = 0;                                // unused in E-mode (wantDist = gap)
+    }
+
+    // A carried connector can stack onto an empty box (elevated):
+    //   • click-mode: the box directly under the cursor, if in reach + clear.
+    //   • E-mode:     the empty in-reach box most aligned with the facing dir.
+    if (carried === 'connector') {
+      let boxPt = null;
+      if (clickMode) {
+        const tgt = this._targetUnder(aim[0], aim[1], w.carrying);
+        if (tgt.type === 'box'
+            && dist(P, tgt.point) < CONNECT_REACH
+            && !w.reach_blocked(P, tgt.point)) boxPt = tgt.point;
+      } else {
+        const b = this._boxAheadForStack();
+        if (b) boxPt = b;
+      }
+      if (boxPt) {
+        return { carried, spot: [boxPt[0], boxPt[1]], type: 'box',
+                 elevated: true, translucent: clickMode };
       }
     }
-    this._setFlash('No room to drop it');
-    this._beep();
-    return false;
+
+    // Ground placement. click-mode honours the cursor distance (land at the
+    // cursor); E-mode hugs the player — the closest legal spot — in the facing
+    // direction, so an E-drop sets the item down right next to her rather than
+    // flung out toward a distant cursor. Either way the resolver slides inward
+    // along the ray to the first clear, reachable spot, sweeping clockwise as a
+    // fallback. The simulation layer owns this geometry (Motion.placement_spot)
+    // and guarantees a legal result.
+    const wantDist = clickMode ? d : gap;
+    const spot = w.placement_spot(P, ux, uy, r, gap, maxD, wantDist, w.carrying);
+    if (!spot) return null;
+    return { carried, spot, type: 'ground', elevated: false, translucent: clickMode };
   }
 
   // The empty, in-reach box most aligned with the facing direction (within a
-  // ~45° cone), or null. Used by E to auto-stack a carried connector.
+  // ~45° cone), or null. Used by the E-drop prediction to auto-stack a carried
+  // connector onto a box it is pointed at.
   _boxAheadForStack() {
     const w = this.world;
     const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
@@ -835,24 +857,34 @@ export class App {
     return best;
   }
 
-  _commitDrop(carried, spot) {
+  // Set the carried item down at an already-resolved placement (from
+  // _resolvePlacement). The spot is guaranteed legal and reachable, so the only
+  // rule still worth checking is the stacking table — and the resolver never
+  // returns a target that violates it, so canPlace is just future-proofing.
+  _commitPlacement(place) {
     const w = this.world;
     const ui = this.uiState;
+    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    if (!carried) return false;
+    if (!place) { this._setFlash('No room to set it down'); this._beep(); return false; }
+    if (!canPlace(carried, place.type)) { this._handsFull(); return false; }
     this._pushUndo();
     if (carried === 'connector') {
       const cid = w.carrying;
-      w.nodes[cid].pos[0] = spot[0];
-      w.nodes[cid].pos[1] = spot[1];
-      w.nodes[cid].elevated = false;   // dropped on the ground
+      w.nodes[cid].pos[0] = place.spot[0];
+      w.nodes[cid].pos[1] = place.spot[1];
+      w.nodes[cid].elevated = (place.type === 'box');
       w.carrying = null;
       ui.sel = null;
     } else {
-      w.carry_box[0] = spot[0];
-      w.carry_box[1] = spot[1];
+      w.carry_box[0] = place.spot[0];
+      w.carry_box[1] = place.spot[1];
       w.boxes.push(w.carry_box);
       w.carry_box = null;
     }
+    ui.placePreview = null;
     ui.live = true; w.step(performance.now() / 1000);
+    return true;
   }
 
   // Disallowed grab/stack while carrying: a beep and a brief notice, no change.

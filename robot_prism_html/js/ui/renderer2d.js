@@ -189,6 +189,18 @@ export class Renderer2D {
       }
     }
 
+    // Placement preview ("shadow"): a guide line from the player to the spot
+    // where the carried item would land. The item itself is drawn at that spot
+    // (translucent) by the box / connector code below.
+    const pp = uiState.placePreview;
+    if (pp && w.player) {
+      ctx.beginPath();
+      ctx.moveTo(w.player[0], w.player[1]);
+      ctx.lineTo(pp.spot[0], pp.spot[1]);
+      ctx.strokeStyle = pp.elevated ? '#8e44ad' : '#2e8b57';
+      ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+    }
+
     // Boxes
     for (const bx of w.boxes) {
       const [x, y] = bx;
@@ -199,14 +211,19 @@ export class Renderer2D {
       ctx.strokeRect(x-BOX_R, y-BOX_R, 2*BOX_R, 2*BOX_R);
     }
 
-    // Carried box (rides on the player) — dashed outline to read as "held".
+    // Carried box (shown at its placement shadow). Translucent when the cursor
+    // is inside the operating radius (a click-placement preview); solid when
+    // outside it (an E-drop preview). Dashed outline reads as "where it lands".
     if (w.carry_box) {
       const [bxc, byc] = w.carry_box;
+      ctx.save();
+      ctx.globalAlpha = (pp && pp.translucent === false) ? 1 : 0.55;
       ctx.fillStyle = '#c9a96a';
       ctx.fillRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
       ctx.strokeStyle = '#5b4523'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
       ctx.strokeRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
       ctx.setLineDash([]);
+      ctx.restore();
     }
 
     // Nodes
@@ -261,13 +278,27 @@ export class Renderer2D {
         ctx.fillText(n.kind === 'and' ? 'AND' : 'OR', x, y);
 
       } else if (n.kind === 'connector') {
+        const carriedNow = w.carrying === n.id;
+        const wouldElevate = carriedNow && pp && pp.elevated;
         const near = mode === 'play' && w.player
-          && (w.carrying===n.id || dist(w.player, n.pos)<CONNECT_REACH);
+          && (carriedNow || dist(w.player, n.pos)<CONNECT_REACH);
         const dead = Boolean(w.dead_conns && w.dead_conns.has(n.id));
-        const ring = dead ? '#e23b3b'
-          : (sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222'));
+        const ring = carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
+          : (dead ? '#e23b3b'
+          : (sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222')));
         const col = w.emit[n.id];
-        if (w._conn_elevated(n.id)) {
+        // Carried connectors are placement previews. Inside the operating
+        // radius (click-mode) draw translucent — a ghost of where a click would
+        // set it; outside it (E-mode) draw solid — a firm preview of the E-drop.
+        const ghostAlpha = (pp && pp.translucent === false) ? 1 : 0.6;
+        if (carriedNow) ctx.save();
+        if (carriedNow) {
+          ctx.globalAlpha = ghostAlpha;
+          ctx.beginPath(); ctx.arc(x, y, 16, 0, 2*Math.PI);
+          ctx.strokeStyle = ring; ctx.lineWidth = 1.5;
+          ctx.setLineDash([2,3]); ctx.stroke(); ctx.setLineDash([]);
+        }
+        if (!carriedNow && w._conn_elevated(n.id)) {
           ctx.beginPath(); ctx.arc(x, y, 16, 0, 2*Math.PI);
           ctx.strokeStyle = '#8e44ad'; ctx.lineWidth = 2;
           ctx.setLineDash([2,2]); ctx.stroke(); ctx.setLineDash([]);
@@ -278,7 +309,7 @@ export class Renderer2D {
         ctx.strokeStyle = ring; ctx.lineWidth = 3; ctx.stroke();
         ctx.fillStyle = '#111'; ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        if (dead) {
+        if (dead && !carriedNow) {
           // Colour conflict — dead until the incoming colours reduce to one.
           // The incoming rays are still real (drawn solid, still blocking);
           // only this connector's own output is inert. The X marks that.
@@ -291,10 +322,11 @@ export class Renderer2D {
         } else {
           ctx.fillText('c', x, y);   // identical for every connector (still tracked separately)
         }
-        if (w.carrying === n.id) {
-          ctx.fillStyle = '#666'; ctx.font = '7px sans-serif';
+        if (carriedNow) {
+          ctx.fillStyle = ring; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText('(carried)', x, y-14);
+          ctx.fillText(wouldElevate ? '(stack here)' : '(drop here)', x, y-14);
+          ctx.restore();
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';

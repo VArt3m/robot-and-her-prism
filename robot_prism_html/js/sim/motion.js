@@ -178,6 +178,36 @@ export class Motion {
     return first_block_t(a, b, segs) !== null;
   }
 
+  // Find a legal, reachable resting spot for a carried object of radius `r`,
+  // in unit direction (ux, uy) from `player`. It prefers `wantDist`, slides
+  // inward to `gap` (so a spot aimed past a wall lands just short of it rather
+  // than across it), and if the whole ray is blocked sweeps clockwise outward
+  // to `maxD`. "Legal" = clear of every solid and other material object;
+  // "reachable" = an unobstructed straight line from the player. This is the
+  // continuously-evaluated form of the old place-time no-teleport safeguard;
+  // because every returned spot satisfies it, the caller needs no further test.
+  // Returns [x, y] or null when nothing in reach is legal.
+  placement_spot(player, ux, uy, r, gap, maxD, wantDist, ignoreConn = null) {
+    const w = this.world;
+    const clear = (spot) =>
+      !w.object_pos_blocked(spot, r, { ignoreConn }) && !this.reach_blocked(player, spot);
+    const want = Math.min(Math.max(wantDist, gap), maxD);
+    for (let dd = want; dd >= gap - 1e-6; dd -= 3) {
+      const spot = [player[0] + ux * dd, player[1] + uy * dd];
+      if (clear(spot)) return spot;
+    }
+    const base = Math.atan2(uy, ux);
+    const STEP_A = Math.PI / 12;   // 15°, clockwise (screen y points down)
+    for (let radius = gap; radius <= maxD + 1e-6; radius += Math.max(3, r / 2)) {
+      for (let k = 1; k < 24; k++) {            // k = 0 is the ray, already tried
+        const ang = base + k * STEP_A;
+        const spot = [player[0] + Math.cos(ang) * radius, player[1] + Math.sin(ang) * radius];
+        if (clear(spot)) return spot;
+      }
+    }
+    return null;
+  }
+
   at_goal() {
     const w = this.world;
     return Boolean(w.player && w.goal && dist(w.player, w.goal) < 18);

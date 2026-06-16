@@ -57,14 +57,14 @@ If you have Node.js available, `npx serve .` also works.
 | Key / action | Effect |
 |---|---|
 | WASD / arrow keys | Move player |
-| E | Pick up the nearest object in radius / drop the carried one just ahead (clockwise if blocked) |
+| E | Pick up the nearest object in radius / set the carried one down at its live preview spot (the "shadow") |
 | Boxes | Solid and not pushable — walk around them, or carry them to move them |
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
 | Hold the mouse (or E) ~0.5 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
 | Click carried connector | Toggle its "ready" state (ready = yellow = programmable) |
 | Click a node while carrying + ready | Aim / link the carried connector at that node |
-| Click a spot / box in radius while carrying | Set the connector down there / stack it onto the box (no teleport through walls/fields/barriers) |
+| Click while carrying | Set the item down at the shadow predicted from the click direction (stacks onto an empty box) |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
 | Drag carried connector over node (while ready) | Toggle link (auto-wires on pass-through) |
@@ -72,3 +72,9 @@ If you have Node.js available, `npx serve .` also works.
 | Z | Rewind — undo the last meaningful action (up to 3 steps) |
 | Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |
+
+> While you carry something, a **shadow** shows exactly where it will land — always clamped to a spot that is in reach with a clear line to it, so a drop can never cross a wall, force field, or barrier. The shadow predicts whichever action fits where your cursor is:
+> - **Cursor outside the operating radius** → it previews the **E-drop**: the item set down right next to her, in the direction she's looking. The roaming cursor neither moves it nor turns her eyes. Drawn **solid**.
+> - **Cursor inside the operating radius** → it previews the **mouse-click drop**: the item right where the cursor is. Drawn **translucent**.
+>
+> Both **E** and a **click** commit to whatever the shadow currently shows.
