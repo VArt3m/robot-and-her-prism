@@ -33,6 +33,7 @@ export class World {
   get charge()    { return this.engine.charge; }
   get logic_val() { return this.engine.logic_val; }
   get beams_draw(){ return this.engine.beams_draw; }
+  get dead_conns(){ return this.engine.dead_conns; }
 
   new_id(prefix) { this._uid++; return `${prefix}${this._uid}`; }
 

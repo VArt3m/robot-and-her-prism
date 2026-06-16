@@ -23,6 +23,7 @@ export class Engine {
     this._beam_targets = new Map();
     this._beam_instant = new Map();
     this._last_beams_t = [];
+    this.dead_conns = new Set();   // connectors killed by conflicting incoming colours
   }
 
   // ---- blockers ----
@@ -173,6 +174,24 @@ export class Engine {
     return lit;
   }
 
+  // Connectors that received two or more distinct delivered colours and so
+  // emit nothing — "dead" by colour conflict. Their links render dotted, the
+  // same inert look a carried connector's links have.
+  _conflict_map(beams, delivery) {
+    const w = this.world;
+    const inc = {};
+    for (const n of Object.values(w.nodes))
+      if (n.kind === 'connector') inc[n.id] = new Set();
+    for (let k = 0; k < beams.length; k++) {
+      if (!delivery[k]) continue;
+      const t = beams[k].t;
+      if (w.nodes[t]?.kind === 'connector') inc[t].add(beams[k].color);
+    }
+    const dead = new Set();
+    for (const id in inc) if (inc[id].size >= 2) dead.add(id);
+    return dead;
+  }
+
   button_pressed(bid) {
     const w = this.world;
     const bp = w.nodes[bid].pos;
@@ -279,6 +298,7 @@ export class Engine {
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
     this._last_solve = [beams, length, delivery];
+    this.dead_conns = this._conflict_map(beams, delivery);
     this.beams_draw = this._animate_beams(beams, length, delivery);
     // Sync timed-step store with settled snapshot
     this.beam_eff = new Map();
@@ -312,7 +332,7 @@ export class Engine {
         if (st.since === null) st.since = now;
         if (now - st.since >= CUT_LINGER) { st.len = Lnew; st.deliv = dnew; st.since = null; }
       }
-      out.push([[...b.O], [b.O[0]+b.dx*st.len, b.O[1]+b.dy*st.len], b.color, st.deliv]);
+      out.push([[...b.O], [b.O[0]+b.dx*st.len, b.O[1]+b.dy*st.len], b.color, st.deliv, b.o, b.t]);
     }
     for (const key of [...this.beam_anim.keys()])
       if (!seen.has(key)) this.beam_anim.delete(key);
@@ -438,7 +458,7 @@ export class Engine {
   _build_draw_timed(beams) {
     return beams.map(b => {
       const L = this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard;
-      return [[...b.O], [b.O[0]+b.dx*L, b.O[1]+b.dy*L], b.color, L >= b.dl - 1e-6];
+      return [[...b.O], [b.O[0]+b.dx*L, b.O[1]+b.dy*L], b.color, L >= b.dl - 1e-6, b.o, b.t];
     });
   }
 
@@ -474,6 +494,7 @@ export class Engine {
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
+    this.dead_conns = this._conflict_map(beams, delivery);
     const eff_changed = this._advance_eff(beams, target, instant, now);
     this.beams_draw = this._build_draw_timed(beams);
     return eff_changed || charge_changed

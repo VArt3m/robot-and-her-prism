@@ -127,15 +127,18 @@ export class Renderer2D {
       ctx.beginPath();
       ctx.moveTo(na.pos[0], na.pos[1]);
       ctx.lineTo(nb.pos[0], nb.pos[1]);
-      ctx.strokeStyle = '#dddddd';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 5]);
+      ctx.strokeStyle = '#a7adb3';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([3, 4]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
     // Beams
-    for (const [a, b, col, delivered] of w.beams_draw) {
+    for (const [a, b, col, delivered, bo, bt] of w.beams_draw) {
+      // A connector killed by conflicting incoming colours is inert: show
+      // its links as the dotted wire only, like a carried connector.
+      if (w.dead_conns && (w.dead_conns.has(bo) || w.dead_conns.has(bt))) continue;
       const shade = delivered ? COLORS[col] : (DIM[col] ?? '#999');
       ctx.beginPath();
       ctx.moveTo(a[0], a[1]);
@@ -319,6 +322,16 @@ export class Renderer2D {
         ctx.strokeStyle = '#e7e7e7'; ctx.lineWidth = 1;
         ctx.setLineDash([2,4]); ctx.stroke(); ctx.setLineDash([]);
       }
+    }
+
+    // Wire-drag preview: a connection being pulled from the carried connector.
+    if (uiState.wireDrag && w.carrying && w.player) {
+      const from = w.nodes[w.carrying].pos;
+      ctx.beginPath();
+      ctx.moveTo(from[0], from[1]);
+      ctx.lineTo(uiState.wireDrag[0], uiState.wireDrag[1]);
+      ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
     }
 
     // Pending wall/field preview line

@@ -7,7 +7,7 @@ export const BEAM_TOUCH = PLAYER_R + 1;
 export const DWELL_THRESH = 0.5;
 export const SPEED = 150.0;
 export const TICK = 0.033;
-export const CONNECT_REACH = 28;
+export const CONNECT_REACH = 37;
 export const CUT_LINGER = 0.33;
 export const CROSSING_CUT_INSTANT = false;
 

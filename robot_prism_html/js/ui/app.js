@@ -11,6 +11,7 @@ import { dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
+import { objType } from '../sim/objects.js';
 
 // How many rewind (undo) steps to retain, and how long the full-reset key
 // must be held continuously (seconds) before the playfield is rebuilt.
@@ -19,6 +20,11 @@ const RESET_HOLD_SEC = 3;
 
 // Long-press duration (ms) that opens the stack chooser (mouse or E key).
 const MENU_HOLD_MS = 500;
+
+// Radius (world units) within which a click grabs the character to walk her.
+// Smaller than the operating radius so a drag started off the character (but
+// inside the operating ring) pulls a connection wire instead of moving her.
+const PLAYER_GRAB_R = 11;
 
 // Stacking rules: may an object of type `carried` be set down onto a target of
 // type `onto`? Target types: 'ground', 'box' (empty), 'box+connector' (a box
@@ -58,6 +64,7 @@ export class App {
       mouse:   [0, 0],
       resetProgress: 0,  // 0..1 fill of the full-reset hold (R)
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
+      wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
     };
 
     // Mouse drag tracking
@@ -333,12 +340,23 @@ export class App {
     this._press = { active: true, t: performance.now(), x, y, moved: false, consumed: false };
     this._drag.moved = false;
     this._drag.linkHit = null;
-    if (w.player && dist([x,y], w.player) < 14) {
-      // Capture a pre-drag snapshot + signature; committed to the undo stack
-      // only if the drag actually changes the puzzle (a wire toggle or a box
-      // push), so a drag that only walks the player is never an undo point.
+    const dp = w.player ? dist([x, y], w.player) : Infinity;
+    const carriedKind = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    const carriedAimable = Boolean(carriedKind && objType(carriedKind)?.requiresTarget);
+    if (w.player && dp < PLAYER_GRAB_R) {
+      // Inner radius → grab the character to walk her. Capture a pre-drag
+      // snapshot + signature; committed to the undo stack only if the drag
+      // actually changes the puzzle (a wire toggle or a box push), so a drag
+      // that only walks the player is never an undo point.
       this._drag = {
         active: true, kind: 'player', ref: null, moved: false, linkHit: null,
+        preSnap: this._captureState(), preSig: this._sig(), committed: false,
+      };
+    } else if (w.player && carriedAimable && dp < CONNECT_REACH) {
+      // Outer operating radius (off the character) while carrying an item that
+      // needs a target → pull a connection wire out, without moving her.
+      this._drag = {
+        active: true, kind: 'wire', ref: null, moved: false, linkHit: null,
         preSnap: this._captureState(), preSig: this._sig(), committed: false,
       };
     } else {
@@ -390,6 +408,31 @@ export class App {
       }
       ui.live = true; w.step(performance.now()/1000);
     }
+
+    if (this._drag.active && this._drag.kind === 'wire' && w.carrying) {
+      // Pull a connection wire from the carried connector to a target node.
+      // The character does not move; only the wire endpoint tracks the cursor.
+      this._drag.moved = true;
+      ui.wireDrag = [x, y];
+      const cid = w.carrying;
+      let tgt = null, best = 18;
+      for (const nd of Object.values(w.nodes)) {
+        if (nd.id === cid || !['source', 'receiver', 'connector'].includes(nd.kind)) continue;
+        const d = dist([x, y], nd.pos);
+        if (d < best) { tgt = nd; best = d; }
+      }
+      if (tgt === null) {
+        this._drag.linkHit = null;
+      } else if (tgt.id !== this._drag.linkHit) {
+        w.toggle_link(cid, tgt.id);
+        this._drag.linkHit = tgt.id;
+        if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
+          this._pushUndo(this._drag.preSnap);
+          this._drag.committed = true;
+        }
+      }
+      ui.live = true; w.step(performance.now() / 1000);
+    }
   }
 
   _onMouseUp([x, y], e) {
@@ -397,6 +440,7 @@ export class App {
     const ui = this.uiState;
     const consumed = this._press && this._press.consumed;   // hold opened a menu
     this._press = null;
+    ui.wireDrag = null;
     if (this._drag.moved) {
       this._drag.active = false;
       ui.live = true; w.step(performance.now()/1000);
