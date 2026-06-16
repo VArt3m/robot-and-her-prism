@@ -7,7 +7,7 @@
  */
 
 import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
-import { dist } from '../core/geometry.js';
+import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
@@ -260,9 +260,9 @@ export class App {
       w.move_player(vx * step, 0);
       w.move_player(0, vy * step);
       moved = w.player[0] !== before[0] || w.player[1] !== before[1];
-      // Face the direction of travel. (Boxes are no longer pushable, so a walk
-      // never moves another object and is never itself an undo point.)
-      if (moved) { const m = Math.hypot(vx, vy); w.facing = [vx / m, vy / m]; }
+      // Per spec: facing is driven by the mouse-aim gesture, not by walking.
+      // (Boxes are no longer pushable, so a walk never moves another object
+      // and is never itself an undo point.)
     }
 
     // Sync carried connector / box to the player
@@ -372,6 +372,16 @@ export class App {
         && Math.hypot(x - this._press.x, y - this._press.y) > 6) {
       this._press.moved = true;
     }
+    // Any LMB drag that is NOT dragging the character makes her eyes follow
+    // the cursor (this includes wire/link drags — that's intentional). A
+    // singular click (no movement past threshold) and a character drag never
+    // change facing.
+    if (this._press && this._press.active && this._press.moved
+        && this._drag.kind !== 'player' && w.player) {
+      const dx = x - w.player[0], dy = y - w.player[1];
+      const d = Math.hypot(dx, dy);
+      if (d > 1e-3) w.facing = [dx / d, dy / d];
+    }
     if (this._drag.active && this._drag.kind === 'player' && w.player) {
       this._drag.moved = true;
       this._dragPlayerTo(x, y);
@@ -453,9 +463,7 @@ export class App {
 
   _dragPlayerTo(tx, ty) {
     const w = this.world;
-    const fdx = tx - w.player[0], fdy = ty - w.player[1];
-    const fd = Math.hypot(fdx, fdy);
-    if (fd > 0.5) w.facing = [fdx / fd, fdy / fd];
+    // Per spec: dragging the character around must NOT change her facing.
     for (let i = 0; i < 60; i++) {
       const [px, py] = w.player;
       const dx = tx-px, dy = ty-py;
@@ -495,10 +503,31 @@ export class App {
         ui.live = true; w.step(performance.now() / 1000);
         return;
       }
+      // Click on an existing intent ray (away from any node) → delete it.
+      if (!n && this._deleteIntentAt(x, y)) return;
     }
 
     // Carrying a connector (not a link) or a box: set it down at the click.
     this._placeCarriedAt(x, y);
+  }
+
+  // Delete the intent ray(s) under a click while carrying a connector. The hit
+  // zone is a few world units wide (no single-pixel hunting); if several rays
+  // share the zone, all of them are removed at once. Returns true if any were.
+  _deleteIntentAt(x, y) {
+    const w = this.world;
+    const THRESH = 6;
+    const hits = [];
+    for (const [a, b] of w.links_pairs) {
+      const na = w.nodes[a], nb = w.nodes[b];
+      if (!na || !nb) continue;
+      if (pt_seg_dist([x, y], na.pos, nb.pos) <= THRESH) hits.push([a, b]);
+    }
+    if (hits.length === 0) return false;
+    this._pushUndo();
+    for (const [a, b] of hits) w.toggle_link(a, b);
+    this.uiState.live = true; w.step(performance.now() / 1000);
+    return true;
   }
 
   // The pickable items under (x, y), top of the stack first. The only stack
