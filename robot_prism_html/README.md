@@ -57,10 +57,11 @@ If you have Node.js available, `npx serve .` also works.
 | Key / action | Effect |
 |---|---|
 | WASD / arrow keys | Move player |
-| E | Pick up the nearest object in radius / set the carried one down at its live preview spot (the "shadow") |
+| E (brief tap) | Empty-handed: pick up the nearest object in radius. Carrying: set it down at its live preview spot (the "shadow"). In click-by-click: exit the mode |
+| E (hold ~1/3 s) while carrying | Fires the same tree as the mouse, straight to the end state (no golden arrow): click-by-click for a targeting device, the programming chooser for a programmable one, the Setup/Target menu for both |
 | Boxes | Solid and not pushable — walk around them, or carry them to move them |
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
-| Hold the mouse (or E) ~0.5 s on a stack | Open a chooser to pick which item (top connector or the box) |
+| Hold the mouse (or E) ~1/3 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
 | Targeting / programming a carried device | Press & hold in the operating ring — see "Targeting & programming" below |
 | Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius; a click outside the ring is just an aim and never drops |
@@ -68,6 +69,7 @@ If you have Node.js available, `npx serve .` also works.
 | Drag player | Walk toward cursor |
 | Drag the character while carrying a ready connector | Auto-wires to nodes it passes over |
 | Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
+| Exit click-by-click | A brief click on empty space (not a target), or a tap of E |
 | C | Clear all links of selected connector |
 | Z | Rewind — undo the last meaningful action (up to 3 steps) |
 | Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
@@ -89,9 +91,11 @@ Beyond the connector and the box, three devices live on the field:
 
 ## Targeting & programming
 
-A brief click while carrying always just **drops** the item. To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second. What happens then depends on the device:
+A brief click while carrying just **drops** the item (inside the ring). To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to the end state** (no arrow). What happens depends on the device:
 
 - **Neither targeting nor programmable** (a box) → nothing; the hold is swallowed and the box is not dropped.
-- **Targeting only** (connector, jammer) → a golden arrow launches. You then have about half a second: **pull the cursor out of the ring** to keep drawing the arrow to a target, or **keep it inside** to drop into **click-by-click** mode — the device turns gold, you can release the button and click targets one by one (a connector links nodes; a jammer marks a field or deployed mine). A still ~1/3 s hold anywhere finishes.
+- **Targeting only** (connector, jammer) → the mouse hold launches a golden arrow, then a half-second window: **pull the cursor out of the ring** to keep drawing the arrow to a target, or **keep it inside** to drop into **click-by-click** (an E hold enters this directly). The device turns gold, you release the button and click targets one by one (a connector links nodes; a jammer marks a field or deployed mine).
 - **Programmable only** (mine) → a small chooser opens to set the value (the fuse time).
-- **Programmable + targeting** (rewirer) → if its colour is unset it asks you to set it first; otherwise, after the half-second window, a **Setup / Target** menu opens — *Setup* reprograms the colour, *Target* enters click-by-click which *marks* a source/receiver in line of sight. The recolour itself is applied when the rewirer is deployed (a later phase), so marking is all that happens now — like the jammer.
+- **Programmable + targeting** (rewirer) → if its colour is unset it asks you to set it first; otherwise a **Setup / Target** menu opens — *Setup* reprograms the colour, *Target* enters click-by-click which *marks* a source/receiver in line of sight. The recolour itself is applied when the rewirer is deployed (a later phase), so marking is all that happens now — like the jammer.
+
+**Leaving click-by-click:** a brief click on empty space (anything that isn't a target) or a tap of E returns you to ordinary carrying.

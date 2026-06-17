@@ -29,8 +29,9 @@ export class InputHandler {
     this.resetHeldSince = null;
 
     // Timestamp (ms) when E was pressed; null when not held. app.js uses this
-    // for the half-second long-press that opens the stack chooser; the actual
-    // pick-up / drop fires on release via the 'carry_release' action.
+    // for the ~1/3-second hold that, while carrying, fires the targeting/
+    // programming tree, and while empty-handed opens the stack chooser; the
+    // pick-up / drop / exit fires on release via the 'carry_release' action.
     this.carryHeldSince = null;
 
     // Set by App to convert CSS canvas coords → world coords.

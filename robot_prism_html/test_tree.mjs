@@ -51,6 +51,18 @@ function forceDecide() {                  // make the golden-arrow decision wind
 }
 const menuItem = (label) => (app.uiState.menu?.items || []).find(it => it.label === label);
 function clickMenu(label) { const it = menuItem(label); ok(!!it, `menu has "${label}"`); if (it) { const [rx, ry, rw, rh] = it.rect; app._playClick(rx + rw / 2, ry + rh / 2); } }
+function eHold() {            // simulate E held past the 1/3 s threshold
+  app.input.carryHeldSince = performance.now() - 400;
+  app._prevCarrySince = null;        // force "fresh press" bookkeeping
+  app._carryConsumed = false;
+  app._updateHoldMenu();
+}
+function eTap(mouse) {        // simulate a brief E press+release
+  if (mouse) app.uiState.mouse = [...mouse];
+  app.input.carryHeldSince = null;
+  app._carryConsumed = false;
+  app._handleAction('carry_release', performance.now());
+}
 
 // =========================================================================
 // A — neither targeting nor programmable (box): the hold is swallowed.
@@ -112,11 +124,10 @@ ok(Math.abs(w.nodes['con_c'].pos[0] - w.player[0]) < 1e-6, 'B-in: connector cent
 const linksBefore = w.links.size;
 app._playClick(w.nodes['con_1'].pos[0], w.nodes['con_1'].pos[1]);
 ok(w.links.size === linksBefore + 1, 'B-in: clicking a node creates a link intent');
-// a ~1/3 s hold anywhere exits targeting
-app._onMouseDown([700, 300], {});
-elapse(400); app._updateGestures();
-ok(app.uiState.targeting === null, 'B-in: a hold exits targeting');
-ok(app._press.consumed, 'B-in: exit hold consumed');
+// a brief click on empty space (not a target) leaves the mode
+app._playClick(700, 300);
+ok(app.uiState.targeting === null, 'B-in: a click on empty space exits click-by-click');
+ok(w.carrying === 'con_c', 'B-in: still carrying after the exit click');
 clearHands();
 
 // =========================================================================
@@ -237,6 +248,48 @@ app._playClick(w.player[0] + 300, w.player[1]);     // far outside the ring
 ok(w.carrying === 'con_c', 'drop-gate: a click outside the activation radius does not drop');
 app._playClick(w.player[0] + 20, w.player[1]);      // inside the ring
 ok(w.carrying === null, 'drop-gate: a click inside the activation radius drops');
+clearHands(); w.links.clear();
+
+// =========================================================================
+// E as the operating tool — a ~1/3 s E hold mirrors the mouse tree (straight
+// to the end state, no golden arrow); a brief E drops or exits targeting.
+// =========================================================================
+// targeting only (connector) → click-by-click directly, no arrow
+clearHands();
+w.player = [445, 293];
+app._pickItem({ kind: 'connector', id: 'con_c' });
+eHold();
+ok(app.uiState.targeting && app.uiState.targeting.kind === 'connector', 'E/B: hold enters click-by-click');
+ok(!app._drag.active, 'E/B: no golden arrow from an E hold');
+// brief E exits targeting
+eTap();
+ok(app.uiState.targeting === null, 'E: a brief E exits click-by-click');
+ok(w.carrying === 'con_c', 'E: still carrying after the exit tap');
+
+// programmable only (mine) → programming chooser
+clearHands();
+w.player = [430, 440];
+app._pickItem({ kind: 'mine', id: 'mine_a' });
+eHold();
+ok(app.uiState.menu && app.uiState.menu.items.every(it => it.act === 'mineFuse'), 'E/C: hold opens the fuse chooser');
+app.uiState.menu = null;
+
+// both (rewirer, filled) → Setup/Target menu
+clearHands();
+w.player = [520, 440];
+app._pickItem({ kind: 'rewirer', id: 'rw_a' });
+w.nodes['rw_a'].color = 'red';
+eHold();
+ok(app.uiState.menu && app.uiState.menu.items.some(i => i.act === 'setup') && app.uiState.menu.items.some(i => i.act === 'target'),
+   'E/D: hold opens the Setup/Target menu');
+app.uiState.menu = null;
+
+// brief E while carrying (not targeting) drops
+clearHands();
+w.player = [445, 293];
+app._pickItem({ kind: 'connector', id: 'con_c' });
+eTap([w.player[0] + 15, w.player[1]]);
+ok(w.carrying === null, 'E: a brief E drops the carried item');
 clearHands(); w.links.clear();
 
 console.log(`\ntree tests: ${pass} passed, ${fail} failed`);

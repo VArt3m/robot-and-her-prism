@@ -18,8 +18,9 @@ import { objType } from '../sim/objects.js';
 const UNDO_MAX = 3;
 const RESET_HOLD_SEC = 3;
 
-// Long-press duration (ms) that opens the stack chooser (mouse or E key).
-const MENU_HOLD_MS = 500;
+// Long-press duration (ms) that opens the stack chooser (mouse or E key). Kept
+// equal to the tree's AIM_HOLD_MS so every "operating hold" feels the same.
+const MENU_HOLD_MS = 333;
 
 // Press-and-hold timing for the targeting/programming tree (a press in the
 // annulus while carrying). AIM_HOLD_MS reaches the branch point; AIM_DECIDE_MS
@@ -327,8 +328,10 @@ export class App {
     const w = this.world;
     const ui = this.uiState;
     if (action === 'carry_release') {
-      // E released. If the hold already opened the chooser, consume it silently.
+      // E released. If the hold already fired the tree / chooser, swallow it.
       if (this._carryConsumed) return;
+      // A brief E in click-by-click leaves the mode (back to ordinary carrying).
+      if (ui.targeting) { this._exitTargeting(); return; }
       if (w.carrying || w.carry_box) {
         // Set the carried item down where it is being previewed (the shadow).
         // The preview is recomputed continuously and is always a legal, in-reach
@@ -530,10 +533,11 @@ export class App {
 
     // Click-by-click targeting: a click on a node is a target intent (link /
     // recolour / jam mark); a click on a bare intent ray (no node under the
-    // cursor) erases that ray instead — all rays in the hit zone go at once.
+    // cursor) erases that ray; a click that hits neither leaves the mode.
     if (ui.targeting) {
       if (!this._nodeAt(x, y) && this._deleteIntentAt(x, y)) return;
-      this._applyTargetIntent(x, y);
+      if (this._applyTargetIntent(x, y)) return;
+      this._exitTargeting();
       return;
     }
 
@@ -682,14 +686,10 @@ export class App {
     const ui = this.uiState;
     const now = performance.now();
 
-    if (ui.targeting) {
-      const p = this._press;
-      if (p && p.active && !p.consumed && !p.moved && now - p.t >= AIM_HOLD_MS) {
-        p.consumed = true;
-        this._exitTargeting();
-      }
-      return;                       // the aim-hold never runs while targeting
-    }
+    // While click-by-click targeting is active the aim-hold never runs. Exit is
+    // a brief click on empty space (handled in _playClick) or a tap of E
+    // (handled in carry_release) — not a timed hold.
+    if (ui.targeting) return;
 
     const a = this._aim;
     if (!a) return;
@@ -767,7 +767,7 @@ export class App {
     w.nodes[w.carrying].pos[0] = w.player[0];
     w.nodes[w.carrying].pos[1] = w.player[1];
     const what = kind === 'connector' ? 'a node' : (kind === 'rewirer' ? 'a source/receiver' : 'a field or mine');
-    this._setFlash(`Targeting — click ${what}; hold to finish`);
+    this._setFlash(`Targeting — click ${what}; click empty or tap E to finish`);
   }
 
   _exitTargeting() {
@@ -822,20 +822,23 @@ export class App {
     }
   }
 
-  // Apply a click-by-click target intent for the carried device.
+  // Apply a click-by-click target intent for the carried device. Returns true if
+  // a valid target sat under the cursor (whether or not the effect could apply),
+  // false if the click hit nothing — the caller uses that to leave the mode.
   _applyTargetIntent(x, y) {
     const w = this.world;
     const ui = this.uiState;
     const t = ui.targeting;
-    if (!t || !w.nodes[t.id]) return;
+    if (!t || !w.nodes[t.id]) return false;
     const cid = t.id;
     if (t.kind === 'connector') {
       const n = this._nodeAt(x, y);
       if (n && n.id !== cid && ['source', 'receiver', 'connector'].includes(n.kind)) {
         this._pushUndo(); w.toggle_link(cid, n.id);
         ui.live = true; w.step(performance.now() / 1000);
+        return true;
       }
-      return;
+      return false;
     }
     if (t.kind === 'rewirer') {
       // Like the jammer, the rewirer's effect is deferred: with line of sight it
@@ -844,21 +847,24 @@ export class App {
       // and applying it on drop is phase 3/4 — so it no longer recolours instantly.
       const n = this._nodeAt(x, y);
       if (n && ['source', 'receiver'].includes(n.kind)) {
-        if (w.reach_blocked(w.player, n.pos)) { this._setFlash('No line of sight'); this._beep(); return; }
+        if (w.reach_blocked(w.player, n.pos)) { this._setFlash('No line of sight'); this._beep(); return true; }
         this._setFlash('Recolour target marked (applies once the rewirer is set down)');
+        return true;
       }
-      return;
+      return false;
     }
     if (t.kind === 'jammer') {
       // Phase 3 will store a persistent jam relationship whose effect is live
       // only while the jammer is deployed. For now, acknowledge the target.
       const tgt = this._jamTargetAt(x, y);
       if (tgt) {
-        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash('No line of sight'); this._beep(); return; }
+        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash('No line of sight'); this._beep(); return true; }
         this._setFlash('Jam target marked (effect arrives in phase 3)');
+        return true;
       }
-      return;
+      return false;
     }
+    return false;
   }
 
   // Nearest jammable target (a force field's midpoint or a mine) under (x, y).
@@ -906,8 +912,15 @@ export class App {
       if (since !== null) this._carryConsumed = false;   // a fresh press began
       this._prevCarrySince = since;
     }
-    if (!ui.menu && since !== null && !this._carryConsumed && now - since >= MENU_HOLD_MS) {
-      if (this._tryOpenMenuForE()) this._carryConsumed = true;
+    if (!ui.menu && !ui.targeting && since !== null && !this._carryConsumed && now - since >= AIM_HOLD_MS) {
+      if (this.world.carrying || this.world.carry_box) {
+        // Carrying → E is the operating tool: a ~1/3 s hold fires the same branch
+        // as the mouse tree, but goes straight to the end state (no golden arrow).
+        this._fireECarryTree();
+        this._carryConsumed = true;          // the release must not also drop
+      } else if (this._tryOpenMenuForE()) {
+        this._carryConsumed = true;          // empty-handed → stack chooser
+      }
     }
 
     // Left mouse hold
@@ -915,6 +928,26 @@ export class App {
     if (!ui.menu && p && p.active && !p.consumed && !p.moved && now - p.t >= MENU_HOLD_MS) {
       if (this._tryOpenMenuAt(p.x, p.y)) p.consumed = true;
     }
+  }
+
+  // E-as-operating-tool: a ~1/3 s E hold while carrying enters the carried
+  // device's end state directly — click-by-click for a targeting device, the
+  // programming chooser for a programmable one, the Setup/Target menu for both.
+  // No golden-arrow / linking step (that would be awkward off a key hold); a
+  // "neither" device (a box) is simply swallowed, exactly like the mouse tree.
+  _fireECarryTree() {
+    const kind = this._carriedKind();
+    const ot = objType(kind) || {};
+    const reqT = !!ot.requiresTarget, prog = !!ot.programmable;
+    if (reqT && prog) {
+      if (this._progFieldsNA(kind)) this._openProgramming(kind);
+      else this._openSetupTarget(kind);
+    } else if (reqT) {
+      this._enterTargeting(kind);
+    } else if (prog) {
+      this._openProgramming(kind);
+    }
+    // neither → nothing (swallowed)
   }
 
   // Open the chooser for the stack under (x, y), if it is a real (2+) stack in
