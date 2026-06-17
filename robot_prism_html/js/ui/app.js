@@ -609,7 +609,7 @@ export class App {
     const w = this.world;
     const items = this._stackAt(x, y);
     if (items.length === 0) return false;
-    const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
+    const loc = items[0].id ? w.nodes[items[0].id].pos : items[0].box;
     if (dist(w.player, loc) >= CONNECT_REACH) return false;
     if (w.reach_blocked(w.player, loc)) { this._setFlash(STR.flash.cantReachBlocked); return false; }
     return this._pickItem(items[0]);

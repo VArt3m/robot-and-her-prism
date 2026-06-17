@@ -105,6 +105,25 @@ export class Renderer2D {
     const { scale, ox, oy, dpr } = this._vp;
     const w = world;
     const { sel, mode } = uiState;
+    const canPickup = (pos) => mode === 'play' && w.player && !w.carrying && !w.carry_box
+      && dist(w.player, pos) < CONNECT_REACH && !w.reach_blocked(w.player, pos);
+    // Pre-compute which item E would pick (nearest reachable carriable).
+    let ePick = null;
+    if (mode === 'play' && w.player && !w.carrying && !w.carry_box) {
+      let best = Infinity;
+      for (const c of w.carriable_nodes()) {
+        if (!canPickup(c.pos)) continue;
+        const d = dist(w.player, c.pos);
+        if (d < best) { best = d; ePick = { id: c.id }; }
+      }
+      for (const bx of w.boxes) {
+        const occupied = Object.values(w.nodes).some(n => n.kind==='connector' && dist(n.pos,bx)<BOX_R);
+        if (occupied || !canPickup(bx)) continue;
+        const d = dist(w.player, bx);
+        if (d < best) { best = d; ePick = { box: bx }; }
+      }
+    }
+    const nearHue = (isTop) => isTop ? '#4dd0e1' : '#2a8fa3';
 
     // Map world coordinates → physical pixels in one transform.
     ctx.setTransform(scale * dpr, 0, 0, scale * dpr, ox * dpr, oy * dpr);
@@ -245,8 +264,10 @@ export class Renderer2D {
     for (const bx of w.boxes) {
       const [x, y] = bx;
       const on = Object.values(w.nodes).some(n => n.kind==='button' && dist(bx,n.pos)<BTN_R);
+      const occupied = Object.values(w.nodes).some(n => n.kind==='connector' && dist(n.pos,bx)<BOX_R);
+      const near = !occupied && canPickup(bx);
       ctx.fillStyle = on ? '#caa46a' : '#b08d57';
-      ctx.strokeStyle = '#5b4523'; ctx.lineWidth = 2;
+      ctx.strokeStyle = near ? nearHue(ePick?.box === bx) : '#5b4523'; ctx.lineWidth = near ? 3 : 2;
       ctx.fillRect(x-BOX_R, y-BOX_R, 2*BOX_R, 2*BOX_R);
       ctx.strokeRect(x-BOX_R, y-BOX_R, 2*BOX_R, 2*BOX_R);
     }
@@ -321,13 +342,12 @@ export class Renderer2D {
         const carriedNow = w.carrying === n.id;
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const wouldElevate = carriedNow && pp && pp.elevated;
-        const near = mode === 'play' && w.player
-          && (carriedNow || dist(w.player, n.pos)<CONNECT_REACH);
+        const near = canPickup(n.pos);
         const dead = Boolean(w.dead_conns && w.dead_conns.has(n.id));
         const ring = targetingNow ? '#f5c518'
           : carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
           : (dead ? '#e23b3b'
-          : (sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222')));
+          : (sel===n.id ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#222')));
         const col = w.emit[n.id];
         // Carried connectors are placement previews. Inside the operating
         // radius (click-mode) draw translucent — a ghost of where a click would
@@ -377,10 +397,11 @@ export class Renderer2D {
         }
       } else if (n.kind === 'mine') {
         const carriedNow = w.carrying === n.id;
+        const near = canPickup(n.pos);
         if (carriedNow) { ctx.save(); ctx.globalAlpha = (pp && pp.translucent === false) ? 1 : 0.6; }
         ctx.beginPath(); ctx.arc(x, y, MINE_R, 0, 2*Math.PI);
         ctx.fillStyle = n.disabled ? '#5a6472' : '#2b2f36'; ctx.fill();
-        ctx.strokeStyle = n.disabled ? '#9aa3b0' : '#e23b3b'; ctx.lineWidth = 2;
+        ctx.strokeStyle = near ? nearHue(ePick?.id === n.id) : (n.disabled ? '#9aa3b0' : '#e23b3b'); ctx.lineWidth = 2;
         if (carriedNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = '#fff'; ctx.font = 'bold 8px sans-serif';
@@ -395,11 +416,12 @@ export class Renderer2D {
       } else if (n.kind === 'rewirer') {
         const carriedNow = w.carrying === n.id;
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
+        const near = canPickup(n.pos);
         const c = COLORS[n.color] ?? '#999';
         if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
         polygon(ctx, diamond(x, y, 12));
         ctx.fillStyle = '#fff'; ctx.fill();
-        ctx.strokeStyle = targetingNow ? '#f5c518' : c; ctx.lineWidth = 3;
+        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : c); ctx.lineWidth = 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = c; ctx.fill();
@@ -413,10 +435,11 @@ export class Renderer2D {
       } else if (n.kind === 'jammer') {
         const carriedNow = w.carrying === n.id;
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
+        const near = canPickup(n.pos);
         if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
         ctx.beginPath(); ctx.arc(x, y, 12, 0, 2*Math.PI);
         ctx.fillStyle = '#eceff1'; ctx.fill();
-        ctx.strokeStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.lineWidth = 3;
+        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#37474f'); ctx.lineWidth = 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = '#37474f'; ctx.font = 'bold 11px sans-serif';
