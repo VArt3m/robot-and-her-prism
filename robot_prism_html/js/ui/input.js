@@ -101,8 +101,59 @@ export class InputHandler {
       const pos = this._canvasPos(e);
       this.onMouseUp?.(pos, e);
     });
+
+    // Touch = mouse: a single finger is routed through the same down/move/up
+    // callbacks so every drag/press gesture works identically on touchscreens.
+    // We track only the first active finger (id in this._touchId) and ignore the
+    // rest, so a stray second touch never hijacks an in-progress drag. preventDefault
+    // stops page scroll/zoom and the synthetic mouse events the browser would
+    // otherwise fire after a tap (which would double-handle the gesture).
+    this._touchId = null;
+
+    this.canvas.addEventListener('touchstart', e => {
+      if (this._touchId !== null) return;      // already tracking a finger
+      const t = e.changedTouches[0];
+      if (!t) return;
+      this._touchId = t.identifier;
+      const pos = this._canvasPos(t);
+      this.mouse = pos;
+      e.preventDefault();
+      this.onMouseDown?.(pos, e);
+    }, { passive: false });
+
+    this.canvas.addEventListener('touchmove', e => {
+      const t = this._activeTouch(e);
+      if (!t) return;
+      const pos = this._canvasPos(t);
+      this.mouse = pos;
+      e.preventDefault();
+      this.onMouseMove?.(pos, e);
+    }, { passive: false });
+
+    const endTouch = e => {
+      const t = this._activeTouch(e);
+      if (!t) return;
+      this._touchId = null;
+      const pos = this._canvasPos(t);
+      this.mouse = pos;
+      e.preventDefault();
+      this.onMouseUp?.(pos, e);
+    };
+    this.canvas.addEventListener('touchend', endTouch, { passive: false });
+    this.canvas.addEventListener('touchcancel', endTouch, { passive: false });
   }
 
+  // The tracked finger within a touch event's changedTouches, or null if this
+  // event does not involve it.
+  _activeTouch(e) {
+    if (this._touchId === null) return null;
+    for (const t of e.changedTouches) {
+      if (t.identifier === this._touchId) return t;
+    }
+    return null;
+  }
+
+  // Accepts a MouseEvent or a Touch — both expose clientX / clientY.
   _canvasPos(e) {
     const r = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - r.left;
