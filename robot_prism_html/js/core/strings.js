@@ -1,0 +1,204 @@
+/**
+ * Centralised UI text catalog.
+ *
+ * i18n-readiness (English-only for now):
+ *   - Every user-facing string lives here, keyed by a stable identifier.
+ *   - Parameterised messages are functions (params) => string, so call sites
+ *     stay identical no matter the language's word order.
+ *   - To add a language later: define a sibling catalog with the same shape,
+ *     register it in `CATALOGS`, and call `setLanguage('xx')`. The exported
+ *     `STR` proxy always points at the active catalog, so importing modules
+ *     never need to change.
+ */
+
+const en = {
+  // Toolbar / static chrome (mirrors index.html so it can be driven from JS).
+  toolbar: {
+    play: 'PLAY',
+    edit: 'EDIT',
+    hint: [
+      '[WASD] / arrows — move',
+      '[E] — pick up nearest / drop in front',
+      '[LMB] an item or [E] to grab; hold ½ s over a stack to choose',
+      'carrying: [LMB] it = toggle ready, [LMB] node = program, [LMB] spot/box = place',
+      '[C] — clear links',
+      '[Z] — rewind',
+      'hold [R] (3s) — full reset',
+      '[G] — reset gates',
+    ].join('   |   '),
+  },
+
+  // Human-readable names for every object kind on the field.
+  kinds: {
+    source: 'Source',
+    receiver: 'Receiver',
+    button: 'Button',
+    connector: 'Connector',
+    mine: 'Mine',
+    rewirer: 'Rewirer',
+    jammer: 'Jammer',
+    and: 'AND gate',
+    or: 'OR gate',
+    box: 'Box',
+    goal: 'Goal',
+    field: 'Force field',
+  },
+
+  // Colour names (used in tooltips / status / menus).
+  colors: {
+    red: 'red', green: 'green', blue: 'blue',
+    yellow: 'yellow', cyan: 'cyan', magenta: 'magenta',
+    orange: 'orange', tan: 'tan', purple: 'purple',
+  },
+
+  // Short glyphs drawn inside shapes on the canvas.
+  glyph: {
+    button: 'B',
+    jammer: 'J',
+    connector: 'c',
+    and: 'AND',
+    or: 'OR',
+    negate: '!',
+  },
+
+  // Small badges drawn above a carried / placed object on the canvas.
+  badge: {
+    targeting: '(targeting)',
+    stackHere: '(stack here)',
+    dropHere: '(drop here)',
+    raised: '(raised)',
+  },
+
+  // Receiver fill-time label shown in edit mode.
+  fillTime: (s) => `${s}s`,
+
+  // Centered full-reset hold overlay (rich line so [R] renders as a key chip).
+  resetOverlay: [{ t: 'RESETTING — keep holding ' }, { t: 'R', k: true }],
+
+  // Transient status-bar notices (flash messages).
+  flash: {
+    cantReachBlocked: "Can't reach that — blocked",
+    handsFull: 'My hands are full',
+    noRoom: 'No room to set it down',
+    nothingToRewind: 'Nothing to rewind',
+    rewound: (left) => `Rewound — ${left} step${left === 1 ? '' : 's'} left`,
+    fullReset: 'Playfield fully reset',
+    fuseSet: (s) => `Fuse set to ${s}s`,
+    colourSet: (c) => `Colour set to ${en.colors[c] ?? c}`,
+    recolourMarked: 'Recolour target marked (applies once the rewirer is set down)',
+    jamMarked: 'Jam target marked (effect arrives in phase 3)',
+    noLineOfSight: 'No line of sight',
+    targeting: (what) => `Targeting — click ${what}; click empty or tap E to finish`,
+    doneTargeting: 'Done targeting',
+  },
+
+  // What the click-by-click targeting prompt should tell the player to click.
+  targetWhat: {
+    connector: 'a node',
+    rewirer: 'a source/receiver',
+    default: 'a field or mine',
+  },
+
+  // Stack-chooser / programming menu labels.
+  menu: {
+    setup: 'Setup',
+    target: 'Target',
+    fuse: (s) => `${s}s fuse`,
+    colorRed: 'Red',
+    colorGreen: 'Green',
+    colorBlue: 'Blue',
+  },
+
+  // Bottom status bar.
+  status: {
+    gatesLabel: 'gates',
+    gateOpen: 'open',
+    gateShut: 'shut',
+    none: 'none',
+    goalReached: '*** GOAL REACHED ***',
+    sep: '   —   ',
+    // Carried-item read-out (the detailed segment requested for the status bar).
+    carrying: (detail) => `carrying: ${detail}`,
+    empty: 'hands empty',
+    armed: 'armed',
+    idle: 'idle',
+    links: (n) => `${n} link${n === 1 ? '' : 's'}`,
+    emits: (c) => `emits ${en.colors[c] ?? c}`,
+    emitsNone: 'no output',
+    fuse: (s) => (s == null ? 'fuse not set' : `fuse ${s}s`),
+    colour: (c) => (c ? `colour ${en.colors[c] ?? c}` : 'colour not set'),
+    raised: 'raised',
+    onGround: 'on ground',
+  },
+
+  // Hover tooltips. Each returns an array of lines; the first is the title.
+  // A line is either a plain string or a rich segment array:
+  //   string             → rendered as plain text
+  //   [{t, c?, k?}, …]  → rendered segment-by-segment:
+  //                        c = colorKey ('red' etc.) → text drawn in that color
+  //                        k = true                  → text drawn as a key chip
+  tooltip: {
+    recvState: { powered: 'powered', charging: 'charging', idle: 'idle' },
+    playerQuips: ["That's me!", "It's me!", '...hi.', 'Yep, that\'s me.', 'Hello!'],
+    player: (quipIdx) => [
+      en.tooltip.playerQuips[quipIdx % en.tooltip.playerQuips.length],
+      'drag to move',
+    ],
+    source: (color) => [
+      en.kinds.source,
+      en.colors[color]
+        ? [{ t: 'emits ' }, { t: en.colors[color], c: color }]
+        : 'no colour',
+    ],
+    receiver: (color, state) => [
+      en.kinds.receiver,
+      en.colors[color]
+        ? [{ t: 'wants ' }, { t: en.colors[color], c: color }]
+        : 'no colour',
+      state,
+    ],
+    button: (pressed) => [en.kinds.button, pressed ? 'pressed' : 'released'],
+    connector: (emitColor, links, raised) => {
+      const lines = [en.kinds.connector];
+      lines.push(emitColor
+        ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
+        : 'no output');
+      lines.push(`${links} link${links === 1 ? '' : 's'}`);
+      if (raised) lines.push('raised on a box');
+      return lines;
+    },
+    mine: (fuse, running, disabled) => {
+      const lines = [en.kinds.mine];
+      lines.push(fuse == null ? 'fuse not set' : `fuse ${fuse}s`);
+      if (disabled) lines.push('jammed');
+      else if (running) lines.push('counting down');
+      return lines;
+    },
+    rewirer: (color) => [
+      en.kinds.rewirer,
+      color
+        ? [{ t: 'recolours to ' }, { t: en.colors[color] ?? color, c: color }]
+        : 'colour not set',
+    ],
+    jammer: () => [en.kinds.jammer, 'freezes a field or mine'],
+    and: (on) => [en.kinds.and, on ? 'output on' : 'output off'],
+    or: (on) => [en.kinds.or, on ? 'output on' : 'output off'],
+    box: (onButton) => [en.kinds.box, onButton ? 'on a button' : 'pushable platform'],
+    goal: () => [en.kinds.goal, 'reach here'],
+    field: (open) => [en.kinds.field, open ? 'open' : 'shut'],
+    pickHint: [{ m: 'L' }, { t: ' or ' }, { t: 'E', k: true }, { t: ' to pick up' }],
+  },
+};
+
+const CATALOGS = { en };
+let active = en;
+
+export function setLanguage(code) {
+  if (CATALOGS[code]) active = CATALOGS[code];
+}
+
+// A stable proxy so importers can `import { STR }` once and always read the
+// currently-active language, even after setLanguage() swaps it.
+export const STR = new Proxy({}, {
+  get(_t, prop) { return active[prop]; },
+});

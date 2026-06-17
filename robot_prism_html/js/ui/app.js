@@ -12,6 +12,7 @@ import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { objType } from '../sim/objects.js';
+import { STR } from '../core/strings.js';
 
 // How many rewind (undo) steps to retain, and how long the full-reset key
 // must be held continuously (seconds) before the playfield is rebuilt.
@@ -53,11 +54,6 @@ function canPlace(carried, onto) {
   return Boolean(STACK_RULES[carried] && STACK_RULES[carried][onto]);
 }
 
-// Human-readable names for carriable kinds (used in the stack chooser).
-const NICE_NAME = {
-  connector: 'Connector', box: 'Box', mine: 'Mine', rewirer: 'Rewirer', jammer: 'Jammer',
-};
-
 export class App {
   constructor(canvas, statusEl) {
     this.canvas = canvas;
@@ -85,6 +81,7 @@ export class App {
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
       placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
       targeting: null,   // click-by-click targeting modal: { id, kind } | null
+      hover:   null,     // hover tooltip: { pos:[x,y], radius, lines:[...] } | null
     };
 
     // Mouse drag tracking
@@ -109,6 +106,8 @@ export class App {
 
     this._lastTick = null;
     this._frameId  = null;
+    // Stable random quip index chosen once per session for the player tooltip.
+    this._playerQuip = Math.floor(Math.random() * 5);
   }
 
   start() {
@@ -198,14 +197,14 @@ export class App {
 
   _rewind() {
     const ui = this.uiState;
-    if (this._undo.length === 0) { this._setFlash('Nothing to rewind'); return; }
+    if (this._undo.length === 0) { this._setFlash(STR.flash.nothingToRewind); return; }
     const snap = this._undo.pop();
     this._restoreState(snap);
     ui.sel = null;
     ui.live = true;
     this._pushRun = false;
     const left = this._undo.length;
-    this._setFlash(`Rewound — ${left} step${left === 1 ? '' : 's'} left`);
+    this._setFlash(STR.flash.rewound(left));
   }
 
   // ---- full reset (3-second hold of R) ----
@@ -239,7 +238,7 @@ export class App {
     ui.menu = null;
     ui.placePreview = null;
     ui.wireDrag = null;
-    this._setFlash('Playfield fully reset');
+    this._setFlash(STR.flash.fullReset);
   }
 
   _setFlash(text, dur = 1.6) {
@@ -270,6 +269,7 @@ export class App {
       this._lastTick += TICK;
       steps++;
     }
+    this._updateHover();
     this._draw();
     this._updateStatus();
     this._scheduleFrame();
@@ -596,10 +596,10 @@ export class App {
     const items = [];
     if (node) {
       const lbl = (node.label || '').trim();
-      const name = NICE_NAME[node.kind] || node.kind;
+      const name = STR.kinds[node.kind] || node.kind;
       items.push({ kind: node.kind, id: node.id, label: lbl ? `${name} ${lbl}` : name });
     }
-    if (box) items.push({ kind: 'box', box, label: 'Box' });
+    if (box) items.push({ kind: 'box', box, label: STR.kinds.box });
     return items;            // top (node) first, box underneath
   }
 
@@ -611,7 +611,7 @@ export class App {
     if (items.length === 0) return false;
     const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
     if (dist(w.player, loc) >= CONNECT_REACH) return false;
-    if (w.reach_blocked(w.player, loc)) { this._setFlash("Can't reach that — blocked"); return false; }
+    if (w.reach_blocked(w.player, loc)) { this._setFlash(STR.flash.cantReachBlocked); return false; }
     return this._pickItem(items[0]);
   }
 
@@ -632,7 +632,7 @@ export class App {
       const occupied = w.connectors().some(c => dist(c.pos, bx) < BOX_R);
       if (!occupied) consider(bx, { kind: 'box', box: bx });
     }
-    if (!pick) { if (blocked) this._setFlash("Can't reach that — blocked"); return false; }
+    if (!pick) { if (blocked) this._setFlash(STR.flash.cantReachBlocked); return false; }
     return this._pickItem(pick);
   }
 
@@ -766,13 +766,13 @@ export class App {
     this.uiState.placePreview = null;
     w.nodes[w.carrying].pos[0] = w.player[0];
     w.nodes[w.carrying].pos[1] = w.player[1];
-    const what = kind === 'connector' ? 'a node' : (kind === 'rewirer' ? 'a source/receiver' : 'a field or mine');
-    this._setFlash(`Targeting — click ${what}; click empty or tap E to finish`);
+    const what = STR.targetWhat[kind] ?? STR.targetWhat.default;
+    this._setFlash(STR.flash.targeting(what));
   }
 
   _exitTargeting() {
     this.uiState.targeting = null;
-    this._setFlash('Done targeting');
+    this._setFlash(STR.flash.doneTargeting);
   }
 
   // The programming sequence: a small chooser of values for the carried device.
@@ -780,9 +780,9 @@ export class App {
     const ui = this.uiState;
     const [ax, ay] = ui.mouse;
     if (kind === 'mine') {
-      this._openMenu(ax, ay, [1, 2, 3, 5, 8].map(s => ({ label: `${s}s fuse`, act: 'mineFuse', value: s })));
+      this._openMenu(ax, ay, [1, 2, 3, 5, 8].map(s => ({ label: STR.menu.fuse(s), act: 'mineFuse', value: s })));
     } else if (kind === 'rewirer') {
-      this._openMenu(ax, ay, [['Red', 'red'], ['Green', 'green'], ['Blue', 'blue']]
+      this._openMenu(ax, ay, [[STR.menu.colorRed, 'red'], [STR.menu.colorGreen, 'green'], [STR.menu.colorBlue, 'blue']]
         .map(([l, c]) => ({ label: l, act: 'rewirerColor', value: c })));
     }
   }
@@ -790,8 +790,8 @@ export class App {
   _openSetupTarget(kind) {
     const ui = this.uiState;
     this._openMenu(ui.mouse[0], ui.mouse[1], [
-      { label: 'Setup',  act: 'setup' },
-      { label: 'Target', act: 'target' },
+      { label: STR.menu.setup,  act: 'setup' },
+      { label: STR.menu.target, act: 'target' },
     ]);
   }
 
@@ -811,10 +811,10 @@ export class App {
     const ui = this.uiState;
     const nd = w.carrying ? w.nodes[w.carrying] : null;
     if (it.act === 'mineFuse' && nd) {
-      this._pushUndo(); nd.fuse = it.value; this._setFlash(`Fuse set to ${it.value}s`);
+      this._pushUndo(); nd.fuse = it.value; this._setFlash(STR.flash.fuseSet(it.value));
     } else if (it.act === 'rewirerColor' && nd) {
       this._pushUndo(); nd.color = it.value;
-      this._setFlash(`Colour set to ${it.value}`); ui.live = true; w.step(performance.now() / 1000);
+      this._setFlash(STR.flash.colourSet(it.value)); ui.live = true; w.step(performance.now() / 1000);
     } else if (it.act === 'setup') {
       this._openProgramming(this._carriedKind());     // re-open as the colour chooser
     } else if (it.act === 'target') {
@@ -847,8 +847,8 @@ export class App {
       // and applying it on drop is phase 3/4 — so it no longer recolours instantly.
       const n = this._nodeAt(x, y);
       if (n && ['source', 'receiver'].includes(n.kind)) {
-        if (w.reach_blocked(w.player, n.pos)) { this._setFlash('No line of sight'); this._beep(); return true; }
-        this._setFlash('Recolour target marked (applies once the rewirer is set down)');
+        if (w.reach_blocked(w.player, n.pos)) { this._setFlash(STR.flash.noLineOfSight); this._beep(); return true; }
+        this._setFlash(STR.flash.recolourMarked);
         return true;
       }
       return false;
@@ -858,8 +858,8 @@ export class App {
       // only while the jammer is deployed. For now, acknowledge the target.
       const tgt = this._jamTargetAt(x, y);
       if (tgt) {
-        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash('No line of sight'); this._beep(); return true; }
-        this._setFlash('Jam target marked (effect arrives in phase 3)');
+        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash(STR.flash.noLineOfSight); this._beep(); return true; }
+        this._setFlash(STR.flash.jamMarked);
         return true;
       }
       return false;
@@ -980,8 +980,8 @@ export class App {
     }
     if (!best) return false;
     this._openMenu(best.box[0], best.box[1], [
-      { kind: 'connector', id: best.conn.id, label: 'Connector' },
-      { kind: 'box', box: best.box, label: 'Box' },
+      { kind: 'connector', id: best.conn.id, label: STR.kinds.connector },
+      { kind: 'box', box: best.box, label: STR.kinds.box },
     ]);
     return true;
   }
@@ -1164,7 +1164,7 @@ export class App {
     const ui = this.uiState;
     const carried = this._carriedKind();
     if (!carried) return false;
-    if (!place) { this._setFlash('No room to set it down'); this._beep(); return false; }
+    if (!place) { this._setFlash(STR.flash.noRoom); this._beep(); return false; }
     if (!canPlace(carried, place.type)) { this._handsFull(); return false; }
     this._pushUndo();
     if (w.carrying) {
@@ -1191,7 +1191,7 @@ export class App {
   // Disallowed grab/stack while carrying: a beep and a brief notice, no change.
   _handsFull() {
     this._beep();
-    this._setFlash('My hands are full');
+    this._setFlash(STR.flash.handsFull);
   }
 
   _beep() {
@@ -1232,13 +1232,147 @@ export class App {
 
   _updateStatus() {
     const w = this.world;
-    const gates = w.ffs.map(ff => `${ff.id}: ${ff.is_open ? 'open' : 'shut'}`).join('  ');
-    const goal = w.at_goal() ? '   *** GOAL REACHED ***' : '';
+    const S = STR.status;
+    const gatesList = w.ffs.map(ff => `${ff.id}: ${ff.is_open ? S.gateOpen : S.gateShut}`).join('  ');
+    const gates = `${S.gatesLabel}: ${gatesList || S.none}`;
+    const carried = `${S.sep}${this._carriedStatus()}`;
+    const goal = w.at_goal() ? `${S.sep}${S.goalReached}` : '';
     let flash = '';
     if (this._flash) {
-      if (performance.now() / 1000 < this._flash.until) flash = `   —   ${this._flash.text}`;
+      if (performance.now() / 1000 < this._flash.until) flash = `${S.sep}${this._flash.text}`;
       else this._flash = null;
     }
-    if (this.statusEl) this.statusEl.textContent = `gates: ${gates}${goal}${flash}`;
+    if (this.statusEl) this.statusEl.textContent = `${gates}${carried}${goal}${flash}`;
+  }
+
+  // A detailed read-out of whatever the player is currently carrying, for the
+  // bottom status bar. Falls back to "hands empty" when not carrying.
+  _carriedStatus() {
+    const w = this.world;
+    const S = STR.status;
+    const kind = this._carriedKind();
+    if (!kind) return S.empty;
+    const name = STR.kinds[kind] || kind;
+    if (kind === 'box') return S.carrying(name);
+
+    const nd = w.carrying ? w.nodes[w.carrying] : null;
+    const parts = [];
+    if (kind === 'connector') {
+      const emit = nd ? w.emit[nd.id] : null;
+      parts.push(emit ? S.emits(emit) : S.emitsNone);
+      const links = nd ? w.links_pairs.filter(([a, b]) => a === nd.id || b === nd.id).length : 0;
+      parts.push(S.links(links));
+      parts.push(this.uiState.sel === w.carrying ? S.armed : S.idle);
+    } else if (kind === 'mine') {
+      parts.push(S.fuse(nd ? nd.fuse : null));
+    } else if (kind === 'rewirer') {
+      parts.push(S.colour(nd ? nd.color : null));
+    }
+    const detail = parts.length ? `${name} — ${parts.join(', ')}` : name;
+    return S.carrying(detail);
+  }
+
+  // Compute the hover tooltip for the item under the cursor. Suppressed while
+  // carrying, dragging, targeting, or when a menu / reset overlay is up — those
+  // modes have their own affordances and a tooltip would only add noise.
+  _updateHover() {
+    const w = this.world;
+    const ui = this.uiState;
+    ui.hover = null;
+    if (ui.mode !== 'play') return;
+    if (w.carrying || w.carry_box) return;
+    if (this._drag.active || ui.targeting || ui.menu) return;
+    if (ui.resetProgress > 0 || !ui.mouse) return;
+
+    const hit = this._hoverTarget(ui.mouse[0], ui.mouse[1]);
+    if (!hit) return;
+    ui.hover = { pos: hit.pos, radius: hit.radius, lines: hit.lines };
+  }
+
+  // The topmost interesting thing under (x, y): a node, a box, the goal, or a
+  // force field. Returns { pos, radius, lines } where lines drives the tooltip
+  // card, or null when nothing is under the cursor.
+  _hoverTarget(x, y) {
+    const w = this.world;
+    const T = STR.tooltip;
+    const p = [x, y];
+
+    // Player (drawn on top of everything).
+    if (w.player && dist(p, w.player) < PLAYER_R + 4) {
+      return { pos: [...w.player], radius: PLAYER_R + 2, lines: T.player(this._playerQuip) };
+    }
+
+    // Nodes first (they sit on top of boxes / the field).
+    let node = null, nd = 18;
+    for (const n of Object.values(w.nodes)) {
+      const d = dist(p, n.pos);
+      if (d < nd) { node = n; nd = d; }
+    }
+    if (node) {
+      const lines = this._nodeTooltipLines(node);
+      const radius = (objType(node.kind)?.radius ?? 13) + 2;
+      return { pos: [node.pos[0], node.pos[1]], radius, lines };
+    }
+
+    // Boxes.
+    let box = null, bd = BOX_R + 4;
+    for (const bx of w.boxes) {
+      const d = dist(p, bx);
+      if (d < bd) { box = bx; bd = d; }
+    }
+    if (box) {
+      const onBtn = Object.values(w.nodes).some(n => n.kind === 'button' && dist(box, n.pos) < 16);
+      return { pos: [box[0], box[1]], radius: BOX_R + 2, lines: T.box(onBtn) };
+    }
+
+    // Goal star.
+    if (w.goal && dist(p, w.goal) < 18) {
+      return { pos: [w.goal[0], w.goal[1]], radius: 18, lines: T.goal() };
+    }
+
+    // Force fields (hit-test the segment).
+    for (const ff of w.ffs) {
+      if (pt_seg_dist(p, ff.p1, ff.p2) < 8) {
+        const m = ff.mid();
+        return { pos: [m[0], m[1]], radius: 10, lines: T.field(ff.is_open) };
+      }
+    }
+    return null;
+  }
+
+  // Build the tooltip lines for a node, reflecting its live state. A carriable
+  // item also gets a short "pick up" hint as its last line.
+  _nodeTooltipLines(node) {
+    const w = this.world;
+    const T = STR.tooltip;
+    let lines;
+    switch (node.kind) {
+      case 'source':   lines = T.source(node.color); break;
+      case 'receiver': {
+        const active = w.active[node.id] ?? false;
+        const lit = w.lit[node.id] ?? false;
+        const state = T.recvState[active ? 'powered' : (lit ? 'charging' : 'idle')];
+        lines = T.receiver(node.color, state);
+        break;
+      }
+      case 'button':   lines = T.button(w.pressed[node.id] ?? false); break;
+      case 'connector': {
+        const emit = w.emit[node.id] ?? null;
+        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        lines = T.connector(emit, links, w._conn_elevated(node.id));
+        break;
+      }
+      case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;
+      case 'rewirer':  lines = T.rewirer(node.color); break;
+      case 'jammer':   lines = T.jammer(); break;
+      case 'and':      lines = T.and(w.logic_val[node.id] ?? false); break;
+      case 'or':       lines = T.or(w.logic_val[node.id] ?? false); break;
+      default:         lines = [STR.kinds[node.kind] || node.kind];
+    }
+    lines = [...lines];
+    if (objType(node.kind)?.carriable && w.player && dist(w.player, node.pos) < CONNECT_REACH) {
+      lines.push(T.pickHint);
+    }
+    return lines;
   }
 }

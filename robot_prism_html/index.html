@@ -16,16 +16,9 @@
     -->
     <!-- <button id="btn-edit">EDIT</button> -->
     <div class="sep"></div>
-    <span id="hint">
-      WASD / arrows — move &nbsp;|&nbsp;
-      E — pick up nearest / drop in front &nbsp;|&nbsp;
-      click an item or E to grab; hold ½ s over a stack to choose &nbsp;|&nbsp;
-      carrying: click it = toggle ready, click node = program, click spot/box = place &nbsp;|&nbsp;
-      C — clear links &nbsp;|&nbsp;
-      Z — rewind &nbsp;|&nbsp;
-      hold R (3s) — full reset &nbsp;|&nbsp;
-      G — reset gates
-    </span>
+    <!-- Text content is populated from the strings catalog (js/core/strings.js)
+         so all user-facing text lives in one i18n-ready place. -->
+    <span id="hint"></span>
   </div>
 
   <div id="canvas-wrap">
@@ -37,9 +30,27 @@
 
 <script type="module">
   import { App } from './js/ui/app.js';
+  import { STR } from './js/core/strings.js';
 
   const canvas    = document.getElementById('gameCanvas');
   const statusEl  = document.getElementById('statusbar');
+
+  // Populate static chrome text from the strings catalog (i18n-ready).
+  document.title = 'Robot and her Prism';
+  document.getElementById('btn-play').textContent = STR.toolbar.play;
+  const mouseSVG = (side) => {
+    const hx = side === 'L' ? 1 : 6;
+    return `<svg width="12" height="16" viewBox="0 0 12 16" style="vertical-align:middle;display:inline-block;margin:0 1px">`
+      + `<rect x=".5" y=".5" width="11" height="15" rx="3" fill="#22304e" stroke="#3d5480" stroke-width=".75"/>`
+      + `<rect x="${hx}" y="1" width="5" height="5" rx="2" fill="#5088d0"/>`
+      + `<line x1=".5" y1="6.5" x2="11.5" y2="6.5" stroke="#3d5480" stroke-width=".75"/>`
+      + `<line x1="6" y1=".5" x2="6" y2="6.5" stroke="#3d5480" stroke-width=".75"/>`
+      + `</svg>`;
+  };
+  document.getElementById('hint').innerHTML = STR.toolbar.hint
+    .replace(/\[LMB\]/g, mouseSVG('L'))
+    .replace(/\[RMB\]/g, mouseSVG('R'))
+    .replace(/\[([^\]]+)\]/g, '<kbd>$1</kbd>');
 
   // Size the canvas's CSS box to fill the available space while preserving
   // the 1018×640 internal resolution. The canvas element itself stays at

@@ -7,6 +7,7 @@
  */
 import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, LOGIC_KINDS } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
+import { STR } from '../core/strings.js';
 
 function diamond(cx, cy, r = 13) {
   return [[cx, cy-r], [cx+r, cy], [cx, cy+r], [cx-r, cy]];
@@ -20,6 +21,45 @@ function starPts(cx, cy, r = 16, ri = 7, n = 5) {
     pts.push([cx + rad*Math.cos(ang), cy + rad*Math.sin(ang)]);
   }
   return pts;
+}
+
+// Measure the pixel width of a tooltip line. A line is either a plain string
+// or a rich segment array [{t, c?, k?, m?}]. Font context is restored on exit.
+function measureLine(ctx, line, textFont, keyFont) {
+  if (typeof line === 'string') { ctx.font = textFont; return ctx.measureText(line).width; }
+  let w = 0;
+  for (const seg of line) {
+    if (seg.k) { ctx.font = keyFont; w += ctx.measureText(seg.t).width + 6; } // 3px pad each side
+    else if (seg.m) { w += 12; }   // mouse icon: W=10 + 2px right margin
+    else { ctx.font = textFont; w += ctx.measureText(seg.t).width; }
+  }
+  ctx.font = textFont;
+  return w;
+}
+
+// Draw a tiny inline mouse-button icon at (x, y) = top-left corner.
+// button: 'L' (left) or 'R' (right). W×H is the icon bounding box.
+function drawMouseIcon(ctx, x, y, button, W, H) {
+  const splitY = y + Math.round(H * 0.43);
+  const midX   = x + W / 2;
+  ctx.fillStyle = '#2d3547';
+  ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75;
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(x, y, W, H, 3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x, y, W, H, 3); ctx.stroke();
+  } else {
+    ctx.fillRect(x, y, W, H); ctx.strokeRect(x, y, W, H);
+  }
+  // Highlighted button half
+  const btnH = splitY - y - 1;
+  ctx.fillStyle = '#5d8ad0';
+  if (button === 'L') ctx.fillRect(x + 1, y + 1, Math.floor(W / 2) - 1, btnH);
+  else                ctx.fillRect(Math.ceil(x + W / 2), y + 1, Math.floor(W / 2) - 1, btnH);
+  // Dividers
+  ctx.beginPath();
+  ctx.moveTo(midX, y + 0.5); ctx.lineTo(midX, splitY);       // vertical: L/R split
+  ctx.moveTo(x + 0.5, splitY); ctx.lineTo(x + W - 0.5, splitY); // horizontal: buttons/body
+  ctx.stroke();
 }
 
 function polygon(ctx, pts) {
@@ -185,7 +225,7 @@ export class Renderer2D {
         ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2; ctx.stroke();
         ctx.fillStyle = '#c0392b'; ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('!', mx, my);
+        ctx.fillText(STR.glyph.negate, mx, my);
       }
     }
 
@@ -255,7 +295,7 @@ export class Renderer2D {
         if (mode === 'edit') {
           ctx.fillStyle = '#666'; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-          ctx.fillText(`${n.fill_time}s`, x, y1+3);
+          ctx.fillText(STR.fillTime(n.fill_time), x, y1+3);
         }
 
       } else if (n.kind === 'button') {
@@ -265,7 +305,7 @@ export class Renderer2D {
         ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
         ctx.fillStyle = '#333'; ctx.font = '8px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('B', x, y);
+        ctx.fillText(STR.glyph.button, x, y);
 
       } else if (LOGIC_KINDS.includes(n.kind)) {
         const on = w.logic_val[n.id] ?? false;
@@ -275,7 +315,7 @@ export class Renderer2D {
         ctx.strokeRect(x-17, y-13, 34, 26);
         ctx.fillStyle = '#333'; ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(n.kind === 'and' ? 'AND' : 'OR', x, y);
+        ctx.fillText(n.kind === 'and' ? STR.glyph.and : STR.glyph.or, x, y);
 
       } else if (n.kind === 'connector') {
         const carriedNow = w.carrying === n.id;
@@ -323,17 +363,17 @@ export class Renderer2D {
           ctx.moveTo(x+xr, y-xr); ctx.lineTo(x-xr, y+xr);
           ctx.stroke(); ctx.lineCap = 'butt';
         } else {
-          ctx.fillText('c', x, y);   // identical for every connector (still tracked separately)
+          ctx.fillText(STR.glyph.connector, x, y);   // identical for every connector (still tracked separately)
         }
         if (carriedNow) {
           ctx.fillStyle = ring; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? '(targeting)' : (wouldElevate ? '(stack here)' : '(drop here)'), x, y-14);
+          ctx.fillText(targetingNow ? STR.badge.targeting : (wouldElevate ? STR.badge.stackHere : STR.badge.dropHere), x, y-14);
           ctx.restore();
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';
-          ctx.fillText('(raised)', x, y+14);
+          ctx.fillText(STR.badge.raised, x, y+14);
         }
       } else if (n.kind === 'mine') {
         const carriedNow = w.carrying === n.id;
@@ -348,7 +388,7 @@ export class Renderer2D {
         ctx.fillText(n.fuse == null ? '' : `${n.fuse}`, x, y);
         if (carriedNow) {
           ctx.fillStyle = '#e23b3b'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
-          ctx.fillText('(drop here)', x, y-13);
+          ctx.fillText(STR.badge.dropHere, x, y-13);
           ctx.restore();
         }
 
@@ -366,7 +406,7 @@ export class Renderer2D {
         if (carriedNow) {
           ctx.fillStyle = targetingNow ? '#f5c518' : c; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? '(targeting)' : '(drop here)', x, y-15);
+          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
           ctx.restore();
         }
 
@@ -381,10 +421,10 @@ export class Renderer2D {
         ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = '#37474f'; ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('J', x, y);
+        ctx.fillText(STR.glyph.jammer, x, y);
         if (carriedNow) {
           ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? '(targeting)' : '(drop here)', x, y-15);
+          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
           ctx.restore();
         }
       }
@@ -458,6 +498,12 @@ export class Renderer2D {
       }
     }
 
+    // Hover tooltip: a small card above the item under the cursor, describing
+    // what it is and its current state. Populated by app.js (uiState.hover).
+    if (uiState.hover && uiState.hover.lines && uiState.hover.lines.length) {
+      this._drawTooltip(ctx, uiState.hover);
+    }
+
     // Full-reset hold gauge (centered). Visible while R is held; fills over 3s.
     const rp = uiState.resetProgress ?? 0;
     if (rp > 0) {
@@ -468,10 +514,8 @@ export class Renderer2D {
       ctx.fillRect(bx, by, bw, bh);
       ctx.strokeStyle = '#e23b3b'; ctx.lineWidth = 2;
       ctx.strokeRect(bx, by, bw, bh);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText('RESETTING \u2014 keep holding R', bx + 16, by + 17);
+      ctx.textAlign = 'left';
+      this._drawRichLine(ctx, STR.resetOverlay, bx + 16, by + 10, 'bold 13px sans-serif', '#ffffff', 14);
       const tx = bx + 16, ty = by + 32, tw = bw - 32, th = 12;
       ctx.fillStyle = '#3a3f4b';
       ctx.fillRect(tx, ty, tw, th);
@@ -481,5 +525,117 @@ export class Renderer2D {
 
     // Reset transform so nothing leaks between frames.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  // Draw a small info card centred horizontally over an item. `hover` is
+  // { pos:[x,y], radius, lines:[title, ...details] }. The first line is the
+  // title (slightly larger / brighter); the rest are state details. The card
+  // floats above the item and is clamped to stay inside the world bounds.
+  //
+  // Each line may be a plain string OR a rich segment array [{t, c?, k?, m?}]:
+  //   c = colorKey ('red' etc.) → text drawn in that game color
+  //   k = true                  → text drawn as an inline key chip
+  //   m = 'L'|'R'              → inline mouse-button icon
+  _drawTooltip(ctx, hover) {
+    const { pos, lines } = hover;
+    const radius = hover.radius ?? 14;
+    const TITLE_FONT = 'bold 12px sans-serif';
+    const LINE_FONT  = '11px sans-serif';
+    const KEY_FONT   = 'bold 9px sans-serif';
+    const padX = 8, padY = 6, lineH = 14, gap = 8;
+
+    // Measure the widest line to size the card.
+    let maxW = 0;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    for (let i = 0; i < lines.length; i++) {
+      const font = i === 0 ? TITLE_FONT : LINE_FONT;
+      maxW = Math.max(maxW, measureLine(ctx, lines[i], font, KEY_FONT));
+    }
+    const cardW = maxW + padX * 2;
+    const cardH = lines.length * lineH + padY * 2;
+
+    // Default: above the item; flip below if it would clip the top edge.
+    let cardX = pos[0] - cardW / 2;
+    let cardY = pos[1] - radius - gap - cardH;
+    if (cardY < 4) cardY = pos[1] + radius + gap;
+    cardX = Math.max(4, Math.min(cardX, WORLD_W - cardW - 4));
+
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 5); ctx.fill();
+      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1; ctx.stroke();
+    } else {
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1;
+      ctx.strokeRect(cardX, cardY, cardW, cardH);
+    }
+
+    ctx.textAlign = 'left';
+    for (let i = 0; i < lines.length; i++) {
+      const ty        = cardY + padY + i * lineH;
+      const isTitle   = i === 0;
+      const baseFont  = isTitle ? TITLE_FONT : LINE_FONT;
+      const baseColor = isTitle ? '#ffffff' : '#aeb6c2';
+      this._drawRichLine(ctx, lines[i], cardX + padX, ty, baseFont, baseColor, lineH);
+    }
+  }
+
+  // Draw a plain string or rich segment array [{t, c?, k?, m?}] starting at
+  // (x, ty) with textBaseline='top'. font/baseColor are defaults for plain text.
+  // lineH drives vertical centering of key chips and mouse icons.
+  _drawRichLine(ctx, line, x, ty, font, baseColor, lineH = 14) {
+    const KEY_FONT  = 'bold 9px sans-serif';
+    const KEY_PAD_X = 3;
+    const KEY_H     = 11;
+    const MOUSE_W   = 10;
+    const MOUSE_H   = 13;
+
+    ctx.textBaseline = 'top';
+    if (typeof line === 'string') {
+      ctx.font = font; ctx.fillStyle = baseColor;
+      ctx.fillText(line, x, ty);
+      return;
+    }
+    let cx = x;
+    for (const seg of line) {
+      if (seg.k) {
+        ctx.font = KEY_FONT;
+        const kw    = ctx.measureText(seg.t).width;
+        const chipW = kw + KEY_PAD_X * 2;
+        const chipY = ty + Math.max(0, (lineH - KEY_H) / 2);
+        ctx.fillStyle = '#2d3547';
+        if (ctx.roundRect) {
+          ctx.beginPath(); ctx.roundRect(cx, chipY, chipW, KEY_H, 3);
+          ctx.fill();
+          ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75; ctx.stroke();
+        } else {
+          ctx.fillRect(cx, chipY, chipW, KEY_H);
+          ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75;
+          ctx.strokeRect(cx, chipY, chipW, KEY_H);
+        }
+        ctx.fillStyle = '#dde8ff';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(seg.t, cx + KEY_PAD_X, chipY + KEY_H / 2);
+        ctx.textBaseline = 'top';
+        cx += chipW;
+        ctx.font = font; ctx.fillStyle = baseColor;
+      } else if (seg.m) {
+        const iy = ty + Math.max(0, (lineH - MOUSE_H) / 2);
+        drawMouseIcon(ctx, cx, iy, seg.m, MOUSE_W, MOUSE_H);
+        cx += MOUSE_W + 2;
+        ctx.font = font; ctx.fillStyle = baseColor;
+      } else if (seg.c) {
+        ctx.font = font;
+        ctx.fillStyle = COLORS[seg.c] ?? '#fff';
+        ctx.fillText(seg.t, cx, ty);
+        cx += ctx.measureText(seg.t).width;
+        ctx.fillStyle = baseColor;
+      } else {
+        ctx.font = font; ctx.fillStyle = baseColor;
+        ctx.fillText(seg.t, cx, ty);
+        cx += ctx.measureText(seg.t).width;
+      }
+    }
   }
 }

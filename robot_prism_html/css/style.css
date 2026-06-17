@@ -46,6 +46,20 @@ html, body {
   margin-left: 4px;
 }
 
+#hint kbd {
+  display: inline-block;
+  padding: 0 3px;
+  background: #22304e;
+  border: 1px solid #3d5480;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: system-ui, sans-serif;
+  font-style: normal;
+  color: #b0c8ff;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
 #canvas-wrap {
   flex: 1;
   overflow: hidden;
