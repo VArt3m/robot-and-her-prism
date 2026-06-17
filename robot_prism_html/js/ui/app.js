@@ -549,11 +549,11 @@ export class App {
     // (every ray sharing the small hit zone goes at once) rather than dropping.
     if (objType(this._carriedKind())?.requiresTarget && this._deleteIntentAt(x, y)) return;
 
-    // Otherwise a brief click drops the item — but only a click INSIDE the
-    // activation radius commits the drop. Outside it the cursor is just an aim
-    // (it turns her eyes), so a stray click or a small attention-drag released
-    // out there never sets the item down. The E key still drops next to her.
-    if (w.player && dist([x, y], w.player) < CONNECT_REACH) {
+    // Otherwise a brief click drops the item. A click inside the radius lands it
+    // at the cursor; a click outside lands it at the reachable edge in the
+    // cursor's direction — the same spot the live preview shows. The E key still
+    // drops next to her.
+    if (w.player) {
       this._commitPlacement(this._resolvePlacement([x, y]));
     }
   }
@@ -1046,7 +1046,7 @@ export class App {
     const aim = ui.mouse;
     const dx = aim[0] - w.player[0], dy = aim[1] - w.player[1];
     const dl = Math.hypot(dx, dy);
-    if (dl > PLAYER_R && dl < CONNECT_REACH) w.facing = [dx / dl, dy / dl];
+    if (dl > PLAYER_R) w.facing = [dx / dl, dy / dl];
     const place = this._resolvePlacement(aim);
     ui.placePreview = place;
     sit(place ? place.spot : w.player);   // nowhere legal → keep it on her
@@ -1058,15 +1058,13 @@ export class App {
   // unobstructed straight line from the player to it — which is why the commit
   // step needs no separate "in reach / not teleporting" test.
   //
-  // The prediction follows whichever action the cursor position implies:
-  //   • cursor OUTSIDE the operating radius  → predict the E-drop: the item is
-  //     set down right next to her, in the direction she is looking (facing).
-  //     Drawn SOLID (translucent === false); the cursor out here is ignored.
-  //   • cursor INSIDE the operating radius   → predict the mouse-click drop: the
-  //     item lands right at the cursor (clamped to a legal, in-reach spot).
-  //     Drawn TRANSLUCENT, a ghost of where a click would set it.
-  // Returns { carried, spot, type, elevated, translucent } or null when there
-  // is genuinely no legal spot in reach.
+  // The prediction follows the cursor in both modes:
+  //   • cursor INSIDE the operating radius   → the item lands right at the
+  //     cursor (clamped to a legal, in-reach spot).
+  //   • cursor OUTSIDE the operating radius  → the item lands at the reachable
+  //     edge in the cursor's direction (the farthest legal spot along that ray).
+  // Returns { carried, spot, type, elevated } or null when there is genuinely
+  // no legal spot in reach.
   _resolvePlacement(aim) {
     const w = this.world;
     const carried = this._carriedKind();
@@ -1095,10 +1093,17 @@ export class App {
       }
       ux = dx / d; uy = dy / d;
     } else {
-      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
-      const fl = Math.hypot(f[0], f[1]) || 1;
-      ux = f[0] / fl; uy = f[1] / fl;
-      d = 0;                                // unused in E-mode (wantDist = gap)
+      // Cursor is outside reach: aim toward it so the preview tracks the edge
+      // of the circle in the cursor's direction instead of freezing in place.
+      let dx = aim[0] - P[0], dy = aim[1] - P[1];
+      const dl = Math.hypot(dx, dy);
+      if (dl < 1e-6) {
+        const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+        dx = f[0]; dy = f[1];
+      }
+      const dl2 = Math.hypot(dx, dy) || 1;
+      ux = dx / dl2; uy = dy / dl2;
+      d = 0;                                // unused in E-mode (wantDist = maxD)
     }
 
     // A carried connector can stack onto an empty box (elevated):
@@ -1116,22 +1121,20 @@ export class App {
         if (b) boxPt = b;
       }
       if (boxPt) {
-        return { carried, spot: [boxPt[0], boxPt[1]], type: 'box',
-                 elevated: true, translucent: clickMode };
+        return { carried, spot: [boxPt[0], boxPt[1]], type: 'box', elevated: true };
       }
     }
 
     // Ground placement. click-mode honours the cursor distance (land at the
-    // cursor); E-mode hugs the player — the closest legal spot — in the facing
-    // direction, so an E-drop sets the item down right next to her rather than
-    // flung out toward a distant cursor. Either way the resolver slides inward
+    // cursor); outside the radius the item rides the reachable edge in the
+    // cursor's direction (wantDist = maxD). Either way the resolver slides inward
     // along the ray to the first clear, reachable spot, sweeping clockwise as a
     // fallback. The simulation layer owns this geometry (Motion.placement_spot)
     // and guarantees a legal result.
-    const wantDist = clickMode ? d : gap;
+    const wantDist = clickMode ? d : maxD;
     const spot = w.placement_spot(P, ux, uy, r, gap, maxD, wantDist, w.carrying);
     if (!spot) return null;
-    return { carried, spot, type: 'ground', elevated: false, translucent: clickMode };
+    return { carried, spot, type: 'ground', elevated: false };
   }
 
   // The empty, in-reach box most aligned with the facing direction (within a

@@ -250,7 +250,7 @@ export class Renderer2D {
 
     // Placement preview ("shadow"): a guide line from the player to the spot
     // where the carried item would land. The item itself is drawn at that spot
-    // (translucent) by the box / connector code below.
+    // by the box / connector code below.
     const pp = uiState.placePreview;
     if (pp && w.player) {
       ctx.beginPath();
@@ -272,19 +272,15 @@ export class Renderer2D {
       ctx.strokeRect(x-BOX_R, y-BOX_R, 2*BOX_R, 2*BOX_R);
     }
 
-    // Carried box (shown at its placement shadow). Translucent when the cursor
-    // is inside the operating radius (a click-placement preview); solid when
-    // outside it (an E-drop preview). Dashed outline reads as "where it lands".
+    // Carried box (shown at its placement shadow). Dashed outline reads as
+    // "where it lands".
     if (w.carry_box) {
       const [bxc, byc] = w.carry_box;
-      ctx.save();
-      ctx.globalAlpha = (pp && pp.translucent === false) ? 1 : 0.55;
       ctx.fillStyle = '#c9a96a';
       ctx.fillRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
       ctx.strokeStyle = '#5b4523'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
       ctx.strokeRect(bxc-BOX_R, byc-BOX_R, 2*BOX_R, 2*BOX_R);
       ctx.setLineDash([]);
-      ctx.restore();
     }
 
     // Nodes
@@ -349,14 +345,9 @@ export class Renderer2D {
           : (dead ? '#e23b3b'
           : (sel===n.id ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#222')));
         const col = w.emit[n.id];
-        // Carried connectors are placement previews. Inside the operating
-        // radius (click-mode) draw translucent — a ghost of where a click would
-        // set it; outside it (E-mode) draw solid — a firm preview of the E-drop.
-        // While targeting, draw solid gold (a sticky, committed state).
-        const ghostAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6;
-        if (carriedNow) ctx.save();
+        // Carried connectors are placement previews: a dashed ring marking the
+        // spot where the drop would land.
         if (carriedNow) {
-          ctx.globalAlpha = ghostAlpha;
           ctx.beginPath(); ctx.arc(x, y, 16, 0, 2*Math.PI);
           ctx.strokeStyle = ring; ctx.lineWidth = 1.5;
           ctx.setLineDash([2,3]); ctx.stroke(); ctx.setLineDash([]);
@@ -389,7 +380,6 @@ export class Renderer2D {
           ctx.fillStyle = ring; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
           ctx.fillText(targetingNow ? STR.badge.targeting : (wouldElevate ? STR.badge.stackHere : STR.badge.dropHere), x, y-14);
-          ctx.restore();
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';
@@ -398,7 +388,6 @@ export class Renderer2D {
       } else if (n.kind === 'mine') {
         const carriedNow = w.carrying === n.id;
         const near = canPickup(n.pos);
-        if (carriedNow) { ctx.save(); ctx.globalAlpha = (pp && pp.translucent === false) ? 1 : 0.6; }
         ctx.beginPath(); ctx.arc(x, y, MINE_R, 0, 2*Math.PI);
         ctx.fillStyle = n.disabled ? '#5a6472' : '#2b2f36'; ctx.fill();
         ctx.strokeStyle = near ? nearHue(ePick?.id === n.id) : (n.disabled ? '#9aa3b0' : '#e23b3b'); ctx.lineWidth = 2;
@@ -410,7 +399,6 @@ export class Renderer2D {
         if (carriedNow) {
           ctx.fillStyle = '#e23b3b'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
           ctx.fillText(STR.badge.dropHere, x, y-13);
-          ctx.restore();
         }
 
       } else if (n.kind === 'rewirer') {
@@ -418,7 +406,6 @@ export class Renderer2D {
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
         const c = COLORS[n.color] ?? '#999';
-        if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
         polygon(ctx, diamond(x, y, 12));
         ctx.fillStyle = '#fff'; ctx.fill();
         ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : c); ctx.lineWidth = 3;
@@ -429,14 +416,12 @@ export class Renderer2D {
           ctx.fillStyle = targetingNow ? '#f5c518' : c; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
           ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
-          ctx.restore();
         }
 
       } else if (n.kind === 'jammer') {
         const carriedNow = w.carrying === n.id;
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
-        if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
         ctx.beginPath(); ctx.arc(x, y, 12, 0, 2*Math.PI);
         ctx.fillStyle = '#eceff1'; ctx.fill();
         ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#37474f'); ctx.lineWidth = 3;
@@ -448,7 +433,6 @@ export class Renderer2D {
         if (carriedNow) {
           ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
           ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
-          ctx.restore();
         }
       }
     }
