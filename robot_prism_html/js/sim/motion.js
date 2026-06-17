@@ -140,7 +140,7 @@ export class Motion {
     if (!w.player) return;
     const old = [...w.player];
     const new_ = [old[0]+dx, old[1]+dy];
-    const carry = w.carrying !== null;
+    const carry = w.carrying !== null || w.carry_box !== null;
     // Material objects block the player. Boxes are not pushable (see
     // OBJECT_TYPES); the push branch stays here for future pushable kinds.
     for (let i = 0; i < w.boxes.length; i++) {

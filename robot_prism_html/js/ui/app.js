@@ -549,12 +549,11 @@ export class App {
     // (every ray sharing the small hit zone goes at once) rather than dropping.
     if (objType(this._carriedKind())?.requiresTarget && this._deleteIntentAt(x, y)) return;
 
-    // Otherwise a brief click drops the item. A click inside the radius lands it
-    // at the cursor; a click outside lands it at the reachable edge in the
-    // cursor's direction — the same spot the live preview shows. The E key still
-    // drops next to her.
+    // Otherwise a brief click drops the item where the live preview shows it:
+    // at the cursor while inside the radius, or at the frozen relative spot when
+    // the cursor is outside it. Either way the preview is the committed spot.
     if (w.player) {
-      this._commitPlacement(this._resolvePlacement([x, y]));
+      this._commitPlacement(ui.placePreview || this._resolvePlacement([x, y]));
     }
   }
 
@@ -642,6 +641,7 @@ export class App {
     const ui = this.uiState;
     if (w.carrying || w.carry_box) { this._handsFull(); return false; }
     this._pushUndo();
+    this._carryAim = null;     // fresh carry — no stale frozen offset
     if (item.id) {
       // A carriable node (connector / mine / rewirer / jammer).
       const nd = w.nodes[item.id];
@@ -1039,14 +1039,23 @@ export class App {
       sit(w.player);
       return;
     }
-    // Aim at the cursor. Her eyes follow it ONLY while it is inside the
-    // operating radius (mouse-placement). Outside it, E-logic holds: her gaze
-    // freezes, and the held item stays put in that direction instead of
-    // chasing the far cursor.
-    const aim = ui.mouse;
-    const dx = aim[0] - w.player[0], dy = aim[1] - w.player[1];
+    // The aim tracks the cursor ONLY while it is inside the operating radius.
+    // Each in-radius frame we also remember the item's offset relative to her.
+    // The moment the cursor leaves the radius we stop tracking it and hold that
+    // frozen offset — the item keeps its relative position (still travelling
+    // with her as she walks) until the cursor returns to the radius.
+    const dx = ui.mouse[0] - w.player[0], dy = ui.mouse[1] - w.player[1];
     const dl = Math.hypot(dx, dy);
-    if (dl > PLAYER_R) w.facing = [dx / dl, dy / dl];
+    let aim;
+    if (dl < CONNECT_REACH) {
+      if (dl > PLAYER_R) w.facing = [dx / dl, dy / dl];
+      this._carryAim = [dx, dy];                  // remember relative offset
+      aim = ui.mouse;
+    } else if (this._carryAim) {
+      aim = [w.player[0] + this._carryAim[0], w.player[1] + this._carryAim[1]];
+    } else {
+      aim = [...w.player];                        // no frozen offset yet → hug her
+    }
     const place = this._resolvePlacement(aim);
     ui.placePreview = place;
     sit(place ? place.spot : w.player);   // nowhere legal → keep it on her
@@ -1058,11 +1067,10 @@ export class App {
   // unobstructed straight line from the player to it — which is why the commit
   // step needs no separate "in reach / not teleporting" test.
   //
-  // The prediction follows the cursor in both modes:
-  //   • cursor INSIDE the operating radius   → the item lands right at the
-  //     cursor (clamped to a legal, in-reach spot).
-  //   • cursor OUTSIDE the operating radius  → the item lands at the reachable
-  //     edge in the cursor's direction (the farthest legal spot along that ray).
+  // Callers pass an in-radius aim (the live cursor while inside the ring, or the
+  // frozen relative spot once it leaves), so the prediction lands the item right
+  // at that aim, clamped to a legal, in-reach spot. The facing fallback (aim on
+  // top of her / out of radius) hugs the player at `gap`.
   // Returns { carried, spot, type, elevated } or null when there is genuinely
   // no legal spot in reach.
   _resolvePlacement(aim) {
@@ -1093,17 +1101,10 @@ export class App {
       }
       ux = dx / d; uy = dy / d;
     } else {
-      // Cursor is outside reach: aim toward it so the preview tracks the edge
-      // of the circle in the cursor's direction instead of freezing in place.
-      let dx = aim[0] - P[0], dy = aim[1] - P[1];
-      const dl = Math.hypot(dx, dy);
-      if (dl < 1e-6) {
-        const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
-        dx = f[0]; dy = f[1];
-      }
-      const dl2 = Math.hypot(dx, dy) || 1;
-      ux = dx / dl2; uy = dy / dl2;
-      d = 0;                                // unused in E-mode (wantDist = maxD)
+      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+      const fl = Math.hypot(f[0], f[1]) || 1;
+      ux = f[0] / fl; uy = f[1] / fl;
+      d = 0;                                // unused in E-mode (wantDist = gap)
     }
 
     // A carried connector can stack onto an empty box (elevated):
@@ -1126,12 +1127,11 @@ export class App {
     }
 
     // Ground placement. click-mode honours the cursor distance (land at the
-    // cursor); outside the radius the item rides the reachable edge in the
-    // cursor's direction (wantDist = maxD). Either way the resolver slides inward
-    // along the ray to the first clear, reachable spot, sweeping clockwise as a
-    // fallback. The simulation layer owns this geometry (Motion.placement_spot)
+    // cursor); the facing fallback hugs the player at `gap`. Either way the
+    // resolver slides inward along the ray to the first clear, reachable spot,
+    // sweeping clockwise as a fallback. The sim owns this geometry (placement_spot)
     // and guarantees a legal result.
-    const wantDist = clickMode ? d : maxD;
+    const wantDist = clickMode ? d : gap;
     const spot = w.placement_spot(P, ux, uy, r, gap, maxD, wantDist, w.carrying);
     if (!spot) return null;
     return { carried, spot, type: 'ground', elevated: false };
