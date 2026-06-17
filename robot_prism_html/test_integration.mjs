@@ -25,6 +25,7 @@ globalThis.cancelAnimationFrame = noop;
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 
 const { App } = await import('./js/ui/app.js');
+const { objType } = await import('./js/sim/objects.js');
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
@@ -103,6 +104,47 @@ const place = app._resolvePlacement([w.player[0], w.player[1] - 50]);
 ok(app._commitPlacement(place), 'committed box placement');
 ok(w.carry_box === null, 'box no longer carried after place');
 app._draw(); ok(true, 'render after placing box');
+
+// --- phase 1: the new carriable devices (mine / rewirer / jammer) ---
+{
+  // schema flags drive the (later) interaction tree
+  ok(objType('mine').programmable && !objType('mine').requiresTarget, 'mine: programmable, not targeting');
+  ok(objType('rewirer').programmable && objType('rewirer').requiresTarget, 'rewirer: programmable + targeting');
+  ok(!objType('jammer').programmable && objType('jammer').requiresTarget, 'jammer: targeting only');
+
+  // mine: pick up, defaults applied, not counting while carried
+  w.player = [430, 440];
+  const stack = app._stackAt(430, 440);
+  ok(stack.length && stack[0].kind === 'mine' && stack[0].id === 'mine_a',
+     '_stackAt discovers the mine under the cursor');
+  ok(app._pickItem({ kind: 'mine', id: 'mine_a' }), 'picked up mine');
+  ok(w.carrying === 'mine_a', 'carrying the mine');
+  ok(w.nodes['mine_a'].fuse === 3, 'mine fuse kept at 3');
+  ok(w.nodes['mine_a'].fuse_running === false, 'carried mine is not counting down');
+  // E-drop it (aim outside the ring → hugs her); the fuse starts on first drop
+  w.facing = [0, -1];
+  const mplace = app._resolvePlacement([w.player[0], w.player[1] - 200]);
+  ok(mplace && mplace.carried === 'mine', 'mine resolves a ground placement');
+  ok(app._commitPlacement(mplace), 'placed the mine');
+  ok(w.carrying === null, 'mine released');
+  ok(w.nodes['mine_a'].fuse_running === true, 'mine fuse starts counting on first drop');
+  // a placed mine is now a material obstacle
+  ok(w.object_pos_blocked([...w.nodes['mine_a'].pos], 8), 'placed mine blocks overlap');
+
+  // rewirer: defaults to red, carriable + placeable
+  w.player = [520, 440];
+  ok(app._pickItem({ kind: 'rewirer', id: 'rw_a' }), 'picked up rewirer');
+  ok(w.nodes['rw_a'].color === 'red', 'rewirer colour defaults to red');
+  ok(app._commitPlacement(app._resolvePlacement([w.player[0] + 30, w.player[1]])), 'placed the rewirer');
+
+  // jammer: targeting-only, carriable + placeable
+  w.player = [470, 380];
+  ok(app._pickItem({ kind: 'jammer', id: 'jam_a' }), 'picked up jammer');
+  ok(w.carrying === 'jam_a', 'carrying the jammer');
+  ok(app._commitPlacement(app._resolvePlacement([w.player[0] + 30, w.player[1]])), 'placed the jammer');
+
+  app._draw(); ok(true, 'render with all three devices placed');
+}
 
 // --- a few ticks must not throw ---
 for (let i = 0; i < 5; i++) app._tick(performance.now() / 1000 + i * 0.033);

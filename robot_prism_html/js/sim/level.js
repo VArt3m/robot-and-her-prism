@@ -39,6 +39,11 @@ export function build_level() {
 
   w.boxes.push([580, 500]);   // test box in the open area near the player start
 
+  // Programmable / targeting devices (phase 1: real, carriable, placeable).
+  w.add(new Node('mine_a', 'mine',    [430, 440], { fuse: 3 }));
+  w.add(new Node('rw_a',   'rewirer', [520, 440], { color: 'red' }));
+  w.add(new Node('jam_a',  'jammer',  [470, 380]));
+
   w.goal = [840, 70];
   w.player_start = [470, 500];
   w.player = [...w.player_start];

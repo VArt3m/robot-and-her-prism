@@ -5,7 +5,7 @@
  * know about. A future renderer3d.js can sit alongside this with the same
  * interface so both can be driven from app.js simultaneously.
  */
-import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, CONNECT_REACH, LOGIC_KINDS } from '../core/constants.js';
+import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, LOGIC_KINDS } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 
 function diamond(cx, cy, r = 13) {
@@ -279,18 +279,21 @@ export class Renderer2D {
 
       } else if (n.kind === 'connector') {
         const carriedNow = w.carrying === n.id;
+        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const wouldElevate = carriedNow && pp && pp.elevated;
         const near = mode === 'play' && w.player
           && (carriedNow || dist(w.player, n.pos)<CONNECT_REACH);
         const dead = Boolean(w.dead_conns && w.dead_conns.has(n.id));
-        const ring = carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
+        const ring = targetingNow ? '#f5c518'
+          : carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
           : (dead ? '#e23b3b'
           : (sel===n.id ? '#f5c518' : (near ? '#2e8b57' : '#222')));
         const col = w.emit[n.id];
         // Carried connectors are placement previews. Inside the operating
         // radius (click-mode) draw translucent — a ghost of where a click would
         // set it; outside it (E-mode) draw solid — a firm preview of the E-drop.
-        const ghostAlpha = (pp && pp.translucent === false) ? 1 : 0.6;
+        // While targeting, draw solid gold (a sticky, committed state).
+        const ghostAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6;
         if (carriedNow) ctx.save();
         if (carriedNow) {
           ctx.globalAlpha = ghostAlpha;
@@ -325,12 +328,64 @@ export class Renderer2D {
         if (carriedNow) {
           ctx.fillStyle = ring; ctx.font = '7px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText(wouldElevate ? '(stack here)' : '(drop here)', x, y-14);
+          ctx.fillText(targetingNow ? '(targeting)' : (wouldElevate ? '(stack here)' : '(drop here)'), x, y-14);
           ctx.restore();
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';
           ctx.fillText('(raised)', x, y+14);
+        }
+      } else if (n.kind === 'mine') {
+        const carriedNow = w.carrying === n.id;
+        if (carriedNow) { ctx.save(); ctx.globalAlpha = (pp && pp.translucent === false) ? 1 : 0.6; }
+        ctx.beginPath(); ctx.arc(x, y, MINE_R, 0, 2*Math.PI);
+        ctx.fillStyle = n.disabled ? '#5a6472' : '#2b2f36'; ctx.fill();
+        ctx.strokeStyle = n.disabled ? '#9aa3b0' : '#e23b3b'; ctx.lineWidth = 2;
+        if (carriedNow) ctx.setLineDash([2,3]);
+        ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(n.fuse == null ? '' : `${n.fuse}`, x, y);
+        if (carriedNow) {
+          ctx.fillStyle = '#e23b3b'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
+          ctx.fillText('(drop here)', x, y-13);
+          ctx.restore();
+        }
+
+      } else if (n.kind === 'rewirer') {
+        const carriedNow = w.carrying === n.id;
+        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
+        const c = COLORS[n.color] ?? '#999';
+        if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
+        polygon(ctx, diamond(x, y, 12));
+        ctx.fillStyle = '#fff'; ctx.fill();
+        ctx.strokeStyle = targetingNow ? '#f5c518' : c; ctx.lineWidth = 3;
+        if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
+        ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = c; ctx.fill();
+        if (carriedNow) {
+          ctx.fillStyle = targetingNow ? '#f5c518' : c; ctx.font = '7px sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+          ctx.fillText(targetingNow ? '(targeting)' : '(drop here)', x, y-15);
+          ctx.restore();
+        }
+
+      } else if (n.kind === 'jammer') {
+        const carriedNow = w.carrying === n.id;
+        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
+        if (carriedNow) { ctx.save(); ctx.globalAlpha = (targetingNow || (pp && pp.translucent === false)) ? 1 : 0.6; }
+        ctx.beginPath(); ctx.arc(x, y, 12, 0, 2*Math.PI);
+        ctx.fillStyle = '#eceff1'; ctx.fill();
+        ctx.strokeStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.lineWidth = 3;
+        if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
+        ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#37474f'; ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('J', x, y);
+        if (carriedNow) {
+          ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
+          ctx.fillText(targetingNow ? '(targeting)' : '(drop here)', x, y-15);
+          ctx.restore();
         }
       }
     }

@@ -62,19 +62,36 @@ If you have Node.js available, `npx serve .` also works.
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
 | Hold the mouse (or E) ~0.5 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
-| Click carried connector | Toggle its "ready" state (ready = yellow = programmable) |
-| Click a node while carrying + ready | Aim / link the carried connector at that node |
-| Click while carrying | Set the item down at the shadow predicted from the click direction (stacks onto an empty box) |
+| Targeting / programming a carried device | Press & hold in the operating ring — see "Targeting & programming" below |
+| Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius; a click outside the ring is just an aim and never drops |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
-| Drag carried connector over node (while ready) | Toggle link (auto-wires on pass-through) |
+| Drag the character while carrying a ready connector | Auto-wires to nodes it passes over |
+| Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
 | C | Clear all links of selected connector |
 | Z | Rewind — undo the last meaningful action (up to 3 steps) |
 | Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |
 
 > While you carry something, a **shadow** shows exactly where it will land — always clamped to a spot that is in reach with a clear line to it, so a drop can never cross a wall, force field, or barrier. The shadow predicts whichever action fits where your cursor is:
-> - **Cursor outside the operating radius** → it previews the **E-drop**: the item set down right next to her, in the direction she's looking. The roaming cursor neither moves it nor turns her eyes. Drawn **solid**.
-> - **Cursor inside the operating radius** → it previews the **mouse-click drop**: the item right where the cursor is. Drawn **translucent**.
->
-> Both **E** and a **click** commit to whatever the shadow currently shows.
+> - **Cursor outside the operating radius** → it previews the **E-drop**: the item set down right next to her, in the direction she's looking. The roaming cursor neither moves it nor turns her eyes. Drawn **solid**. Only **E** commits this — a click out here never drops.
+> - **Cursor inside the operating radius** → it previews the **mouse-click drop**: the item right where the cursor is. Drawn **translucent**. A **click** or **E** commits it.
+
+## Carriable devices
+
+Beyond the connector and the box, three devices live on the field:
+
+- **Mine** — *programmable.* Carries a fuse (3 s by default, reprogrammable) that begins counting down the moment it is first set down; on zero it destroys nearby walls.
+- **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, with line of sight, recolours a source or receiver it targets.
+- **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
+
+> The carry / placement / programming **interaction tree** is live. Still pending: the time-evolving simulation — the mine actually counting down and exploding, and the jammer's freeze and the recolour propagating through the light engine.
+
+## Targeting & programming
+
+A brief click while carrying always just **drops** the item. To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second. What happens then depends on the device:
+
+- **Neither targeting nor programmable** (a box) → nothing; the hold is swallowed and the box is not dropped.
+- **Targeting only** (connector, jammer) → a golden arrow launches. You then have about half a second: **pull the cursor out of the ring** to keep drawing the arrow to a target, or **keep it inside** to drop into **click-by-click** mode — the device turns gold, you can release the button and click targets one by one (a connector links nodes; a jammer marks a field or deployed mine). A still ~1/3 s hold anywhere finishes.
+- **Programmable only** (mine) → a small chooser opens to set the value (the fuse time).
+- **Programmable + targeting** (rewirer) → if its colour is unset it asks you to set it first; otherwise, after the half-second window, a **Setup / Target** menu opens — *Setup* reprograms the colour, *Target* enters click-by-click which *marks* a source/receiver in line of sight. The recolour itself is applied when the rewirer is deployed (a later phase), so marking is all that happens now — like the jammer.

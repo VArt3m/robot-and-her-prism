@@ -43,6 +43,13 @@ export class World {
     return Object.values(this.nodes).filter(n => n.kind === 'connector');
   }
 
+  // Carriable objects that live as nodes (the connector plus the programmable /
+  // targeting devices: mine, rewirer, jammer). Boxes are tracked separately as
+  // bare [x,y] points, not nodes.
+  carriable_nodes() {
+    return Object.values(this.nodes).filter(n => OBJECT_TYPES[n.kind]?.carriable);
+  }
+
   field_by_id(fid) {
     return this.ffs.find(ff => ff.id === fid) ?? null;
   }
@@ -116,11 +123,12 @@ export class World {
     for (const ff of this.ffs) if (!ff.is_open) segs.push([ff.p1, ff.p2]);
     for (const bar of this.barriers) segs.push([bar.p1, bar.p2]);
     for (const [s1, s2] of segs) if (pt_seg_dist(pos, s1, s2) < r) return true;
-    const boxR = OBJECT_TYPES.box.radius, connR = OBJECT_TYPES.connector.radius;
+    const boxR = OBJECT_TYPES.box.radius;
     for (const b of this.boxes) { if (b === ignoreBox) continue; if (dist(pos, b) < r + boxR) return true; }
-    for (const c of this.connectors()) {
+    for (const c of this.carriable_nodes()) {
       if (c.id === this.carrying || c.id === ignoreConn) continue;
-      if (dist(pos, c.pos) < r + connR) return true;
+      const cr = OBJECT_TYPES[c.kind].radius;
+      if (dist(pos, c.pos) < r + cr) return true;
     }
     if (this.player && dist(pos, this.player) < r + PLAYER_R) return true;
     return false;

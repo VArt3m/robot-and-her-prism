@@ -6,7 +6,7 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS, MINE_FUSE_DEFAULT } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
@@ -20,6 +20,14 @@ const RESET_HOLD_SEC = 3;
 
 // Long-press duration (ms) that opens the stack chooser (mouse or E key).
 const MENU_HOLD_MS = 500;
+
+// Press-and-hold timing for the targeting/programming tree (a press in the
+// annulus while carrying). AIM_HOLD_MS reaches the branch point; AIM_DECIDE_MS
+// is the extra window after the golden arrow launches in which the player
+// either pulls the cursor out of the ring (keep drawing the arrow) or holds it
+// inside (fall into click-by-click targeting / the Setup·Target menu).
+const AIM_HOLD_MS = 333;
+const AIM_DECIDE_MS = 500;
 
 // Radius (world units) within which a click grabs the character to walk her.
 // Smaller than the operating radius so a drag started off the character (but
@@ -35,10 +43,19 @@ const PLAYER_GRAB_R = 11;
 const STACK_RULES = {
   connector: { ground: true,  box: true,  'box+connector': false, connector: false },
   box:       { ground: true,  box: false, 'box+connector': false, connector: false },
+  // The programmable / targeting devices set down on the ground only (for now).
+  mine:      { ground: true,  box: false, 'box+connector': false, connector: false },
+  rewirer:   { ground: true,  box: false, 'box+connector': false, connector: false },
+  jammer:    { ground: true,  box: false, 'box+connector': false, connector: false },
 };
 function canPlace(carried, onto) {
   return Boolean(STACK_RULES[carried] && STACK_RULES[carried][onto]);
 }
+
+// Human-readable names for carriable kinds (used in the stack chooser).
+const NICE_NAME = {
+  connector: 'Connector', box: 'Box', mine: 'Mine', rewirer: 'Rewirer', jammer: 'Jammer',
+};
 
 export class App {
   constructor(canvas, statusEl) {
@@ -66,10 +83,15 @@ export class App {
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
       placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
+      targeting: null,   // click-by-click targeting modal: { id, kind } | null
     };
 
     // Mouse drag tracking
     this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+
+    // Targeting/programming tree gesture: an annulus press-hold while carrying.
+    // { since, kind, branched, decideAt, decided } | null
+    this._aim = null;
 
     // Rewind (undo) stack of pre-action snapshots, newest last (max UNDO_MAX).
     this._undo = [];
@@ -211,6 +233,11 @@ export class App {
     this._undo = [];
     this._pushRun = false;
     this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+    this._aim = null;
+    ui.targeting = null;
+    ui.menu = null;
+    ui.placePreview = null;
+    ui.wireDrag = null;
     this._setFlash('Playfield fully reset');
   }
 
@@ -225,6 +252,7 @@ export class App {
   _frame(ts) {
     this._updateResetHold();
     this._updateHoldMenu();
+    this._updateGestures();
     const now = ts / 1000;
     if (this._lastTick === null) this._lastTick = now;
     // requestAnimationFrame is paused/throttled while the tab is hidden, so on
@@ -333,13 +361,18 @@ export class App {
   // ---- mouse ----
   _onMouseDown([x, y], e) {
     const w = this.world;
-    // Track the press for the long-hold chooser (resolved in _onMouseUp).
+    // Track the press for the long-hold chooser / aim-hold (resolved later).
     this._press = { active: true, t: performance.now(), x, y, moved: false, consumed: false };
     this._drag.moved = false;
     this._drag.linkHit = null;
+    // In click-by-click targeting, a press is a target click or the hold-to-exit
+    // gesture — never a walk / wire-drag / placement drag.
+    if (this.uiState.targeting) {
+      this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
+      return;
+    }
     const dp = w.player ? dist([x, y], w.player) : Infinity;
-    const carriedKind = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
-    const carriedAimable = Boolean(carriedKind && objType(carriedKind)?.requiresTarget);
+    const carriedKind = this._carriedKind();
     if (w.player && dp < PLAYER_GRAB_R) {
       // Inner radius → grab the character to walk her. Capture a pre-drag
       // snapshot + signature; committed to the undo stack only if the drag
@@ -349,13 +382,13 @@ export class App {
         active: true, kind: 'player', ref: null, moved: false, linkHit: null,
         preSnap: this._captureState(), preSig: this._sig(), committed: false,
       };
-    } else if (w.player && carriedAimable && dp < CONNECT_REACH) {
-      // Outer operating radius (off the character) while carrying an item that
-      // needs a target → pull a connection wire out, without moving her.
-      this._drag = {
-        active: true, kind: 'wire', ref: null, moved: false, linkHit: null,
-        preSnap: this._captureState(), preSig: this._sig(), committed: false,
-      };
+    } else if (w.player && carriedKind && dp < CONNECT_REACH) {
+      // Annulus (off her, inside the operating ring) while carrying → begin an
+      // aim-hold. The branch (swallow / golden arrow / programming) is chosen at
+      // the 1/3-second mark in _updateGestures; until then the placement shadow
+      // keeps previewing, and a quick release is still a plain drop.
+      this._aim = { since: performance.now(), kind: carriedKind, branched: false, decideAt: null, decided: false };
+      this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
     } else {
       this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
     }
@@ -452,9 +485,17 @@ export class App {
   _onMouseUp([x, y], e) {
     const w = this.world;
     const ui = this.uiState;
-    const consumed = this._press && this._press.consumed;   // hold opened a menu
+    const consumed = this._press && this._press.consumed;   // hold opened a menu / branch
     this._press = null;
+    this._aim = null;                                       // any pending aim-hold ends
     ui.wireDrag = null;
+    if (this._drag.active && this._drag.kind === 'wire') {
+      // The golden-arrow gesture ends on release — it is never a drop, even if
+      // the cursor never moved (the object was centred on her, not at a shadow).
+      this._drag.active = false;
+      ui.live = true; w.step(performance.now()/1000);
+      return;
+    }
     if (this._drag.moved) {
       this._drag.active = false;
       ui.live = true; w.step(performance.now()/1000);
@@ -487,34 +528,30 @@ export class App {
     // A click while a chooser menu is open resolves (or cancels) the menu.
     if (ui.menu) { this._handleMenuClick(x, y); return; }
 
+    // Click-by-click targeting: a click on a node is a target intent (link /
+    // recolour / jam mark); a click on a bare intent ray (no node under the
+    // cursor) erases that ray instead — all rays in the hit zone go at once.
+    if (ui.targeting) {
+      if (!this._nodeAt(x, y) && this._deleteIntentAt(x, y)) return;
+      this._applyTargetIntent(x, y);
+      return;
+    }
+
     // Empty-handed: pick something up. A quick click takes the top of the
     // stack; a hold on a real stack (2+ items) opens a chooser menu.
     if (!w.carrying && !w.carry_box) { this._clickPickup(x, y); return; }
 
-    // Carrying a connector: operate it.
-    if (w.carrying) {
-      const cid = w.carrying;
-      // Click the carried connector itself (on the player) → toggle ready.
-      if (dist([x, y], w.player) < CONN_R + 4) {
-        ui.sel = (ui.sel === cid) ? null : cid;
-        return;
-      }
-      // Ready + click a node → program a link (aim). Not distance-limited.
-      const n = this._nodeAt(x, y);
-      if (ui.sel === cid && n && n.id !== cid) {
-        this._pushUndo();
-        w.toggle_link(cid, n.id);
-        ui.live = true; w.step(performance.now() / 1000);
-        return;
-      }
-      // Click on an existing intent ray (away from any node) → delete it.
-      if (!n && this._deleteIntentAt(x, y)) return;
-    }
+    // Carrying a targeting device: a click over an existing intent ray erases it
+    // (every ray sharing the small hit zone goes at once) rather than dropping.
+    if (objType(this._carriedKind())?.requiresTarget && this._deleteIntentAt(x, y)) return;
 
-    // Carrying a connector (not a link) or a box: set it down. A click predicts
-    // the same shadow the cursor was previewing — the item lands at the legal,
-    // in-reach spot in that direction, never across a wall.
-    this._commitPlacement(this._resolvePlacement([x, y]));
+    // Otherwise a brief click drops the item — but only a click INSIDE the
+    // activation radius commits the drop. Outside it the cursor is just an aim
+    // (it turns her eyes), so a stray click or a small attention-drag released
+    // out there never sets the item down. The E key still drops next to her.
+    if (w.player && dist([x, y], w.player) < CONNECT_REACH) {
+      this._commitPlacement(this._resolvePlacement([x, y]));
+    }
   }
 
   // Delete the intent ray(s) under a click while carrying a connector. The hit
@@ -536,14 +573,16 @@ export class App {
     return true;
   }
 
-  // The pickable items under (x, y), top of the stack first. The only stack
-  // type today is a box with a connector resting on it → [connector, box].
+  // The pickable items under (x, y), top of the stack first. A box with a
+  // connector resting on it is the one stack type today → [connector, box];
+  // every other carriable (mine, rewirer, jammer, a bare connector) is a single
+  // ground item.
   _stackAt(x, y) {
     const w = this.world;
-    let conn = null, cd = 16;
-    for (const c of w.connectors()) {
+    let node = null, nd = 16;
+    for (const c of w.carriable_nodes()) {
       const d = dist([x, y], c.pos);
-      if (d < cd) { conn = c; cd = d; }
+      if (d < nd) { node = c; nd = d; }
     }
     let box = null, bd = BOX_R + 4;
     for (const bx of w.boxes) {
@@ -551,12 +590,13 @@ export class App {
       if (d < bd) { box = bx; bd = d; }
     }
     const items = [];
-    if (conn) {
-      const lbl = (w.nodes[conn.id].label || '').trim();
-      items.push({ kind: 'connector', id: conn.id, label: lbl ? `Connector ${lbl}` : 'Connector' });
+    if (node) {
+      const lbl = (node.label || '').trim();
+      const name = NICE_NAME[node.kind] || node.kind;
+      items.push({ kind: node.kind, id: node.id, label: lbl ? `${name} ${lbl}` : name });
     }
     if (box) items.push({ kind: 'box', box, label: 'Box' });
-    return items;            // top (connector) first, box underneath
+    return items;            // top (node) first, box underneath
   }
 
   // Empty-handed click: take the top item under the cursor. (The stack chooser
@@ -583,7 +623,7 @@ export class App {
       if (w.reach_blocked(w.player, loc)) { blocked = true; return; }
       pick = item; best = d;
     };
-    for (const c of w.connectors()) consider(c.pos, { kind: 'connector', id: c.id });
+    for (const c of w.carriable_nodes()) consider(c.pos, { kind: c.kind, id: c.id });
     for (const bx of w.boxes) {
       const occupied = w.connectors().some(c => dist(c.pos, bx) < BOX_R);
       if (!occupied) consider(bx, { kind: 'box', box: bx });
@@ -598,9 +638,16 @@ export class App {
     const ui = this.uiState;
     if (w.carrying || w.carry_box) { this._handsFull(); return false; }
     this._pushUndo();
-    if (item.kind === 'connector') {
+    if (item.id) {
+      // A carriable node (connector / mine / rewirer / jammer).
+      const nd = w.nodes[item.id];
       w.carrying = item.id;
-      w.nodes[item.id].elevated = false;   // carried — not on a box anymore
+      nd.elevated = false;                 // carried — not on a box anymore
+      if (item.kind === 'mine') {
+        if (nd.fuse == null) nd.fuse = MINE_FUSE_DEFAULT;   // default on first pickup
+        nd.fuse_running = false;           // a carried mine is not counting down
+      }
+      if (item.kind === 'rewirer' && !nd.color) nd.color = 'red';
       ui.sel = item.id;                    // armed (ready) by default
     } else {
       // Lift the box off the field; de-elevate any connector that rested on it.
@@ -626,13 +673,221 @@ export class App {
     this.uiState.menu = { x, y, items: laid };
   }
 
+  // ---- targeting / programming tree (annulus press-hold) ----
+  // Resolved each frame. Two jobs: (1) while click-by-click targeting is active,
+  // a still ~1/3 s hold anywhere exits it; (2) otherwise advance the aim-hold
+  // through its branch point and the golden-arrow decision window.
+  _updateGestures() {
+    const w = this.world;
+    const ui = this.uiState;
+    const now = performance.now();
+
+    if (ui.targeting) {
+      const p = this._press;
+      if (p && p.active && !p.consumed && !p.moved && now - p.t >= AIM_HOLD_MS) {
+        p.consumed = true;
+        this._exitTargeting();
+      }
+      return;                       // the aim-hold never runs while targeting
+    }
+
+    const a = this._aim;
+    if (!a) return;
+    const kind = this._carriedKind();
+    const p = this._press;
+    if (!kind || !w.player || !p || !p.active) { this._aim = null; return; }
+    if (this._drag.active && this._drag.kind === 'player') { this._aim = null; return; }
+    const ot = objType(kind) || {};
+    const reqT = !!ot.requiresTarget, prog = !!ot.programmable;
+
+    // (1) Branch point at 1/3 s.
+    if (!a.branched && now - a.since >= AIM_HOLD_MS) {
+      a.branched = true;
+      if (!reqT && !prog) {
+        // A — neither: swallow. Nothing happens; the release will not drop.
+        p.consumed = true;
+        this._aim = null;
+      } else if (reqT && !prog) {
+        // B — targeting only: launch the golden arrow, open the decision window.
+        this._startAimArrow();
+        a.decideAt = now + AIM_DECIDE_MS;
+      } else if (!reqT && prog) {
+        // C — programmable only: open the programming sequence.
+        this._openProgramming(kind);
+        p.consumed = true;
+        this._aim = null;
+      } else {
+        // D — both: program first if a field is blank, else arm the arrow.
+        if (this._progFieldsNA(kind)) { this._openProgramming(kind); p.consumed = true; this._aim = null; }
+        else { this._startAimArrow(); a.decideAt = now + AIM_DECIDE_MS; }
+      }
+      return;
+    }
+
+    // (2) Decision window: did the cursor leave the operating ring?
+    if (a.decideAt && !a.decided && now >= a.decideAt) {
+      a.decided = true;
+      const inRing = dist(w.player, ui.mouse) < CONNECT_REACH;
+      if (inRing) {
+        // Stayed inside → fall out of arrow-drawing into the sticky interaction.
+        this._endAimArrow();
+        p.consumed = true;
+        if (reqT && prog) this._openSetupTarget(kind);   // D → choose Setup or Target
+        else this._enterTargeting(kind);                 // B → click-by-click
+      }
+      // Left the ring → the golden arrow keeps drawing (the wire drag lives on).
+      this._aim = null;
+    }
+  }
+
+  _startAimArrow() {
+    // Launch the golden-arrow wire drag; the carried object snaps to her centre
+    // (handled by _syncCarried's drag branch) and the wire endpoint tracks the
+    // cursor (handled by the existing kind==='wire' move handler).
+    this._drag = {
+      active: true, kind: 'wire', ref: null, moved: false, linkHit: null,
+      preSnap: this._captureState(), preSig: this._sig(), committed: false,
+    };
+    this.uiState.wireDrag = [...this.uiState.mouse];
+  }
+
+  _endAimArrow() {
+    this._drag.active = false;
+    this.uiState.wireDrag = null;
+  }
+
+  // Enter click-by-click targeting: the object turns gold and stays on the
+  // player; clicks create intents until a ~1/3 s hold exits.
+  _enterTargeting(kind) {
+    const w = this.world;
+    if (!w.carrying) return;
+    this._endAimArrow();
+    this.uiState.targeting = { id: w.carrying, kind };
+    this.uiState.placePreview = null;
+    w.nodes[w.carrying].pos[0] = w.player[0];
+    w.nodes[w.carrying].pos[1] = w.player[1];
+    const what = kind === 'connector' ? 'a node' : (kind === 'rewirer' ? 'a source/receiver' : 'a field or mine');
+    this._setFlash(`Targeting — click ${what}; hold to finish`);
+  }
+
+  _exitTargeting() {
+    this.uiState.targeting = null;
+    this._setFlash('Done targeting');
+  }
+
+  // The programming sequence: a small chooser of values for the carried device.
+  _openProgramming(kind) {
+    const ui = this.uiState;
+    const [ax, ay] = ui.mouse;
+    if (kind === 'mine') {
+      this._openMenu(ax, ay, [1, 2, 3, 5, 8].map(s => ({ label: `${s}s fuse`, act: 'mineFuse', value: s })));
+    } else if (kind === 'rewirer') {
+      this._openMenu(ax, ay, [['Red', 'red'], ['Green', 'green'], ['Blue', 'blue']]
+        .map(([l, c]) => ({ label: l, act: 'rewirerColor', value: c })));
+    }
+  }
+
+  _openSetupTarget(kind) {
+    const ui = this.uiState;
+    this._openMenu(ui.mouse[0], ui.mouse[1], [
+      { label: 'Setup',  act: 'setup' },
+      { label: 'Target', act: 'target' },
+    ]);
+  }
+
+  // Are the carried device's programmable fields blank (would need setup first)?
+  _progFieldsNA(kind) {
+    const w = this.world;
+    const nd = w.carrying ? w.nodes[w.carrying] : null;
+    if (!nd) return false;
+    if (kind === 'mine') return nd.fuse == null;
+    if (kind === 'rewirer') return !nd.color;
+    return false;
+  }
+
+  // Resolve a menu action item.
+  _runMenuAct(it) {
+    const w = this.world;
+    const ui = this.uiState;
+    const nd = w.carrying ? w.nodes[w.carrying] : null;
+    if (it.act === 'mineFuse' && nd) {
+      this._pushUndo(); nd.fuse = it.value; this._setFlash(`Fuse set to ${it.value}s`);
+    } else if (it.act === 'rewirerColor' && nd) {
+      this._pushUndo(); nd.color = it.value;
+      this._setFlash(`Colour set to ${it.value}`); ui.live = true; w.step(performance.now() / 1000);
+    } else if (it.act === 'setup') {
+      this._openProgramming(this._carriedKind());     // re-open as the colour chooser
+    } else if (it.act === 'target') {
+      this._enterTargeting(this._carriedKind());
+    }
+  }
+
+  // Apply a click-by-click target intent for the carried device.
+  _applyTargetIntent(x, y) {
+    const w = this.world;
+    const ui = this.uiState;
+    const t = ui.targeting;
+    if (!t || !w.nodes[t.id]) return;
+    const cid = t.id;
+    if (t.kind === 'connector') {
+      const n = this._nodeAt(x, y);
+      if (n && n.id !== cid && ['source', 'receiver', 'connector'].includes(n.kind)) {
+        this._pushUndo(); w.toggle_link(cid, n.id);
+        ui.live = true; w.step(performance.now() / 1000);
+      }
+      return;
+    }
+    if (t.kind === 'rewirer') {
+      // Like the jammer, the rewirer's effect is deferred: with line of sight it
+      // *marks* a source or receiver now; the actual recolour is applied once the
+      // rewirer is deployed. Storing that persistent intent (and drawing its ray)
+      // and applying it on drop is phase 3/4 — so it no longer recolours instantly.
+      const n = this._nodeAt(x, y);
+      if (n && ['source', 'receiver'].includes(n.kind)) {
+        if (w.reach_blocked(w.player, n.pos)) { this._setFlash('No line of sight'); this._beep(); return; }
+        this._setFlash('Recolour target marked (applies once the rewirer is set down)');
+      }
+      return;
+    }
+    if (t.kind === 'jammer') {
+      // Phase 3 will store a persistent jam relationship whose effect is live
+      // only while the jammer is deployed. For now, acknowledge the target.
+      const tgt = this._jamTargetAt(x, y);
+      if (tgt) {
+        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash('No line of sight'); this._beep(); return; }
+        this._setFlash('Jam target marked (effect arrives in phase 3)');
+      }
+      return;
+    }
+  }
+
+  // Nearest jammable target (a force field's midpoint or a mine) under (x, y).
+  _jamTargetAt(x, y) {
+    const w = this.world;
+    let best = null, bd = 18;
+    for (const ff of w.ffs) {
+      const m = ff.mid();
+      const d = dist([x, y], m);
+      if (d < bd) { best = { pos: m, ff }; bd = d; }
+    }
+    for (const n of Object.values(w.nodes)) {
+      if (n.kind !== 'mine') continue;
+      const d = dist([x, y], n.pos);
+      if (d < bd) { best = { pos: n.pos, mine: n }; bd = d; }
+    }
+    return best;
+  }
+
   _handleMenuClick(x, y) {
     const menu = this.uiState.menu;
     this.uiState.menu = null;
     if (!menu) return;
     for (const it of menu.items) {
       const [rx, ry, rw, rh] = it.rect;
-      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) { this._pickItem(it); return; }
+      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+        if (it.act) this._runMenuAct(it); else this._pickItem(it);
+        return;
+      }
     }
     // clicked outside the menu → just cancel
   }
@@ -722,6 +977,15 @@ export class App {
     return { type: 'ground', point: [x, y] };
   }
 
+  // The kind of whatever is currently carried — a node kind ('connector',
+  // 'mine', 'rewirer', 'jammer') or 'box' — or null when hands are empty.
+  _carriedKind() {
+    const w = this.world;
+    if (w.carrying) return w.nodes[w.carrying]?.kind ?? null;
+    if (w.carry_box) return 'box';
+    return null;
+  }
+
   // Keep the carried item glued to its live placement preview (the "shadow").
   // While a drag gesture is in progress (walking her, or pulling a wire) the
   // item rides on the player exactly as before; otherwise it floats at the spot
@@ -735,8 +999,9 @@ export class App {
       if (w.carrying) { w.nodes[w.carrying].pos[0] = p[0]; w.nodes[w.carrying].pos[1] = p[1]; }
       if (w.carry_box) { w.carry_box[0] = p[0]; w.carry_box[1] = p[1]; }
     };
-    if (this._drag.active) {
-      // Active gesture: the drag handlers keep the item on the player.
+    if (this._drag.active || ui.targeting) {
+      // Active gesture (walking her / pulling a wire) or click-by-click
+      // targeting: the item stays centred on the player, no shadow.
       ui.placePreview = null;
       sit(w.player);
       return;
@@ -771,9 +1036,9 @@ export class App {
   // is genuinely no legal spot in reach.
   _resolvePlacement(aim) {
     const w = this.world;
-    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    const carried = this._carriedKind();
     if (!carried || !w.player) return null;
-    const r = carried === 'box' ? BOX_R : CONN_R;
+    const r = objType(carried)?.radius ?? CONN_R;
     const P = w.player;
     const gap = PLAYER_R + r + 2;            // closest the centre may sit to her
     const maxD = Math.max(gap, CONNECT_REACH - 1);  // centre stays within reach
@@ -864,16 +1129,19 @@ export class App {
   _commitPlacement(place) {
     const w = this.world;
     const ui = this.uiState;
-    const carried = w.carrying ? 'connector' : (w.carry_box ? 'box' : null);
+    const carried = this._carriedKind();
     if (!carried) return false;
     if (!place) { this._setFlash('No room to set it down'); this._beep(); return false; }
     if (!canPlace(carried, place.type)) { this._handsFull(); return false; }
     this._pushUndo();
-    if (carried === 'connector') {
+    if (w.carrying) {
       const cid = w.carrying;
       w.nodes[cid].pos[0] = place.spot[0];
       w.nodes[cid].pos[1] = place.spot[1];
-      w.nodes[cid].elevated = (place.type === 'box');
+      // Only connectors ride on boxes; other devices always rest on the ground.
+      w.nodes[cid].elevated = (carried === 'connector' && place.type === 'box');
+      // A mine begins counting down the moment it is first set down.
+      if (carried === 'mine') w.nodes[cid].fuse_running = true;
       w.carrying = null;
       ui.sel = null;
     } else {
