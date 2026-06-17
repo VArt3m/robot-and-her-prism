@@ -66,11 +66,9 @@ app._draw(); ok(true, 'render after placing connector');
   w.nodes['con_c'].elevated = false;
   app.uiState.sel = 'con_c';
 
-  // INSIDE the radius → predict the mouse-click placement: lands at the cursor,
-  // drawn translucent.
+  // INSIDE the radius → predict the mouse-click placement: lands at the cursor.
   const inAim = [w.player[0] + 30, w.player[1]];        // 30 < CONNECT_REACH (37)
   const pin = app._resolvePlacement(inAim);
-  ok(pin && pin.translucent === true, 'inside radius → click-mode preview is translucent');
   ok(pin && Math.abs(dist(w.player, pin.spot) - 30) < 6,
      `inside radius → spot lands at the cursor (~30), got ${pin ? dist(w.player, pin.spot).toFixed(1) : 'null'}`);
 
@@ -80,7 +78,6 @@ app._draw(); ok(true, 'render after placing connector');
   w.facing = [1, 0];                                   // eyes → +x (right)
   const outAim = [w.player[0] - 200, w.player[1]];     // cursor far to the LEFT
   const pout = app._resolvePlacement(outAim);
-  ok(pout && pout.translucent === false, 'outside radius → E-mode preview is solid');
   ok(pout && dist(w.player, pout.spot) < CONNECT_REACH,
      'outside radius → spot stays within reach');
   ok(pout && dist(w.player, pout.spot) <= 28,

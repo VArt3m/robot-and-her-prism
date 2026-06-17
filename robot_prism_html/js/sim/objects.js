@@ -15,21 +15,34 @@ import { BOX_R, CONN_R, MINE_R } from '../core/constants.js';
 //               wire-drag / click-by-click targeting gesture in the UI.
 //   programmable   : the object holds a player-settable value (a fuse time, a
 //               colour, …) configured via the programming sequence in the UI.
+//   jammable  : a jammer can target it. When a live jam ray reaches it, it is
+//               forced into the disabled (inert) state and held there. Force
+//               fields are jammable too, but they are entities, not carriable
+//               objects, so their jammability is intrinsic (see isJammable).
 //   radius    : circular collision half-extent, in world units.
 export const OBJECT_TYPES = {
-  box:       { material: true, pushable: false, carriable: true, requiresTarget: false, programmable: false, radius: BOX_R },
-  connector: { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: false, radius: CONN_R },
+  box:       { material: true, pushable: false, carriable: true, requiresTarget: false, programmable: false, jammable: false, radius: BOX_R },
+  connector: { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: false, jammable: false, radius: CONN_R },
   // Programmable only — a portable mine. Fuse (seconds) is reprogrammable and
   // counts down from its first drop; on zero it destroys walls in a small radius.
-  mine:      { material: true, pushable: false, carriable: true, requiresTarget: false, programmable: true,  radius: MINE_R },
+  // Jammable: a jam ray freezes it (its countdown is held).
+  mine:      { material: true, pushable: false, carriable: true, requiresTarget: false, programmable: true,  jammable: true,  radius: MINE_R },
   // Programmable + targeting — a rewirer. Holds a colour (red/green/blue) and,
   // with line of sight, recolours a source or receiver it targets.
-  rewirer:   { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  radius: CONN_R },
-  // Targeting only — a jammer. With line of sight it freezes a force field or a
-  // deployed mine; its effect is live only while the jammer itself is down.
-  jammer:    { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: false, radius: CONN_R },
+  rewirer:   { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R },
+  // Targeting only — a jammer. With line of sight it forces a force field or a
+  // deployed mine into the disabled state; its effect is live only while the
+  // jammer itself is on the ground.
+  jammer:    { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: false, jammable: false, radius: CONN_R },
 };
 
 export function objType(kind) {
   return OBJECT_TYPES[kind] || null;
+}
+
+// May a jammer target this thing? Force fields are always jammable (they are
+// entities, not carriable objects); carriable kinds carry the flag in the table
+// above. `target` is either a kind string or null.
+export function kindIsJammable(kind) {
+  return Boolean(OBJECT_TYPES[kind]?.jammable);
 }

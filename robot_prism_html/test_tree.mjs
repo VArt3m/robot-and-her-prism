@@ -292,5 +292,112 @@ eTap([w.player[0] + 15, w.player[1]]);
 ok(w.carrying === null, 'E: a brief E drops the carried item');
 clearHands(); w.links.clear();
 
+// =========================================================================
+// Jammer targeting — the two paths the player actually uses.
+// =========================================================================
+
+// Click-by-click: a click ANYWHERE along a gate segment marks it (not just the
+// midpoint — that midpoint-only hit zone was the bug).
+clearHands(); w.jam_links.clear();
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app._enterTargeting('jammer');
+ok(app.uiState.targeting && app.uiState.targeting.kind === 'jammer', 'jammer entered click-by-click');
+app._playClick(820, 380);                       // left end of ff_mid (786..1005), NOT its centre
+ok(w.jam_links.get('jam_a') === 'ff_mid', 'click-by-click: a click on the gate body marks the gate');
+
+// Re-marking a different gate overwrites (one intent, last wins).
+app._playClick(820, 250);                       // ff_top
+ok(w.jam_links.get('jam_a') === 'ff_top' && w.jam_links.size === 1, 'click-by-click: re-mark overwrites');
+clearHands(); w.jam_links.clear();
+
+// A click on empty space (no gate / mine / ray) leaves targeting.
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app._enterTargeting('jammer');
+app._playClick(470, 200);                        // nothing there
+ok(app.uiState.targeting === null, 'click-by-click: an empty click exits targeting');
+clearHands(); w.jam_links.clear();
+
+// Golden arrow: a wire-drag sweep onto a gate marks it.
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app._startAimArrow();
+ok(app._drag.active && app._drag.kind === 'wire', 'golden arrow: wire drag armed for the jammer');
+app._onMouseMove([820, 380], {});                // arrow tip swept onto ff_mid
+ok(w.jam_links.get('jam_a') === 'ff_mid', 'golden arrow: sweeping onto a gate marks it');
+app._onMouseUp([820, 380], {});
+ok(w.jam_links.get('jam_a') === 'ff_mid', 'golden arrow: the mark survives release');
+clearHands(); w.jam_links.clear();
+
+// Golden arrow onto a mine marks the mine too.
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app._startAimArrow();
+app._onMouseMove([430, 440], {});                // mine_a sits at (430,440)
+ok(w.jam_links.get('jam_a') === 'mine_a', 'golden arrow: sweeping onto a mine marks it');
+app._onMouseUp([430, 440], {});
+clearHands(); w.jam_links.clear();
+
+// A carried jammer dragged over a connector must NOT spray light links.
+w.player = [445, 293];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app.uiState.sel = 'jam_a';
+app._drag = { active: true, kind: 'player', ref: null, moved: false, linkHit: null,
+              preSnap: app._captureState(), preSig: app._sig(), committed: false };
+const jamLinksBefore = w.links.size;
+app._onMouseMove([445, 293], {});                // dragged onto con_c's spot
+ok(w.links.size === jamLinksBefore, 'a carried jammer never auto-wires light links');
+clearHands(); w.links.clear(); w.jam_links.clear();
+app._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+
+// Regression: the connector golden arrow still toggles a light link.
+w.player = [445, 293];
+app._pickItem({ kind: 'connector', id: 'con_c' });
+app._startAimArrow();
+app._onMouseMove(w.nodes['src_g1'].pos.slice(), {});   // sweep onto a source
+ok(w.links.has(w._link_key('con_c', 'src_g1')), 'connector golden arrow still links nodes');
+app._onMouseUp(w.nodes['src_g1'].pos.slice(), {});
+clearHands(); w.links.clear(); w.jam_links.clear();
+
+// =========================================================================
+// C clears the carried targeting device's intents — connector links AND a
+// jammer's jam mark, in both carrying and click-by-click modes.
+// =========================================================================
+clearHands(); w.links.clear(); w.jam_links.clear();
+
+// Jammer, plain carrying.
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+w.set_jam('jam_a', 'ff_mid');
+app._handleAction('clear', performance.now());
+ok(!w.jam_links.has('jam_a'), 'C clears a carried jammer\u2019s jam mark');
+clearHands(); w.jam_links.clear();
+
+// Jammer, in click-by-click.
+w.player = [470, 380];
+app._pickItem({ kind: 'jammer', id: 'jam_a' });
+app._enterTargeting('jammer');
+w.set_jam('jam_a', 'ff_top');
+app._handleAction('clear', performance.now());
+ok(!w.jam_links.has('jam_a'), 'C clears the jam mark in click-by-click too');
+clearHands(); w.jam_links.clear();
+
+// Connector regression: C still clears its light links.
+w.player = [445, 293];
+app._pickItem({ kind: 'connector', id: 'con_c' });
+w.toggle_link('con_c', 'src_g1');
+ok(w.links.size === 1, 'connector has a link to clear');
+app._handleAction('clear', performance.now());
+ok(w.links.size === 0, 'C still clears a carried connector\u2019s links');
+clearHands(); w.links.clear(); w.jam_links.clear();
+
+// A no-target device (a mine) ignores C without error.
+w.player = [430, 440];
+app._pickItem({ kind: 'mine', id: 'mine_a' });
+app._handleAction('clear', performance.now());
+ok(w.carrying === 'mine_a', 'C is a harmless no-op for a non-targeting device');
+clearHands();
+
 console.log(`\ntree tests: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

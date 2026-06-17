@@ -3,6 +3,7 @@ import {
   CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS,
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist } from '../core/geometry.js';
+import { objType, kindIsJammable } from './objects.js';
 
 const PLAYER_OWNER = '__player__';
 
@@ -24,6 +25,10 @@ export class Engine {
     this._beam_instant = new Map();
     this._last_beams_t = [];
     this.dead_conns = new Set();   // connectors killed by conflicting incoming colours
+    // Live jammer rays for the renderer: [{ from, to, live, reaches }]. `live`
+    // means the jammer is deployed (on the ground); `reaches` means its ray is
+    // currently unobstructed and so its target is held disabled.
+    this.jam_rays_draw = [];
   }
 
   // ---- blockers ----
@@ -38,7 +43,7 @@ export class Engine {
     const segs = [];
     for (const wl of w.walls) segs.push([wl.p1, wl.p2, null, null]);
     for (const ff of w.ffs) {
-      if (!ff.is_open) segs.push([ff.p1, ff.p2, null, null]);
+      if (!ff.is_passable()) segs.push([ff.p1, ff.p2, null, null]);
     }
     for (const bx of w.boxes) {
       for (const [s1,s2] of this._square(bx, BOX_R)) segs.push([s1,s2,0,null]);
@@ -266,6 +271,86 @@ export class Engine {
     return ins.length > 0 && ins.some(Boolean);
   }
 
+  // ---- jammer rays ----
+  // The jammer ray is "dark matter": it ignores light beams, other jam rays, the
+  // player, boxes and connectors. It is stopped ONLY by black walls and by a
+  // force field that is currently *active* (solid — neither open nor disabled).
+  // `excludeFieldId` is the ray's own target field, which must not count as a
+  // self-blocker. Reads the live is_open / disabled state, so it is re-evaluated
+  // every iteration as fields settle.
+  _jam_blocked(a, b, excludeFieldId = null) {
+    const w = this.world;
+    const segs = w.walls.map(wl => [wl.p1, wl.p2]);
+    for (const ff of w.ffs) {
+      if (ff.id === excludeFieldId) continue;
+      if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);   // active/solid → blocks
+    }
+    return first_block_t(a, b, segs) !== null;
+  }
+
+  // Resolve a jam target id to { pos, excludeFieldId } or null. A force field
+  // targets its own midpoint (and excludes itself from blockers); a jammable
+  // node (a mine) targets its position.
+  _jam_target(tid) {
+    const w = this.world;
+    const ff = w.field_by_id(tid);
+    if (ff) return { pos: ff.mid(), excludeFieldId: ff.id };
+    const nd = w.nodes[tid];
+    if (nd && kindIsJammable(nd.kind)) return { pos: nd.pos, excludeFieldId: null };
+    return null;
+  }
+
+  // The set of target ids currently held disabled by a live, reaching jam ray.
+  // Only deployed jammers (not the carried one) bite; a target is disabled if
+  // ANY reaching ray hits it, so several jammers stack independently.
+  _compute_jam_disabled() {
+    const w = this.world;
+    const out = new Set();
+    for (const [jid, tid] of w.jam_links) {
+      const jn = w.nodes[jid];
+      if (!jn || jn.kind !== 'jammer' || jid === w.carrying) continue;
+      const tg = this._jam_target(tid);
+      if (!tg) continue;
+      if (!this._jam_blocked(jn.pos, tg.pos, tg.excludeFieldId)) out.add(tid);
+    }
+    return out;
+  }
+
+  // Write a freshly-computed disabled set onto the world's fields and jammable
+  // nodes. Returns true if anything changed (drives the solve fixed point).
+  _apply_jam_disabled(set) {
+    const w = this.world;
+    let changed = false;
+    for (const ff of w.ffs) {
+      const nv = set.has(ff.id);
+      if (nv !== ff.disabled) { ff.disabled = nv; changed = true; }
+    }
+    for (const n of Object.values(w.nodes)) {
+      if (!kindIsJammable(n.kind)) continue;
+      const nv = set.has(n.id);
+      if (nv !== n.disabled) { n.disabled = nv; changed = true; }
+    }
+    return changed;
+  }
+
+  // Rebuild the renderer's jam-ray list from settled state. Includes the carried
+  // jammer's intent (drawn as a faint preview, never live) so the mark is visible
+  // while positioning, plus every deployed jammer's live ray.
+  _build_jam_rays() {
+    const w = this.world;
+    const out = [];
+    for (const [jid, tid] of w.jam_links) {
+      const jn = w.nodes[jid];
+      if (!jn || jn.kind !== 'jammer') continue;
+      const tg = this._jam_target(tid);
+      if (!tg) continue;
+      const live = jid !== w.carrying;
+      const reaches = live && !this._jam_blocked(jn.pos, tg.pos, tg.excludeFieldId);
+      out.push({ from: [...jn.pos], to: [...tg.pos], live, reaches });
+    }
+    this.jam_rays_draw = out;
+  }
+
   solve(cold = false, fill_instant = true) {
     const w = this.world;
     this._fill_instant = fill_instant;
@@ -273,7 +358,8 @@ export class Engine {
     for (const n of Object.values(w.nodes))
       if (n.kind === 'button') w.pressed[n.id] = this.button_pressed(n.id);
     if (cold) {
-      for (const ff of w.ffs) ff.is_open = false;
+      for (const ff of w.ffs) { ff.is_open = false; ff.disabled = false; }
+      for (const n of Object.values(w.nodes)) if (kindIsJammable(n.kind)) n.disabled = false;
       this.beam_anim.clear();
       this.charge = {};
       for (const n of Object.values(w.nodes))
@@ -281,22 +367,24 @@ export class Engine {
       this._charge_t = null;
     }
     for (let iter = 0; iter < 30; iter++) {
+      let changed = this._apply_jam_disabled(this._compute_jam_disabled());
       const [emit, [beams, length, delivery]] = this.propagate();
       const lit = this._lit_map(beams, delivery);
       const val = this.evaluate_logic(lit, w.pressed);
-      let changed = false;
       for (const ff of w.ffs) {
         const nw = this.field_open(ff, val);
         if (nw !== ff.is_open) { ff.is_open = nw; changed = true; }
       }
       if (!changed) break;
     }
+    this._apply_jam_disabled(this._compute_jam_disabled());
     const [emit, [beams, length, delivery]] = this.propagate();
     this.emit = emit;
     this.lit = this._lit_map(beams, delivery);
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
+    this._build_jam_rays();
     this._last_solve = [beams, length, delivery];
     this.dead_conns = this._conflict_map(beams, delivery);
     this.beams_draw = this._animate_beams(beams, length, delivery);
@@ -473,20 +561,22 @@ export class Engine {
     this._fill_instant = false;
     const old_emit = { ...this.emit };
     const old_open = w.ffs.map(ff => ff.is_open);
+    const old_disabled = w.ffs.map(ff => ff.disabled);
     w.pressed = {};
     for (const n of Object.values(w.nodes))
       if (n.kind === 'button') w.pressed[n.id] = this.button_pressed(n.id);
     for (let iter = 0; iter < 30; iter++) {
+      let changed = this._apply_jam_disabled(this._compute_jam_disabled());
       const [emit, [beams, target, instant, eff, delivery]] = this.propagate_timed();
       const lit = this._lit_map(beams, delivery);
       const val = this.evaluate_logic(lit, w.pressed);
-      let changed = false;
       for (const ff of w.ffs) {
         const nw = this.field_open(ff, val);
         if (nw !== ff.is_open) { ff.is_open = nw; changed = true; }
       }
       if (!changed) break;
     }
+    this._apply_jam_disabled(this._compute_jam_disabled());
     const [emit, [beams, target, instant, eff, delivery]] = this.propagate_timed();
     this.emit = emit;
     this.lit = this._lit_map(beams, delivery);
@@ -494,12 +584,14 @@ export class Engine {
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
+    this._build_jam_rays();
     this.dead_conns = this._conflict_map(beams, delivery);
     const eff_changed = this._advance_eff(beams, target, instant, now);
     this.beams_draw = this._build_draw_timed(beams);
     return eff_changed || charge_changed
       || JSON.stringify(old_emit) !== JSON.stringify(this.emit)
-      || w.ffs.some((ff,i) => ff.is_open !== old_open[i]);
+      || w.ffs.some((ff,i) => ff.is_open !== old_open[i])
+      || w.ffs.some((ff,i) => ff.disabled !== old_disabled[i]);
   }
 
   refresh_timed(now = null) {

@@ -1,6 +1,6 @@
 import { BOX_R, CONN_R, PLAYER_R } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES } from './objects.js';
+import { OBJECT_TYPES, kindIsJammable } from './objects.js';
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
@@ -13,6 +13,11 @@ export class World {
     this.boxes = [];
     this.links = new Set();       // Set of "a\x00b" strings (sorted)
     this.logic_links = [];        // [[src, dst, negate], ...]
+    // Jammer intents: jammer-id → target-id (a force-field id or a jammable
+    // node id such as a mine). A jammer holds at most ONE intent — a Map gives
+    // that for free, and re-marking simply overwrites. The intent persists
+    // while the jammer is carried, but only bites while it is on the ground.
+    this.jam_links = new Map();
     this.goal = null;
     this.player = null;
     this.player_start = null;
@@ -34,6 +39,7 @@ export class World {
   get logic_val() { return this.engine.logic_val; }
   get beams_draw(){ return this.engine.beams_draw; }
   get dead_conns(){ return this.engine.dead_conns; }
+  get jam_rays_draw(){ return this.engine.jam_rays_draw; }
 
   new_id(prefix) { this._uid++; return `${prefix}${this._uid}`; }
 
@@ -88,16 +94,42 @@ export class World {
     return `linked ${src} -> ${dst}`;
   }
 
+  // ---- jam links ----
+  // A jammer targets at most one thing; setting a new target overwrites the old.
+  set_jam(jammer, target) {
+    if (!this.nodes[jammer] || this.nodes[jammer].kind !== 'jammer') return;
+    if (!this.is_jammable(target)) return;
+    this.jam_links.set(jammer, target);
+  }
+
+  clear_jam(jammer) { this.jam_links.delete(jammer); }
+
+  // Iterate jam intents as [jammer, target] pairs.
+  get jam_pairs() { return [...this.jam_links]; }
+
+  // Is `target` (an id) something a jammer may target right now? Force fields
+  // always; jammable carriable kinds (the mine) when present as a node.
+  is_jammable(target) {
+    if (this.field_by_id(target)) return true;
+    const nd = this.nodes[target];
+    return Boolean(nd && kindIsJammable(nd.kind));
+  }
+
   remove_node(nid) {
     delete this.nodes[nid];
     this.clear_links_of(nid);
     this.logic_links = this.logic_links.filter(l => l[0]!==nid && l[1]!==nid);
+    this.jam_links.delete(nid);                                   // as a jammer
+    for (const [j, t] of [...this.jam_links])                     // as a target
+      if (t === nid) this.jam_links.delete(j);
   }
 
   remove_field(ff) {
     const i = this.ffs.indexOf(ff);
     if (i !== -1) this.ffs.splice(i, 1);
     this.logic_links = this.logic_links.filter(l => l[1] !== ff.id);
+    for (const [j, t] of [...this.jam_links])
+      if (t === ff.id) this.jam_links.delete(j);
   }
 
   consumer_pos(dst) {
@@ -120,7 +152,7 @@ export class World {
   object_pos_blocked(pos, r, opts = {}) {
     const { ignoreConn = null, ignoreBox = null } = opts;
     const segs = this.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of this.ffs) if (!ff.is_open) segs.push([ff.p1, ff.p2]);
+    for (const ff of this.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
     for (const bar of this.barriers) segs.push([bar.p1, bar.p2]);
     for (const [s1, s2] of segs) if (pt_seg_dist(pos, s1, s2) < r) return true;
     const boxR = OBJECT_TYPES.box.radius;

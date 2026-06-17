@@ -168,7 +168,12 @@ export class Renderer2D {
       ctx.beginPath();
       ctx.moveTo(ff.p1[0], ff.p1[1]);
       ctx.lineTo(ff.p2[0], ff.p2[1]);
-      if (ff.is_open) {
+      if (ff.disabled) {
+        // Jammed: down and inert — passable to everything. Drawn as a barely
+        // there ghost so it reads as "not a barrier right now".
+        ctx.strokeStyle = '#c4ccd6'; ctx.lineWidth = 2;
+        ctx.setLineDash([1, 6]);
+      } else if (ff.is_open) {
         ctx.strokeStyle = '#bfe3ec'; ctx.lineWidth = 3;
         ctx.setLineDash([3, 7]);
       } else {
@@ -211,6 +216,28 @@ export class Renderer2D {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+    }
+
+    // Jammer rays — "dark matter": practically invisible. A faint hair-line; a
+    // deployed ray that actually reaches its target is a touch more present and
+    // drops a small pip on the target so the held-down state is legible.
+    for (const r of w.jam_rays_draw) {
+      ctx.save();
+      ctx.globalAlpha = (r.live && r.reaches) ? 0.24 : 0.10;
+      ctx.beginPath();
+      ctx.moveTo(r.from[0], r.from[1]);
+      ctx.lineTo(r.to[0], r.to[1]);
+      ctx.strokeStyle = '#171b22';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([1, 5]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (r.live && r.reaches) {
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.arc(r.to[0], r.to[1], 4, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#171b22'; ctx.lineWidth = 1.2; ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // Logic wiring

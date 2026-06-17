@@ -11,7 +11,7 @@ export class Motion {
   _static_blocked(old, new_, carry) {
     const w = this.world;
     const segs = w.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of w.ffs) if (!ff.is_open) segs.push([ff.p1, ff.p2]);
+    for (const ff of w.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
     for (const bar of w.barriers) {
       if (bar.kind === 'tan' || (bar.kind === 'purple' && carry)) segs.push([bar.p1, bar.p2]);
     }
@@ -25,7 +25,7 @@ export class Motion {
   _box_blocked(idx, old, new_) {
     const w = this.world;
     const segs = w.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of w.ffs) if (!ff.is_open) segs.push([ff.p1, ff.p2]);
+    for (const ff of w.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
     for (const bar of w.barriers) segs.push([bar.p1, bar.p2]);
     for (const [s1, s2] of segs) {
       const r = seg_inter(old, new_, s1, s2);
@@ -106,7 +106,7 @@ export class Motion {
       }
       return false;
     }
-    const closed_now = w.ffs.filter(ff => !ff.is_open).map(ff => [ff.p1, ff.p2]);
+    const closed_now = w.ffs.filter(ff => !ff.is_passable()).map(ff => [ff.p1, ff.p2]);
     const need_dry = Boolean(w.ffs.length) && (
       reach_to !== null
       || w.player_block
@@ -115,7 +115,7 @@ export class Motion {
     let closed_after;
     if (need_dry) {
       const after_open = this._hypothetical_open(new_, boxes_after);
-      closed_after = w.ffs.filter(ff => !after_open[ff.id]).map(ff => [ff.p1, ff.p2]);
+      closed_after = w.ffs.filter(ff => !after_open[ff.id] && !ff.disabled).map(ff => [ff.p1, ff.p2]);
     } else {
       closed_after = closed_now;
     }
@@ -170,9 +170,12 @@ export class Motion {
 
   reach_blocked(a, b) {
     const w = this.world;
+    // A drop may never cross a wall, a barrier, or a force field that is still
+    // standing. A jam-disabled field is "down", so it is no longer a barrier to
+    // reach either (open fields stay reach-blockers, unchanged).
     const segs = [
       ...w.walls.map(wl => [wl.p1, wl.p2]),
-      ...w.ffs.map(ff => [ff.p1, ff.p2]),
+      ...w.ffs.filter(ff => !ff.disabled).map(ff => [ff.p1, ff.p2]),
       ...w.barriers.map(bar => [bar.p1, bar.p2]),
     ];
     return first_block_t(a, b, segs) !== null;

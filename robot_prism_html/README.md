@@ -70,7 +70,7 @@ If you have Node.js available, `npx serve .` also works.
 | Drag the character while carrying a ready connector | Auto-wires to nodes it passes over |
 | Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
 | Exit click-by-click | A brief click on empty space (not a target), or a tap of E |
-| C | Clear all links of selected connector |
+| C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark (works while carrying or in click-by-click) |
 | Z | Rewind — undo the last meaningful action (up to 3 steps) |
 | Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |

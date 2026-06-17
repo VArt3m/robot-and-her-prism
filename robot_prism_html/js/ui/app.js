@@ -152,6 +152,7 @@ export class App {
       boxes: w.boxes.map(b => [...b]),
       links: [...w.links],
       logic_links: w.logic_links.map(l => [...l]),
+      jam_links: [...w.jam_links],
       nodePos,
       elevated,
     };
@@ -167,6 +168,7 @@ export class App {
     w.boxes = s.boxes.map(b => [...b]);
     w.links = new Set(s.links);
     w.logic_links = s.logic_links.map(l => [...l]);
+    w.jam_links = new Map(s.jam_links ?? []);
     for (const id in s.nodePos) {
       const n = w.nodes[id];
       if (n) { n.pos[0] = s.nodePos[id][0]; n.pos[1] = s.nodePos[id][1]; }
@@ -186,7 +188,8 @@ export class App {
     const boxes = w.boxes.map(b => `${Math.round(b[0])},${Math.round(b[1])}`).join('|');
     const links = [...w.links].sort().join('|');
     const logic = w.logic_links.map(l => l.join(',')).sort().join('|');
-    return `${w.carrying}#${w.carry_box ? 'B' : '-'}#${boxes}#${links}#${logic}`;
+    const jam = [...w.jam_links].map(([j, t]) => `${j}>${t}`).sort().join('|');
+    return `${w.carrying}#${w.carry_box ? 'B' : '-'}#${boxes}#${links}#${logic}#${jam}`;
   }
 
   // Push a pre-action snapshot, keeping at most UNDO_MAX of them.
@@ -342,9 +345,17 @@ export class App {
         this._nearestPickup();
       }
     } else if (action === 'clear') {
-      if (ui.sel && ui.sel === w.carrying) {
+      // C clears every intent of the carried targeting device. Any object that
+      // requires a target listens for C — a connector drops all its light links,
+      // a jammer drops its jam mark — and it works the same whether we are plain
+      // carrying or in click-by-click targeting. Objects with no target (a box,
+      // a mine) ignore C entirely.
+      const cid = w.carrying;
+      if (cid && objType(this._carriedKind())?.requiresTarget) {
         this._pushUndo();
-        w.clear_links_of(ui.sel); ui.live = true; w.step(now);
+        w.clear_links_of(cid);     // light links (connector)
+        w.clear_jam(cid);          // jam intent (jammer); a no-op for the rest
+        ui.live = true; w.step(now);
       }
     } else if (action === 'undo') {
       this._rewind();
@@ -422,9 +433,9 @@ export class App {
         const cid = w.carrying;
         w.nodes[cid].pos[0] = w.player[0];
         w.nodes[cid].pos[1] = w.player[1];
-        // Auto-wire on pass-over only while the connector is "ready" (selected).
-        // Toggled off-ready, a drag just repositions without rewiring.
-        if (ui.sel === cid) {
+        // Auto-wire on pass-over only while a CONNECTOR is "ready" (selected).
+        // Other carried devices (jammer/rewirer/mine) never auto-link.
+        if (this._carriedKind() === 'connector' && ui.sel === cid) {
           let tgt = null, best = 18;
           for (const nd of Object.values(w.nodes)) {
             if (nd.id===cid || !['source','receiver','connector'].includes(nd.kind)) continue;
@@ -453,27 +464,46 @@ export class App {
     }
 
     if (this._drag.active && this._drag.kind === 'wire' && w.carrying) {
-      // Pull a connection wire from the carried connector to a target node.
-      // The character does not move; only the wire endpoint tracks the cursor.
+      // Golden-arrow drag. The character does not move; only the arrow tip
+      // tracks the cursor. What a pass-over does depends on the carried device.
       this._drag.moved = true;
       ui.wireDrag = [x, y];
       const cid = w.carrying;
-      let tgt = null, best = 18;
-      for (const nd of Object.values(w.nodes)) {
-        if (nd.id === cid || !['source', 'receiver', 'connector'].includes(nd.kind)) continue;
-        const d = dist([x, y], nd.pos);
-        if (d < best) { tgt = nd; best = d; }
-      }
-      if (tgt === null) {
-        this._drag.linkHit = null;
-      } else if (tgt.id !== this._drag.linkHit) {
-        w.toggle_link(cid, tgt.id);
-        this._drag.linkHit = tgt.id;
-        if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
-          this._pushUndo(this._drag.preSnap);
-          this._drag.committed = true;
+      const kind = this._carriedKind();
+      if (kind === 'jammer') {
+        // Jammer: sweep the arrow onto a jammable target (a gate or a mine) to
+        // mark it. One intent, last wins, so we SET (not toggle); sweeping off a
+        // target leaves the last mark in place.
+        const tgt = this._jamTargetAt(x, y);
+        const tid = tgt ? (tgt.ff ? tgt.ff.id : tgt.mine.id) : null;
+        if (tid && tid !== this._drag.linkHit) {
+          if (!this._drag.committed && this._drag.preSnap) {
+            this._pushUndo(this._drag.preSnap); this._drag.committed = true;
+          }
+          w.set_jam(cid, tid);
+          this._drag.linkHit = tid;
+        }
+      } else if (kind === 'connector') {
+        // Connector: toggle a light link to each node the arrow passes over.
+        let tgt = null, best = 18;
+        for (const nd of Object.values(w.nodes)) {
+          if (nd.id === cid || !['source', 'receiver', 'connector'].includes(nd.kind)) continue;
+          const d = dist([x, y], nd.pos);
+          if (d < best) { tgt = nd; best = d; }
+        }
+        if (tgt === null) {
+          this._drag.linkHit = null;
+        } else if (tgt.id !== this._drag.linkHit) {
+          w.toggle_link(cid, tgt.id);
+          this._drag.linkHit = tgt.id;
+          if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
+            this._pushUndo(this._drag.preSnap);
+            this._drag.committed = true;
+          }
         }
       }
+      // Other targeting devices (the rewirer) just draw the arrow for now; their
+      // recolour mark is applied through the click-by-click Target step.
       ui.live = true; w.step(performance.now() / 1000);
     }
 
@@ -531,12 +561,15 @@ export class App {
     // A click while a chooser menu is open resolves (or cancels) the menu.
     if (ui.menu) { this._handleMenuClick(x, y); return; }
 
-    // Click-by-click targeting: a click on a node is a target intent (link /
-    // recolour / jam mark); a click on a bare intent ray (no node under the
-    // cursor) erases that ray; a click that hits neither leaves the mode.
+    // Click-by-click targeting: a click on a valid target marks it (link / jam /
+    // recolour); a click on a bare intent ray (nothing targetable under the
+    // cursor) erases that ray; a click that hits neither leaves the mode. Apply
+    // is tried first so that clicking a target that happens to sit under its own
+    // ray marks it rather than erasing the ray (this is the common case for a
+    // jammer, whose ray ends on the gate it targets).
     if (ui.targeting) {
-      if (!this._nodeAt(x, y) && this._deleteIntentAt(x, y)) return;
       if (this._applyTargetIntent(x, y)) return;
+      if (this._deleteIntentAt(x, y)) return;
       this._exitTargeting();
       return;
     }
@@ -549,17 +582,20 @@ export class App {
     // (every ray sharing the small hit zone goes at once) rather than dropping.
     if (objType(this._carriedKind())?.requiresTarget && this._deleteIntentAt(x, y)) return;
 
-    // Otherwise a brief click drops the item where the live preview shows it:
-    // at the cursor while inside the radius, or at the frozen relative spot when
-    // the cursor is outside it. Either way the preview is the committed spot.
-    if (w.player) {
+    // Otherwise a brief click drops the item where the live preview shows it —
+    // but only when the click lands INSIDE the operating ring. A click outside
+    // the ring is purely an aim (it never drops); the E key is what commits an
+    // out-of-ring drop (handled in carry_release).
+    if (w.player && dist(w.player, [x, y]) < CONNECT_REACH) {
       this._commitPlacement(ui.placePreview || this._resolvePlacement([x, y]));
     }
   }
 
-  // Delete the intent ray(s) under a click while carrying a connector. The hit
-  // zone is a few world units wide (no single-pixel hunting); if several rays
-  // share the zone, all of them are removed at once. Returns true if any were.
+  // Delete the intent ray(s) under a click while carrying a targeting device.
+  // The hit zone is a few world units wide (no single-pixel hunting). Light
+  // links (a connector's wires) and jam rays (a jammer's single intent) both
+  // count; if several share the zone, all are removed at once. Returns true if
+  // any were.
   _deleteIntentAt(x, y) {
     const w = this.world;
     const THRESH = 6;
@@ -569,9 +605,20 @@ export class App {
       if (!na || !nb) continue;
       if (pt_seg_dist([x, y], na.pos, nb.pos) <= THRESH) hits.push([a, b]);
     }
-    if (hits.length === 0) return false;
+    const jamHits = [];
+    for (const r of w.jam_rays_draw) {
+      if (pt_seg_dist([x, y], r.from, r.to) <= THRESH) {
+        // Find which jammer this ray belongs to (by endpoint match).
+        for (const [jid, tid] of w.jam_links) {
+          const jn = w.nodes[jid];
+          if (jn && dist(jn.pos, r.from) < 1e-6) { jamHits.push(jid); break; }
+        }
+      }
+    }
+    if (hits.length === 0 && jamHits.length === 0) return false;
     this._pushUndo();
     for (const [a, b] of hits) w.toggle_link(a, b);
+    for (const jid of jamHits) w.clear_jam(jid);
     this.uiState.live = true; w.step(performance.now() / 1000);
     return true;
   }
@@ -854,11 +901,17 @@ export class App {
       return false;
     }
     if (t.kind === 'jammer') {
-      // Phase 3 will store a persistent jam relationship whose effect is live
-      // only while the jammer is deployed. For now, acknowledge the target.
+      // Mark the single target. A jammer holds exactly one intent, so this
+      // overwrites any previous one. There is no mark-time line-of-sight gate:
+      // the jammer isn't deployed yet, and once it is, its reach is re-checked
+      // live every frame (an active force field in the way blocks it until that
+      // field goes down). The jam bites only while the jammer is on the ground.
       const tgt = this._jamTargetAt(x, y);
       if (tgt) {
-        if (w.reach_blocked(w.player, tgt.pos)) { this._setFlash(STR.flash.noLineOfSight); this._beep(); return true; }
+        const tid = tgt.ff ? tgt.ff.id : tgt.mine.id;
+        this._pushUndo();
+        w.set_jam(cid, tid);
+        ui.live = true; w.step(performance.now() / 1000);
         this._setFlash(STR.flash.jamMarked);
         return true;
       }
@@ -867,17 +920,18 @@ export class App {
     return false;
   }
 
-  // Nearest jammable target (a force field's midpoint or a mine) under (x, y).
+  // Nearest jammable target under (x, y). A force field is hit anywhere along
+  // its segment (it is a long line, so midpoint-only hunting was the bug); a
+  // jammable node (a mine) is hit near its centre.
   _jamTargetAt(x, y) {
     const w = this.world;
     let best = null, bd = 18;
     for (const ff of w.ffs) {
-      const m = ff.mid();
-      const d = dist([x, y], m);
-      if (d < bd) { best = { pos: m, ff }; bd = d; }
+      const d = pt_seg_dist([x, y], ff.p1, ff.p2);
+      if (d < bd) { best = { pos: ff.mid(), ff }; bd = d; }
     }
     for (const n of Object.values(w.nodes)) {
-      if (n.kind !== 'mine') continue;
+      if (!objType(n.kind)?.jammable) continue;
       const d = dist([x, y], n.pos);
       if (d < bd) { best = { pos: n.pos, mine: n }; bd = d; }
     }
@@ -1337,7 +1391,7 @@ export class App {
     for (const ff of w.ffs) {
       if (pt_seg_dist(p, ff.p1, ff.p2) < 8) {
         const m = ff.mid();
-        return { pos: [m[0], m[1]], radius: 10, lines: T.field(ff.is_open) };
+        return { pos: [m[0], m[1]], radius: 10, lines: T.field(ff.is_open, ff.disabled) };
       }
     }
     return null;

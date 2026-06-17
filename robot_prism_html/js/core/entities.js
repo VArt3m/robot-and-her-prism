@@ -37,7 +37,19 @@ export class ForceField {
     this.p1 = [p1[0], p1[1]];
     this.p2 = [p2[0], p2[1]];
     this.is_open = false;
-    this.disabled = false;   // held open/inert by a deployed jammer
+    // Forced inert by one or more live jammer rays. A disabled field is "down":
+    // passable to the player, to light beams, and to jammer rays, and the logic
+    // that would otherwise open or shut it is ignored — it stays disabled until
+    // every jam ray reaching it is gone. `is_open` still tracks the logic result
+    // underneath, so behaviour resumes the instant the jam clears.
+    this.disabled = false;
+  }
+
+  // Effectively non-blocking? True when logic has opened it OR a jammer holds it
+  // disabled. Everything that used to test `!is_open` for solidity should test
+  // `!is_passable()` so a jammed field reads as down everywhere.
+  is_passable() {
+    return this.is_open || this.disabled;
   }
 
   mid() {
