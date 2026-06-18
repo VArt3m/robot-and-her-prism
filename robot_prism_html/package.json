@@ -1,0 +1,11 @@
+{
+  "name": "robot_prism_html",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser port of the 2-D light-beam puzzle. No build step, no deps.",
+  "scripts": {
+    "test": "node run-tests.mjs",
+    "serve": "python server.py"
+  }
+}
