@@ -3,9 +3,9 @@
 // driven by a spec, and the spec resolves to real menu labels and flashes, so a
 // new programmable object is a one-entry addition with no core change.
 // Run: node test_programming.mjs
-import { OBJECT_TYPES } from './js/sim/objects.js';
-import { PROGRAM_SPECS, programSpec } from './js/sim/programming.js';
-import { STR } from './js/core/strings.js';
+import { OBJECT_TYPES } from '../js/sim/objects.js';
+import { PROGRAM_SPECS, programSpec } from '../js/sim/programming.js';
+import { STR } from '../js/core/strings.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };

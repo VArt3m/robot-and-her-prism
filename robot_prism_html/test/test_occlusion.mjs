@@ -1,9 +1,9 @@
 // Tests for the ray OCCLUSION model (js/sim/occlusion.js) and the laser fix:
 // a beam is now stopped by every material object, while a deliberate link
 // endpoint still re-emits. Run: node test_occlusion.mjs
-import { World } from './js/sim/world.js';
-import { Node, Wall, Barrier, ForceField } from './js/core/entities.js';
-import { RAY_OCCLUSION, rayProfile, rayBlockerSegments } from './js/sim/occlusion.js';
+import { World } from '../js/sim/world.js';
+import { Node, Wall, Barrier, ForceField } from '../js/core/entities.js';
+import { RAY_OCCLUSION, rayProfile, rayBlockerSegments } from '../js/sim/occlusion.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };

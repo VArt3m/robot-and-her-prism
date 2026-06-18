@@ -35,10 +35,10 @@ js/ui/     renderer2d.js  Canvas2D (DPR-aware, letterboxed); render(world, uiSta
 ## Run & test
 
 - **Run:** `python server.py` → http://127.0.0.1:8080 (server forces correct JS MIME). Or `npm run serve` / `npx serve .`.
-- **Tests:** headless suites at project root (`test_integration`, `_jam`, `_occlusion`, `_placement`, `_programming`, `_rewirer`, `_targeting`, `_tree`). Each is a standalone script that prints its tally and exits non-zero on failure.
+- **Tests:** headless suites in `test/` (`test_integration`, `_jam`, `_occlusion`, `_placement`, `_programming`, `_rewirer`, `_targeting`, `_tree`). Each is a standalone script that prints its tally and exits non-zero on failure.
   - **All:** `npm test` (or `node run-tests.mjs`).
   - **Selected:** `node run-tests.mjs jam tree` — runs suites whose filename contains any given substring.
-  - **One, directly:** `node test_targeting.mjs`.
+  - **One, directly:** `node test/test_targeting.mjs`.
 - **Note:** `package.json` declares `"type":"module"` so the `.js` source imports as ESM under Node. Without it, Node treats `.js` as CommonJS and every suite fails with *"is a CommonJS module"*. The browser is independent (`index.html` loads everything as `type="module"`). The project still has no third-party deps; `package.json` exists only for the module type and the test/serve scripts.
 
 ## Status / not-yet-done (per README)

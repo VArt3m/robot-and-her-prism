@@ -24,7 +24,7 @@ robot_prism_py/
 │   └── ui/              # presentation + input (depends on core, sim)
 │       ├── keymap.py    # layout-independent key mapping (WASD, etc.)
 │       └── gui.py       # tkinter editor + sandbox
-└── tests/
+└── test/
     └── test_engine.py   # pytest suite
 ```
 
@@ -42,6 +42,6 @@ If `tkinter` is missing (e.g. Debian/Ubuntu): `sudo apt install python3-tk`.
 ## Test
 
 ```sh
-python -m pytest robot_prism_py/tests   # full pytest suite
+python -m pytest robot_prism_py/test   # full pytest suite
 python -m robot_prism_py --selftest      # headless smoke test, no window
 ```

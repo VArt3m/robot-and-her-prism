@@ -1,8 +1,8 @@
 // Headless checks for the carried-item placement shadow.
 // Run: node test_placement.mjs
-import { build_level } from './js/sim/level.js';
-import { PLAYER_R, CONN_R, BOX_R, CONNECT_REACH } from './js/core/constants.js';
-import { dist } from './js/core/geometry.js';
+import { build_level } from '../js/sim/level.js';
+import { PLAYER_R, CONN_R, BOX_R, CONNECT_REACH } from '../js/core/constants.js';
+import { dist } from '../js/core/geometry.js';
 
 let pass = 0, fail = 0;
 const ok  = (c, m) => { if (c) { pass++; } else { fail++; console.log('  FAIL:', m); } };

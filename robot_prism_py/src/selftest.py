@@ -1,7 +1,7 @@
 """Headless engine smoke test (no window).
 
 Kept so ``python -m robot_prism_py --selftest`` works without tkinter or pytest.
-The same scenarios are also expressed as proper pytest cases under ``tests/``.
+The same scenarios are also expressed as proper pytest cases under ``test/``.
 """
 
 from .core.entities import Node, ForceField

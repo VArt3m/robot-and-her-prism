@@ -15,9 +15,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const testDir = join(here, 'test');
 const filters = process.argv.slice(2);
 
-const all = readdirSync(here)
+const all = readdirSync(testDir)
   .filter(f => /^test_.*\.mjs$/.test(f))
   .sort();
 
@@ -35,7 +36,7 @@ if (suites.length === 0) {
 const failed = [];
 for (const suite of suites) {
   console.log(`\n=== ${suite} ===`);
-  const res = spawnSync(process.execPath, [join(here, suite)], { stdio: 'inherit' });
+  const res = spawnSync(process.execPath, [join(testDir, suite)], { stdio: 'inherit' });
   if (res.status !== 0) failed.push(suite);
 }
 

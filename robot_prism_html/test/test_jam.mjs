@@ -2,8 +2,8 @@
 // ray (walls + active force fields stop it; barriers do not), logic override,
 // the disabled-field transparency chain, and the carried-not-live rule.
 // Run: node test_jam.mjs
-import { World } from './js/sim/world.js';
-import { Node, Wall, Barrier, ForceField } from './js/core/entities.js';
+import { World } from '../js/sim/world.js';
+import { Node, Wall, Barrier, ForceField } from '../js/core/entities.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; } else { fail++; console.log('  FAIL:', m); } };

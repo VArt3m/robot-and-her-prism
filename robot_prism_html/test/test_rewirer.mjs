@@ -2,9 +2,9 @@
 // timed charge gated on a clear shot, cancel-on-pickup, reach-loss reset, and
 // the spent state. The firing+undo commit (UI) is exercised in test_tree.mjs.
 // Run: node test_rewirer.mjs
-import { World } from './js/sim/world.js';
-import { Node, Wall, ForceField } from './js/core/entities.js';
-import { RECOLOR_DELAY } from './js/core/constants.js';
+import { World } from '../js/sim/world.js';
+import { Node, Wall, ForceField } from '../js/core/entities.js';
+import { RECOLOR_DELAY } from '../js/core/constants.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };

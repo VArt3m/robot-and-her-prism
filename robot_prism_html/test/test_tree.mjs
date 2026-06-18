@@ -1,9 +1,9 @@
 // Phase-2 state-machine test: the annulus press-and-hold targeting/programming
 // tree. Drives the gesture timers directly (back-dating press/aim timestamps)
 // and asserts each branch of the tree. Run: node test_tree.mjs
-import { dist } from './js/core/geometry.js';
-import { CONNECT_REACH } from './js/core/constants.js';
-import { targetSpec } from './js/sim/targeting.js';
+import { dist } from '../js/core/geometry.js';
+import { CONNECT_REACH } from '../js/core/constants.js';
+import { targetSpec } from '../js/sim/targeting.js';
 
 // --- minimal DOM mocks (same as the integration harness) ---
 const noop = () => {};
@@ -25,7 +25,7 @@ globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = noop;
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 
-const { App } = await import('./js/ui/app.js');
+const { App } = await import('../js/ui/app.js');
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };

@@ -1,8 +1,8 @@
 // Runtime smoke test with a mocked DOM. Exercises the full carry → preview →
 // place flow and the renderer's ghost drawing, catching runtime errors that a
 // syntax check can't. Run: node test_integration.mjs
-import { dist } from './js/core/geometry.js';
-import { CONNECT_REACH } from './js/core/constants.js';
+import { dist } from '../js/core/geometry.js';
+import { CONNECT_REACH } from '../js/core/constants.js';
 
 // --- minimal DOM mocks ---
 const noop = () => {};
@@ -24,8 +24,8 @@ globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = noop;
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 
-const { App } = await import('./js/ui/app.js');
-const { objType } = await import('./js/sim/objects.js');
+const { App } = await import('../js/ui/app.js');
+const { objType } = await import('../js/sim/objects.js');
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };

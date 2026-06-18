@@ -3,10 +3,10 @@
 // target is driven entirely by a spec, with no per-kind code in the core. A new
 // targetable object passes these by adding one registry entry.
 // Run: node test_targeting.mjs
-import { World } from './js/sim/world.js';
-import { Node, ForceField } from './js/core/entities.js';
-import { OBJECT_TYPES } from './js/sim/objects.js';
-import { TARGET_SPECS, targetSpec, allIntentRays } from './js/sim/targeting.js';
+import { World } from '../js/sim/world.js';
+import { Node, ForceField } from '../js/core/entities.js';
+import { OBJECT_TYPES } from '../js/sim/objects.js';
+import { TARGET_SPECS, targetSpec, allIntentRays } from '../js/sim/targeting.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
