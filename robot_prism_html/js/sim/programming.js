@@ -1,0 +1,59 @@
+/**
+ * The programming FRAMEWORK — sister to the targeting one (js/sim/targeting.js).
+ *
+ * Every object whose type sets `programmable` shares ONE interaction core: a
+ * long press (E or mouse) on the carried device always summons a chooser menu;
+ * picking a value sets one of the device's fields. That access pattern is
+ * identical for all of them and lives in the UI.
+ *
+ * What differs per object is ONLY its data, declared in one spec here — the menu
+ * has different contents, and the value lands in a different field:
+ *
+ *   field     the node property the chooser writes ('fuse', 'colour', …).
+ *   default   the value stamped on first pickup, so a fresh device is usable.
+ *   values    the choosable values, in menu order.
+ *   labelKey  STR.menu[labelKey](value) → the menu label for a value.
+ *   flashKey  STR.flash[flashKey](value) → the confirmation flash.
+ *   live      does applying a value re-run the sim? (false for inert fields.)
+ *
+ * Resolving labelKey / flashKey to text is left to the UI, so this module stays
+ * free of presentation strings. A device may also be targetable (see
+ * targeting.js); the two frameworks compose — that is the rewirer and, later,
+ * any "programmable + targeting" object.
+ *
+ * To add a new programmable object (say one whose menu picks a movement axis):
+ * set `programmable: true` on its type, add an entry here
+ *   axis: { field:'axis', default:'horizontal', values:['horizontal','vertical'],
+ *           labelKey:'axis', flashKey:'axisSet', live:true }
+ * plus the matching STR.menu.axis / STR.flash.axisSet strings. The core does not
+ * change.
+ */
+
+import { MINE_FUSE_DEFAULT } from '../core/constants.js';
+
+export const PROGRAM_SPECS = {
+  // Mine — a reprogrammable fuse, in seconds. Inert until the mine is deployed,
+  // so setting it does not re-run the sim.
+  mine: {
+    field: 'fuse',
+    default: MINE_FUSE_DEFAULT,
+    values: [1, 2, 3, 5, 8],
+    labelKey: 'fuse',
+    flashKey: 'fuseSet',
+    live: false,
+  },
+
+  // Rewirer — the colour it would recolour a target to (red / green / blue).
+  rewirer: {
+    field: 'color',
+    default: 'red',
+    values: ['red', 'green', 'blue'],
+    labelKey: 'color',
+    flashKey: 'colourSet',
+    live: true,
+  },
+};
+
+export function programSpec(kind) {
+  return PROGRAM_SPECS[kind] || null;
+}

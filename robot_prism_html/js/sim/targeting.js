@@ -1,0 +1,156 @@
+/**
+ * The targeting FRAMEWORK.
+ *
+ * Every object whose type sets `requiresTarget` shares ONE interaction core,
+ * which lives in the UI and is identical for all of them:
+ *
+ *   • a long-press on E, or a long left-mouse press, begins targeting;
+ *   • a golden arrow is available in the window 0.333 s … 0.833 s into the press;
+ *   • staying in the ring through that window drops into click-by-click;
+ *   • a click on an intent ray deletes it;
+ *   • C clears every intent of the carried device.
+ *
+ * None of that is re-described per object. What actually differs from one
+ * targetable object to the next is captured ENTIRELY by a spec in this file:
+ *
+ *   maxIntents   how many intents the device may hold (Infinity, 1, …). Declared
+ *               for clarity; `apply` is what actually enforces it.
+ *   persistent   does marking record undoable world state (and re-run the sim)?
+ *               A `false` device is "mark-only": it has no stored intent yet.
+ *   sweep        how the golden arrow marks on pass-over: 'toggle' (link-style —
+ *               re-entering a target flips it) or 'set' (last target wins). Omit
+ *               for a device that does not mark on a sweep.
+ *   dragAutoWire may dragging the character past targets mark them too? (A
+ *               connector convenience; off for everything else.)
+ *   flash        optional key into STR.flash, shown after a successful mark.
+ *   targetAt(world, deviceId, x, y) -> { id, pos } | null
+ *               the targetable thing under the cursor; `pos` is where its ray ends.
+ *   apply(world, deviceId, targetId)
+ *               record the intent, honouring maxIntents.
+ *   intentRays(world) -> [{ from, to, key, remove() }]
+ *               every stored intent ray of THIS kind, globally, for click-delete.
+ *               `key` dedupes a ray shared by two devices; `remove()` deletes
+ *               that one intent. Empty for a mark-only device.
+ *   clear(world, deviceId)
+ *               drop every intent the device holds (the C key).
+ *
+ * To add a new targetable object: set `requiresTarget: true` on its type and add
+ * one entry here. The interaction core does not change.
+ */
+
+import { dist, pt_seg_dist } from '../core/geometry.js';
+import { kindIsJammable } from './objects.js';
+
+const HIT = 18;   // how near a click / arrow tip must fall, in world units
+
+function nearestNode(world, x, y, kinds, excludeId) {
+  let best = null, bd = HIT;
+  for (const n of Object.values(world.nodes)) {
+    if (n.id === excludeId || !kinds.includes(n.kind)) continue;
+    const d = dist([x, y], n.pos);
+    if (d < bd) { best = n; bd = d; }
+  }
+  return best;
+}
+
+export const TARGET_SPECS = {
+  // Connector — wires light between any number of sources, receivers and other
+  // connectors. Many intents; the golden arrow toggles links on pass-over and a
+  // character-drag does the same as a convenience.
+  connector: {
+    maxIntents: Infinity,
+    persistent: true,
+    sweep: 'toggle',
+    dragAutoWire: true,
+    flash: null,
+    targetAt(world, deviceId, x, y) {
+      const n = nearestNode(world, x, y, ['source', 'receiver', 'connector'], deviceId);
+      return n ? { id: n.id, pos: n.pos } : null;
+    },
+    apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
+    intentRays(world) {
+      return world.links_pairs.map(([a, b]) => ({
+        from: world.nodes[a].pos,
+        to: world.nodes[b].pos,
+        key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
+        remove: () => world.toggle_link(a, b),
+      }));
+    },
+    clear(world, deviceId) { world.clear_links_of(deviceId); },
+  },
+
+  // Rewirer — recolours a source or receiver. The recolour EFFECT (and therefore
+  // a persistent, drawable, deletable recolour intent) is still to come, so for
+  // now this is a mark-only device: it acknowledges a valid target and stores
+  // nothing. When the effect lands, flip `persistent` on, give it a `sweep`, and
+  // fill in apply / intentRays / clear — no core change needed.
+  rewirer: {
+    maxIntents: 1,
+    persistent: false,
+    flash: 'recolourMarked',
+    targetAt(world, deviceId, x, y) {
+      const n = nearestNode(world, x, y, ['source', 'receiver'], deviceId);
+      return n ? { id: n.id, pos: n.pos } : null;
+    },
+    apply() { /* recolour effect pending — nothing persistent to record yet */ },
+    intentRays() { return []; },
+    clear() {},
+  },
+
+  // Jammer — holds exactly one intent. With line of sight (re-checked live once
+  // deployed) it forces a force field, or a jammable node, into the disabled
+  // state. The golden arrow sets the single target (last wins).
+  jammer: {
+    maxIntents: 1,
+    persistent: true,
+    sweep: 'set',
+    flash: 'jamMarked',
+    targetAt(world, deviceId, x, y) {
+      let best = null, bd = HIT;
+      for (const ff of world.ffs) {
+        const d = pt_seg_dist([x, y], ff.p1, ff.p2);   // hit anywhere along the gate
+        if (d < bd) { best = { id: ff.id, pos: ff.mid() }; bd = d; }
+      }
+      for (const n of Object.values(world.nodes)) {
+        if (!kindIsJammable(n.kind)) continue;
+        const d = dist([x, y], n.pos);
+        if (d < bd) { best = { id: n.id, pos: n.pos }; bd = d; }
+      }
+      return best;
+    },
+    apply(world, deviceId, targetId) { world.set_jam(deviceId, targetId); },
+    intentRays(world) {
+      const out = [];
+      for (const [jid, tid] of world.jam_links) {
+        const jn = world.nodes[jid];
+        const ff = world.field_by_id(tid);
+        const to = ff ? ff.mid() : world.nodes[tid]?.pos;
+        if (!jn || !to) continue;
+        out.push({
+          from: jn.pos,
+          to,
+          key: `jam\u0000${jid}`,           // one intent per jammer
+          remove: () => world.clear_jam(jid),
+        });
+      }
+      return out;
+    },
+    clear(world, deviceId) { world.clear_jam(deviceId); },
+  },
+};
+
+export function targetSpec(kind) {
+  return TARGET_SPECS[kind] || null;
+}
+
+// Every stored intent ray across all targetable kinds, for click-deletion. Each
+// carries a `key` (so a ray shared by two devices is offered once) and a bound
+// `remove()`.
+export function allIntentRays(world) {
+  const out = [];
+  for (const kind in TARGET_SPECS) {
+    const spec = TARGET_SPECS[kind];
+    if (spec.intentRays) out.push(...spec.intentRays(world));
+  }
+  return out;
+}

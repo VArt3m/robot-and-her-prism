@@ -104,9 +104,7 @@ const en = {
     setup: 'Setup',
     target: 'Target',
     fuse: (s) => `${s}s fuse`,
-    colorRed: 'Red',
-    colorGreen: 'Green',
-    colorBlue: 'Blue',
+    color: (c) => ({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c),
   },
 
   // Bottom status bar.

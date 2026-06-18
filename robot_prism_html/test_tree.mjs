@@ -3,6 +3,7 @@
 // and asserts each branch of the tree. Run: node test_tree.mjs
 import { dist } from './js/core/geometry.js';
 import { CONNECT_REACH } from './js/core/constants.js';
+import { targetSpec } from './js/sim/targeting.js';
 
 // --- minimal DOM mocks (same as the integration harness) ---
 const noop = () => {};
@@ -85,7 +86,7 @@ w.player = [430, 440];
 ok(app._pickItem({ kind: 'mine', id: 'mine_a' }), 'C: picked up the mine');
 holdInAnnulus([430, 440], [450, 440]);
 elapse(400); app._updateGestures();
-ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'mineFuse'),
+ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'program' && it.value === 5),
    'C: programming chooser (fuse) opened');
 ok(app._aim === null && app._press.consumed, 'C: aim resolved + press consumed');
 clickMenu('5s fuse');
@@ -167,7 +168,7 @@ app._pickItem({ kind: 'rewirer', id: 'rw_a' });
 w.nodes['rw_a'].color = null;              // force N/A
 holdInAnnulus([520, 440], [540, 440]);
 elapse(400); app._updateGestures();
-ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'rewirerColor'),
+ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'program' && it.value === 'red'),
    'D/NA: blank field fires the programming chooser first');
 ok(!app._drag.active, 'D/NA: no arrow when a field is blank');
 clickMenu('Green');
@@ -186,7 +187,8 @@ app.uiState.mouse = [478, 380];
 forceDecide(); app._updateGestures();
 ok(app.uiState.targeting && app.uiState.targeting.kind === 'jammer', 'J: jammer enters click-by-click');
 const ffMid = w.ffs[0].mid();
-ok(!!app._jamTargetAt(ffMid[0], ffMid[1]), 'J: a force field is a valid jam target');
+ok(!!targetSpec('jammer').targetAt(w, 'jam_a', ffMid[0], ffMid[1]),
+   'J: a force field is a valid jam target');
 clearHands();
 
 // brief click in the annulus is still a drop (no hold) ------------------------
@@ -271,7 +273,7 @@ clearHands();
 w.player = [430, 440];
 app._pickItem({ kind: 'mine', id: 'mine_a' });
 eHold();
-ok(app.uiState.menu && app.uiState.menu.items.every(it => it.act === 'mineFuse'), 'E/C: hold opens the fuse chooser');
+ok(app.uiState.menu && app.uiState.menu.items.every(it => it.act === 'program'), 'E/C: hold opens the fuse chooser');
 app.uiState.menu = null;
 
 // both (rewirer, filled) → Setup/Target menu

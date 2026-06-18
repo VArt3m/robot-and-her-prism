@@ -22,6 +22,9 @@ robot_prism_html/
     ├── sim/             # the simulation (depends on core)
     │   ├── engine.js    # light / logic / force-field solver (solve + step)
     │   ├── motion.js    # player / box movement, reach and theft rules
+    │   ├── objects.js   # carriable-object attribute table (+ jammable)
+    │   ├── targeting.js # per-kind targeting specs behind one generic core
+    │   ├── programming.js # per-kind programming specs behind one generic core
     │   ├── world.js     # scene state + facade over Engine / Motion
     │   └── level.js     # hand-built sample level
     └── ui/              # presentation + input (depends on core, sim)
@@ -87,15 +90,23 @@ Beyond the connector and the box, three devices live on the field:
 - **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, with line of sight, recolours a source or receiver it targets.
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 
-> The carry / placement / programming **interaction tree** is live. Still pending: the time-evolving simulation — the mine actually counting down and exploding, and the jammer's freeze and the recolour propagating through the light engine.
+> The carry / placement / programming **interaction tree** is live, and the **jammer** now disables its target for real. Still pending: the mine actually counting down and exploding, and the rewirer's recolour propagating through the light engine.
 
 ## Targeting & programming
 
-A brief click while carrying just **drops** the item (inside the ring). To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to the end state** (no arrow). What happens depends on the device:
+A brief click while carrying just **drops** the item (inside the ring). To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to the end state** (no arrow).
 
-- **Neither targeting nor programmable** (a box) → nothing; the hold is swallowed and the box is not dropped.
-- **Targeting only** (connector, jammer) → the mouse hold launches a golden arrow, then a half-second window: **pull the cursor out of the ring** to keep drawing the arrow to a target, or **keep it inside** to drop into **click-by-click** (an E hold enters this directly). The device turns gold, you release the button and click targets one by one (a connector links nodes; a jammer marks a field or deployed mine).
-- **Programmable only** (mine) → a small chooser opens to set the value (the fuse time).
-- **Programmable + targeting** (rewirer) → if its colour is unset it asks you to set it first; otherwise a **Setup / Target** menu opens — *Setup* reprograms the colour, *Target* enters click-by-click which *marks* a source/receiver in line of sight. The recolour itself is applied when the rewirer is deployed (a later phase), so marking is all that happens now — like the jammer.
+**The targeting interaction is one shared framework**, identical for every object that can have targets — you never learn it twice. Any such object follows the same core:
 
-**Leaving click-by-click:** a brief click on empty space (anything that isn't a target) or a tap of E returns you to ordinary carrying.
+- a long press (E or mouse) begins targeting;
+- the **golden arrow** is available in the window from ~0.333 s to ~0.833 s into a mouse press — pull out of the ring to keep drawing it to a target, or stay inside to drop into **click-by-click** (an E hold enters click-by-click directly);
+- a click on an **intent ray deletes** it (every ray in the small hit zone goes at once);
+- **C clears** every intent of the carried device.
+
+What differs per object is *only* its data, declared in one spec in `js/sim/targeting.js`: how many intents it may hold, what it is allowed to target, and how an intent is stored, drawn, and cleared. Today:
+
+- **Connector** — many intents; targets sources / receivers / connectors; the arrow (and a character-drag) toggle light links.
+- **Jammer** — one intent; targets a force field or a jammable node; the arrow sets the single target.
+- **Rewirer** — *mark-only for now.* Targets a source / receiver and acknowledges the mark, but stores no persistent intent yet (the recolour effect is still to come); when it lands it becomes a full spec with no change to the core.
+
+Programmable devices add a programming step on top, and it is **its own shared framework** (`js/sim/programming.js`): a long press on a carried programmable device always summons a chooser menu, and picking a value sets one of its fields. Only the menu *contents* differ per object, declared in one spec — the mine's spec offers fuse seconds, the rewirer's offers a colour; a future device could offer, say, a movement axis. A device that is both programmable and targeting (the rewirer) gets a **Setup / Target** menu that routes into whichever framework you pick. To add a new programmable object, give its type `programmable: true` and add one spec entry (plus its menu/flash strings) — the core does not change. (`test_programming.mjs` enforces that every `programmable` kind has a conforming spec, and `test_targeting.mjs` does the same for targeting.)

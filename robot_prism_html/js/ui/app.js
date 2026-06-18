@@ -6,12 +6,14 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS, MINE_FUSE_DEFAULT } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { objType } from '../sim/objects.js';
+import { targetSpec, allIntentRays } from '../sim/targeting.js';
+import { programSpec } from '../sim/programming.js';
 import { STR } from '../core/strings.js';
 
 // How many rewind (undo) steps to retain, and how long the full-reset key
@@ -345,16 +347,15 @@ export class App {
         this._nearestPickup();
       }
     } else if (action === 'clear') {
-      // C clears every intent of the carried targeting device. Any object that
-      // requires a target listens for C — a connector drops all its light links,
-      // a jammer drops its jam mark — and it works the same whether we are plain
-      // carrying or in click-by-click targeting. Objects with no target (a box,
-      // a mine) ignore C entirely.
+      // C clears every intent of the carried targeting device, through its spec.
+      // Any object that requires a target listens for C — connector links, a
+      // jammer's jam mark, and so on — in carrying or click-by-click alike.
+      // Objects with no target (a box, a mine) ignore C entirely.
       const cid = w.carrying;
-      if (cid && objType(this._carriedKind())?.requiresTarget) {
+      const spec = targetSpec(this._carriedKind());
+      if (cid && spec && spec.persistent) {
         this._pushUndo();
-        w.clear_links_of(cid);     // light links (connector)
-        w.clear_jam(cid);          // jam intent (jammer); a no-op for the rest
+        spec.clear(w, cid);
         ui.live = true; w.step(now);
       }
     } else if (action === 'undo') {
@@ -433,19 +434,19 @@ export class App {
         const cid = w.carrying;
         w.nodes[cid].pos[0] = w.player[0];
         w.nodes[cid].pos[1] = w.player[1];
-        // Auto-wire on pass-over only while a CONNECTOR is "ready" (selected).
-        // Other carried devices (jammer/rewirer/mine) never auto-link.
-        if (this._carriedKind() === 'connector' && ui.sel === cid) {
-          let tgt = null, best = 18;
-          for (const nd of Object.values(w.nodes)) {
-            if (nd.id===cid || !['source','receiver','connector'].includes(nd.kind)) continue;
-            const d = dist(w.player, nd.pos);
-            if (d < best) { tgt = nd; best = d; }
-          }
-          if (tgt === null) { this._drag.linkHit = null; }
-          else if (tgt.id !== this._drag.linkHit) {
-            w.toggle_link(cid, tgt.id);
-            this._drag.linkHit = tgt.id;
+        // Auto-mark on pass-over while a device that opts into it (the connector)
+        // is "ready" (selected). Spec-driven: same targetAt/apply as the arrow,
+        // so a character-drag wires exactly what a sweep would. Other carried
+        // devices never auto-mark.
+        const dragSpec = targetSpec(this._carriedKind());
+        if (dragSpec && dragSpec.dragAutoWire && ui.sel === cid) {
+          const tgt = dragSpec.targetAt(w, cid, w.player[0], w.player[1]);
+          const tid = tgt ? tgt.id : null;
+          if (tid && tid !== this._drag.linkHit) {
+            dragSpec.apply(w, cid, tid);
+            this._drag.linkHit = tid;
+          } else if (!tid) {
+            this._drag.linkHit = null;
           }
         } else {
           this._drag.linkHit = null;
@@ -465,45 +466,27 @@ export class App {
 
     if (this._drag.active && this._drag.kind === 'wire' && w.carrying) {
       // Golden-arrow drag. The character does not move; only the arrow tip
-      // tracks the cursor. What a pass-over does depends on the carried device.
+      // tracks the cursor. Marking on pass-over is entirely spec-driven: a
+      // 'toggle' device flips a target each time the tip enters it, a 'set'
+      // device keeps the last target swept. A device with no `sweep` (or no
+      // persistent store) just draws the arrow.
       this._drag.moved = true;
       ui.wireDrag = [x, y];
       const cid = w.carrying;
-      const kind = this._carriedKind();
-      if (kind === 'jammer') {
-        // Jammer: sweep the arrow onto a jammable target (a gate or a mine) to
-        // mark it. One intent, last wins, so we SET (not toggle); sweeping off a
-        // target leaves the last mark in place.
-        const tgt = this._jamTargetAt(x, y);
-        const tid = tgt ? (tgt.ff ? tgt.ff.id : tgt.mine.id) : null;
+      const spec = targetSpec(this._carriedKind());
+      if (spec && spec.persistent && spec.sweep) {
+        const tgt = spec.targetAt(w, cid, x, y);
+        const tid = tgt ? tgt.id : null;
         if (tid && tid !== this._drag.linkHit) {
           if (!this._drag.committed && this._drag.preSnap) {
             this._pushUndo(this._drag.preSnap); this._drag.committed = true;
           }
-          w.set_jam(cid, tid);
+          spec.apply(w, cid, tid);
           this._drag.linkHit = tid;
-        }
-      } else if (kind === 'connector') {
-        // Connector: toggle a light link to each node the arrow passes over.
-        let tgt = null, best = 18;
-        for (const nd of Object.values(w.nodes)) {
-          if (nd.id === cid || !['source', 'receiver', 'connector'].includes(nd.kind)) continue;
-          const d = dist([x, y], nd.pos);
-          if (d < best) { tgt = nd; best = d; }
-        }
-        if (tgt === null) {
-          this._drag.linkHit = null;
-        } else if (tgt.id !== this._drag.linkHit) {
-          w.toggle_link(cid, tgt.id);
-          this._drag.linkHit = tgt.id;
-          if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
-            this._pushUndo(this._drag.preSnap);
-            this._drag.committed = true;
-          }
+        } else if (!tid && spec.sweep === 'toggle') {
+          this._drag.linkHit = null;          // re-entering a target flips it again
         }
       }
-      // Other targeting devices (the rewirer) just draw the arrow for now; their
-      // recolour mark is applied through the click-by-click Target step.
       ui.live = true; w.step(performance.now() / 1000);
     }
 
@@ -592,33 +575,23 @@ export class App {
   }
 
   // Delete the intent ray(s) under a click while carrying a targeting device.
-  // The hit zone is a few world units wide (no single-pixel hunting). Light
-  // links (a connector's wires) and jam rays (a jammer's single intent) both
-  // count; if several share the zone, all are removed at once. Returns true if
-  // any were.
+  // The hit zone is a few world units wide (no single-pixel hunting). Every
+  // device's intents are enumerated through the spec registry, so a connector's
+  // wires, a jammer's jam ray, and any future device's intents all delete the
+  // same way; if several share the zone, all go at once. Returns true if any did.
   _deleteIntentAt(x, y) {
     const w = this.world;
     const THRESH = 6;
+    const seen = new Set();
     const hits = [];
-    for (const [a, b] of w.links_pairs) {
-      const na = w.nodes[a], nb = w.nodes[b];
-      if (!na || !nb) continue;
-      if (pt_seg_dist([x, y], na.pos, nb.pos) <= THRESH) hits.push([a, b]);
+    for (const r of allIntentRays(w)) {
+      if (pt_seg_dist([x, y], r.from, r.to) > THRESH) continue;
+      if (seen.has(r.key)) continue;          // a ray shared by two devices: once
+      seen.add(r.key); hits.push(r);
     }
-    const jamHits = [];
-    for (const r of w.jam_rays_draw) {
-      if (pt_seg_dist([x, y], r.from, r.to) <= THRESH) {
-        // Find which jammer this ray belongs to (by endpoint match).
-        for (const [jid, tid] of w.jam_links) {
-          const jn = w.nodes[jid];
-          if (jn && dist(jn.pos, r.from) < 1e-6) { jamHits.push(jid); break; }
-        }
-      }
-    }
-    if (hits.length === 0 && jamHits.length === 0) return false;
+    if (hits.length === 0) return false;
     this._pushUndo();
-    for (const [a, b] of hits) w.toggle_link(a, b);
-    for (const jid of jamHits) w.clear_jam(jid);
+    for (const r of hits) r.remove();
     this.uiState.live = true; w.step(performance.now() / 1000);
     return true;
   }
@@ -694,11 +667,11 @@ export class App {
       const nd = w.nodes[item.id];
       w.carrying = item.id;
       nd.elevated = false;                 // carried — not on a box anymore
-      if (item.kind === 'mine') {
-        if (nd.fuse == null) nd.fuse = MINE_FUSE_DEFAULT;   // default on first pickup
-        nd.fuse_running = false;           // a carried mine is not counting down
-      }
-      if (item.kind === 'rewirer' && !nd.color) nd.color = 'red';
+      // Stamp a programmable device's default value on first pickup, generically,
+      // so a fresh device is usable without opening its chooser.
+      const pspec = programSpec(item.kind);
+      if (pspec && nd[pspec.field] == null) nd[pspec.field] = pspec.default;
+      if (item.kind === 'mine') nd.fuse_running = false;   // a carried mine isn't counting down
       ui.sel = item.id;                    // armed (ready) by default
     } else {
       // Lift the box off the field; de-elevate any connector that rested on it.
@@ -823,15 +796,15 @@ export class App {
   }
 
   // The programming sequence: a small chooser of values for the carried device.
+  // Open the programming chooser for the carried device — generic: the spec
+  // supplies the choosable values and how each is labelled.
   _openProgramming(kind) {
     const ui = this.uiState;
-    const [ax, ay] = ui.mouse;
-    if (kind === 'mine') {
-      this._openMenu(ax, ay, [1, 2, 3, 5, 8].map(s => ({ label: STR.menu.fuse(s), act: 'mineFuse', value: s })));
-    } else if (kind === 'rewirer') {
-      this._openMenu(ax, ay, [[STR.menu.colorRed, 'red'], [STR.menu.colorGreen, 'green'], [STR.menu.colorBlue, 'blue']]
-        .map(([l, c]) => ({ label: l, act: 'rewirerColor', value: c })));
-    }
+    const spec = programSpec(kind);
+    if (!spec) return;
+    const label = STR.menu[spec.labelKey];
+    const items = spec.values.map(v => ({ label: label(v), act: 'program', value: v }));
+    this._openMenu(ui.mouse[0], ui.mouse[1], items);
   }
 
   _openSetupTarget(kind) {
@@ -842,100 +815,54 @@ export class App {
     ]);
   }
 
-  // Are the carried device's programmable fields blank (would need setup first)?
+  // Is the carried device's programmable field still blank (so setup must come
+  // first)? Generic across every programmable kind.
   _progFieldsNA(kind) {
-    const w = this.world;
-    const nd = w.carrying ? w.nodes[w.carrying] : null;
-    if (!nd) return false;
-    if (kind === 'mine') return nd.fuse == null;
-    if (kind === 'rewirer') return !nd.color;
-    return false;
+    const nd = this.world.carrying ? this.world.nodes[this.world.carrying] : null;
+    const spec = programSpec(kind);
+    if (!nd || !spec) return false;
+    return nd[spec.field] == null;
   }
 
-  // Resolve a menu action item.
+  // Resolve a menu action item. 'program' (set a value) is generic over the
+  // carried device's spec; 'setup' / 'target' drive the shared Setup/Target menu.
   _runMenuAct(it) {
     const w = this.world;
     const ui = this.uiState;
     const nd = w.carrying ? w.nodes[w.carrying] : null;
-    if (it.act === 'mineFuse' && nd) {
-      this._pushUndo(); nd.fuse = it.value; this._setFlash(STR.flash.fuseSet(it.value));
-    } else if (it.act === 'rewirerColor' && nd) {
-      this._pushUndo(); nd.color = it.value;
-      this._setFlash(STR.flash.colourSet(it.value)); ui.live = true; w.step(performance.now() / 1000);
+    if (it.act === 'program' && nd) {
+      const spec = programSpec(this._carriedKind());
+      if (!spec) return;
+      this._pushUndo();
+      nd[spec.field] = it.value;
+      this._setFlash(STR.flash[spec.flashKey](it.value));
+      if (spec.live) { ui.live = true; w.step(performance.now() / 1000); }
     } else if (it.act === 'setup') {
-      this._openProgramming(this._carriedKind());     // re-open as the colour chooser
+      this._openProgramming(this._carriedKind());     // re-open as the value chooser
     } else if (it.act === 'target') {
       this._enterTargeting(this._carriedKind());
     }
   }
 
-  // Apply a click-by-click target intent for the carried device. Returns true if
-  // a valid target sat under the cursor (whether or not the effect could apply),
-  // false if the click hit nothing — the caller uses that to leave the mode.
+  // Apply a click-by-click target intent for the carried device. Generic: the
+  // carried kind's spec says what is targetable and how an intent is recorded.
+  // Returns true if a valid target sat under the cursor (whether or not the
+  // effect could apply) — the caller uses that to decide whether to leave the
+  // mode. No per-kind branching lives here.
   _applyTargetIntent(x, y) {
     const w = this.world;
     const ui = this.uiState;
-    const t = ui.targeting;
-    if (!t || !w.nodes[t.id]) return false;
-    const cid = t.id;
-    if (t.kind === 'connector') {
-      const n = this._nodeAt(x, y);
-      if (n && n.id !== cid && ['source', 'receiver', 'connector'].includes(n.kind)) {
-        this._pushUndo(); w.toggle_link(cid, n.id);
-        ui.live = true; w.step(performance.now() / 1000);
-        return true;
-      }
-      return false;
-    }
-    if (t.kind === 'rewirer') {
-      // Like the jammer, the rewirer's effect is deferred: with line of sight it
-      // *marks* a source or receiver now; the actual recolour is applied once the
-      // rewirer is deployed. Storing that persistent intent (and drawing its ray)
-      // and applying it on drop is phase 3/4 — so it no longer recolours instantly.
-      const n = this._nodeAt(x, y);
-      if (n && ['source', 'receiver'].includes(n.kind)) {
-        if (w.reach_blocked(w.player, n.pos)) { this._setFlash(STR.flash.noLineOfSight); this._beep(); return true; }
-        this._setFlash(STR.flash.recolourMarked);
-        return true;
-      }
-      return false;
-    }
-    if (t.kind === 'jammer') {
-      // Mark the single target. A jammer holds exactly one intent, so this
-      // overwrites any previous one. There is no mark-time line-of-sight gate:
-      // the jammer isn't deployed yet, and once it is, its reach is re-checked
-      // live every frame (an active force field in the way blocks it until that
-      // field goes down). The jam bites only while the jammer is on the ground.
-      const tgt = this._jamTargetAt(x, y);
-      if (tgt) {
-        const tid = tgt.ff ? tgt.ff.id : tgt.mine.id;
-        this._pushUndo();
-        w.set_jam(cid, tid);
-        ui.live = true; w.step(performance.now() / 1000);
-        this._setFlash(STR.flash.jamMarked);
-        return true;
-      }
-      return false;
-    }
-    return false;
-  }
-
-  // Nearest jammable target under (x, y). A force field is hit anywhere along
-  // its segment (it is a long line, so midpoint-only hunting was the bug); a
-  // jammable node (a mine) is hit near its centre.
-  _jamTargetAt(x, y) {
-    const w = this.world;
-    let best = null, bd = 18;
-    for (const ff of w.ffs) {
-      const d = pt_seg_dist([x, y], ff.p1, ff.p2);
-      if (d < bd) { best = { pos: ff.mid(), ff }; bd = d; }
-    }
-    for (const n of Object.values(w.nodes)) {
-      if (!objType(n.kind)?.jammable) continue;
-      const d = dist([x, y], n.pos);
-      if (d < bd) { best = { pos: n.pos, mine: n }; bd = d; }
-    }
-    return best;
+    const cid = w.carrying;
+    if (!cid || !w.nodes[cid]) return false;
+    const spec = targetSpec(this._carriedKind());
+    if (!spec) return false;
+    const tgt = spec.targetAt(w, cid, x, y);
+    if (!tgt) return false;
+    if (spec.persistent) this._pushUndo();
+    spec.apply(w, cid, tgt.id);
+    if (spec.persistent) { ui.live = true; w.step(performance.now() / 1000); }
+    if (spec.flash && STR.flash[spec.flash]) this._setFlash(STR.flash[spec.flash]);
+    return true;
   }
 
   _handleMenuClick(x, y) {
