@@ -1383,7 +1383,7 @@ export class App {
       case 'connector': {
         const emit = w.emit[node.id] ?? null;
         const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
-        lines = T.connector(emit, links, w._conn_elevated(node.id));
+        lines = T.connector(emit, links, w._conn_elevated(node.id), node.color);
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;

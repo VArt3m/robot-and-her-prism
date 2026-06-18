@@ -157,8 +157,9 @@ const en = {
       state,
     ],
     button: (pressed) => [en.kinds.button, pressed ? 'pressed' : 'released'],
-    connector: (emitColor, links, raised) => {
+    connector: (emitColor, links, raised, fixedColor) => {
       const lines = [en.kinds.connector];
+      if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
       lines.push(emitColor
         ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
         : 'no output');
