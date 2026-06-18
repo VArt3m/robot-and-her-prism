@@ -78,17 +78,23 @@ for (const [kind, spec] of Object.entries(TARGET_SPECS)) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Rewirer spec: mark-only today — valid target, but nothing persisted.
+// 5. Rewirer spec: now a full persistent targeting device (recolour intent).
 // ---------------------------------------------------------------------------
 {
   const w = new World(); w.player = null; w._uid = 1;
   w.add(new Node('rw', 'rewirer', [100, 100], { color: 'red' }));
   w.add(new Node('s', 'source', [140, 100], { color: 'red' }));
+  w.add(new Node('c', 'connector', [100, 140]));
   const spec = targetSpec('rewirer');
-  ok(spec.persistent === false, 'rewirer is mark-only (no persistent intent yet)');
+  ok(spec.persistent === true, 'rewirer stores a persistent recolour intent');
   ok(spec.targetAt(w, 'rw', 140, 100)?.id === 's', 'rewirer targetAt finds a source');
+  ok(spec.targetAt(w, 'rw', 100, 140)?.id === 'c', 'rewirer can also target a connector');
   spec.apply(w, 'rw', 's');
-  ok(allIntentRays(w).length === 0, 'rewirer stores no ray (mark-only)');
+  ok(allIntentRays(w).some(r => r.key === 'recolor\u0000rw'), 'rewirer apply stores a recolour ray');
+  spec.apply(w, 'rw', 'c');                              // overwrites — one intent
+  ok(w.recolor_links.size === 1 && w.recolor_links.get('rw') === 'c', 'rewirer keeps one intent (overwrites)');
+  spec.clear(w, 'rw');
+  ok(allIntentRays(w).length === 0, 'rewirer clear() drops its intent');
 }
 
 console.log(`\ntargeting framework tests: ${pass} passed, ${fail} failed`);

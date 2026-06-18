@@ -13,6 +13,10 @@ export class Node {
     this.fuse = fuse;
     this.fuse_running = false;
     this.disabled = false;   // frozen by a jammer (mine / future targets)
+    // Rewirer one-shot state: how long (seconds) it has held a clear shot at its
+    // target, and whether it has already fired (spent → destroyed, hidden, inert).
+    this.recolor_charge = 0;
+    this.spent = false;
   }
 }
 

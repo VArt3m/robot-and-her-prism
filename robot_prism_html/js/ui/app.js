@@ -140,10 +140,15 @@ export class App {
   // charge, gate open/shut) is recomputed by solve() on restore.
   _captureState() {
     const w = this.world;
-    const nodePos = {}, elevated = {};
+    const nodePos = {}, elevated = {}, nodeState = {};
     for (const id in w.nodes) {
-      nodePos[id] = [...w.nodes[id].pos];
-      if (w.nodes[id].kind === 'connector') elevated[id] = !!w.nodes[id].elevated;
+      const n = w.nodes[id];
+      nodePos[id] = [...n.pos];
+      if (n.kind === 'connector') elevated[id] = !!n.elevated;
+      // Mutable per-node fields: a recoloured colour, a programmed fuse, and the
+      // spent flag (a fired rewirer). Capturing these makes recolour, fuse edits,
+      // and rewirer firing all undoable.
+      nodeState[id] = { color: n.color, fuse: n.fuse, spent: !!n.spent };
     }
     return {
       player: w.player ? [...w.player] : null,
@@ -155,8 +160,10 @@ export class App {
       links: [...w.links],
       logic_links: w.logic_links.map(l => [...l]),
       jam_links: [...w.jam_links],
+      recolor_links: [...w.recolor_links],
       nodePos,
       elevated,
+      nodeState,
     };
   }
 
@@ -171,6 +178,7 @@ export class App {
     w.links = new Set(s.links);
     w.logic_links = s.logic_links.map(l => [...l]);
     w.jam_links = new Map(s.jam_links ?? []);
+    w.recolor_links = new Map(s.recolor_links ?? []);
     for (const id in s.nodePos) {
       const n = w.nodes[id];
       if (n) { n.pos[0] = s.nodePos[id][0]; n.pos[1] = s.nodePos[id][1]; }
@@ -178,7 +186,11 @@ export class App {
     if (s.elevated) for (const id in s.elevated) {
       if (w.nodes[id]) w.nodes[id].elevated = s.elevated[id];
     }
-    w.solve(true, false);
+    if (s.nodeState) for (const id in s.nodeState) {
+      const n = w.nodes[id];
+      if (n) { n.color = s.nodeState[id].color; n.fuse = s.nodeState[id].fuse; n.spent = !!s.nodeState[id].spent; }
+    }
+    w.solve(true, false);   // cold solve also clears transient recolour charge
   }
 
   // Signature of the *meaningful* puzzle state, excluding raw player position
@@ -322,6 +334,9 @@ export class App {
       ui.live = w.step(now);
       ui.dirty = false;
     }
+    // Fire any rewirer whose charge has completed. Committed here (not in the
+    // engine) so the recolour + destruction is a single undoable event.
+    this._commitRecolors(now);
 
     // Process one-shot key actions
     for (const action of this.input.drainActions()) {
@@ -574,6 +589,30 @@ export class App {
     }
   }
 
+  // Fire every rewirer that has finished charging: apply its recolour to the
+  // target and spend the rewirer (it vanishes). One undo snapshot covers the
+  // batch, taken pre-fire — so undo reverts the recolour and un-spends the
+  // rewirer, and its charge restarts from zero (cold-solve clears it).
+  _commitRecolors(now) {
+    const w = this.world;
+    const ready = w.ready_rewirers();
+    if (!ready.length) return;
+    this._pushUndo();
+    for (const rid of ready) {
+      const rw = w.nodes[rid];
+      const tid = w.recolor_links.get(rid);
+      const tgt = tid ? w.nodes[tid] : null;
+      if (tgt) tgt.color = rw.color;
+      rw.spent = true;
+      rw.recolor_charge = 0;
+      w.clear_recolor(rid);
+      if (this.uiState.sel === rid) this.uiState.sel = null;
+    }
+    this.uiState.live = true;
+    w.step(now);
+    this._setFlash(STR.flash.recolourDone);
+  }
+
   // Delete the intent ray(s) under a click while carrying a targeting device.
   // The hit zone is a few world units wide (no single-pixel hunting). Every
   // device's intents are enumerated through the spec registry, so a connector's
@@ -672,6 +711,7 @@ export class App {
       const pspec = programSpec(item.kind);
       if (pspec && nd[pspec.field] == null) nd[pspec.field] = pspec.default;
       if (item.kind === 'mine') nd.fuse_running = false;   // a carried mine isn't counting down
+      if (item.kind === 'rewirer') nd.recolor_charge = 0;  // picking up cancels a pending recolour
       ui.sel = item.id;                    // armed (ready) by default
     } else {
       // Lift the box off the field; de-elevate any connector that rested on it.

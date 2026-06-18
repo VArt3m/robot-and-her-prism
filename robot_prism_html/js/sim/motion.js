@@ -87,7 +87,10 @@ export class Motion {
   _box_critical_fields(box_index, boxes) {
     const w = this.world;
     if (!w.ffs.length || box_index === null) return [];
-    const open_now = new Set(w.ffs.filter(ff => ff.is_open).map(ff => ff.id));
+    // Only gates the box is actually holding open can close when it is stolen.
+    // A jammer-disabled gate stays down regardless of the box, so it can never
+    // crush — exclude it even if logic would also have it open.
+    const open_now = new Set(w.ffs.filter(ff => ff.is_open && !ff.disabled).map(ff => ff.id));
     if (!open_now.size) return [];
     const far = boxes.map(b => [...b]);
     far[box_index] = [1e7, 1e7];
@@ -170,12 +173,14 @@ export class Motion {
 
   reach_blocked(a, b) {
     const w = this.world;
-    // A drop may never cross a wall, a barrier, or a force field that is still
-    // standing. A jam-disabled field is "down", so it is no longer a barrier to
-    // reach either (open fields stay reach-blockers, unchanged).
+    // A drop may never cross a wall, a barrier, or a force field — and a force
+    // field's frame blocks object placement in EVERY state. A gate that is open
+    // (by logic) or down (jammed) is passable to the player, light, and rays,
+    // but you still cannot toss an object across its line: walk through and
+    // place it on the far side instead.
     const segs = [
       ...w.walls.map(wl => [wl.p1, wl.p2]),
-      ...w.ffs.filter(ff => !ff.disabled).map(ff => [ff.p1, ff.p2]),
+      ...w.ffs.map(ff => [ff.p1, ff.p2]),
       ...w.barriers.map(bar => [bar.p1, bar.p2]),
     ];
     return first_block_t(a, b, segs) !== null;

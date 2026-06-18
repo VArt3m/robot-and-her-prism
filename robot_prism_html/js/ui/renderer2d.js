@@ -240,6 +240,33 @@ export class Renderer2D {
       ctx.restore();
     }
 
+    // Rewirer rays — faint, tinted to the rewirer's colour. A deployed ray that
+    // reaches its target also shows a charge ring at the rewirer (frac of 3 s);
+    // a stalled/unreached ray stays dim with no ring.
+    for (const r of w.recolor_rays_draw) {
+      const tint = COLORS[r.color] ?? '#888';
+      ctx.save();
+      ctx.globalAlpha = (r.live && r.reaches) ? 0.4 : 0.12;
+      ctx.beginPath();
+      ctx.moveTo(r.from[0], r.from[1]);
+      ctx.lineTo(r.to[0], r.to[1]);
+      ctx.strokeStyle = tint;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([2, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      if (r.live && r.reaches && r.frac > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(r.from[0], r.from[1], 15, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * r.frac);
+        ctx.strokeStyle = tint; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.restore();
+      }
+    }
+
     // Logic wiring
     for (const [src, dst, neg] of w.logic_links) {
       const sp = w.nodes[src]?.pos;
@@ -312,6 +339,7 @@ export class Renderer2D {
 
     // Nodes
     for (const n of Object.values(w.nodes)) {
+      if (n.spent) continue;            // a fired (destroyed) rewirer is gone
       const [x, y] = n.pos;
       if (n.kind === 'source') {
         polygon(ctx, diamond(x, y));
@@ -388,6 +416,12 @@ export class Renderer2D {
         ctx.fillStyle = col ? COLORS[col] : '#fff';
         ctx.fill();
         ctx.strokeStyle = ring; ctx.lineWidth = 3; ctx.stroke();
+        // A recoloured connector carries an assigned colour: mark it with an
+        // inner ring in that colour so it reads as "fixed to X" even when idle.
+        if (n.color && !carriedNow) {
+          ctx.beginPath(); ctx.arc(x, y, CONN_R - 3.5, 0, 2*Math.PI);
+          ctx.strokeStyle = COLORS[n.color] ?? '#999'; ctx.lineWidth = 2; ctx.stroke();
+        }
         ctx.fillStyle = '#111'; ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         if (dead && !carriedNow) {

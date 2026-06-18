@@ -12,6 +12,7 @@ export const TICK = 0.033;
 export const CONNECT_REACH = 37;
 export const CUT_LINGER = 0.33;
 export const CROSSING_CUT_INSTANT = false;
+export const RECOLOR_DELAY = 3.0;   // seconds a deployed rewirer must hold a clear shot before it fires
 
 export const COLORS = {
   red: '#e23b3b', green: '#27a838', blue: '#2b5cd6',

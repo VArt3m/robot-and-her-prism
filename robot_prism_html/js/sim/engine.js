@@ -1,9 +1,10 @@
 import {
   EPS, PLAYER_R, BOX_R, CONN_R, BTN_R,
-  CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS,
+  CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY,
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist } from '../core/geometry.js';
 import { objType, kindIsJammable } from './objects.js';
+import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
 
@@ -29,6 +30,10 @@ export class Engine {
     // means the jammer is deployed (on the ground); `reaches` means its ray is
     // currently unobstructed and so its target is held disabled.
     this.jam_rays_draw = [];
+    // Live rewirer rays for the renderer: [{ rid, from, to, color, frac, reaches }].
+    // `frac` is charge / RECOLOR_DELAY; `reaches` whether the shot is currently clear.
+    this.recolor_rays_draw = [];
+    this._recolor_t = null;   // last timestamp the recolor charge advanced
   }
 
   // ---- blockers ----
@@ -48,10 +53,22 @@ export class Engine {
     for (const bx of w.boxes) {
       for (const [s1,s2] of this._square(bx, BOX_R)) segs.push([s1,s2,0,null]);
     }
-    for (const n of Object.values(w.nodes)) {
-      if (n.kind !== 'connector' || n.id === w.carrying) continue;
-      const lvl = w._conn_elevated(n.id) ? 1 : 0;
-      for (const [s1,s2] of this._square(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
+    // Every material object interrupts a laser beam (RAY_OCCLUSION.laser.object).
+    // A connector carries its own id as owner AND its elevation level, so a beam
+    // it is a deliberate endpoint of re-emits instead of stopping (handled by the
+    // owner filter in _beams_and_cross). A mine / rewirer / jammer is never a beam
+    // endpoint, so it always blocks — a device not wired into the chain is just an
+    // obstacle. The carried object is skipped (it is in hand, not on the field).
+    for (const n of w.carriable_nodes()) {
+      if (n.kind === 'connector') {
+        if (n.id === w.carrying) continue;
+        const lvl = w._conn_elevated(n.id) ? 1 : 0;
+        for (const [s1,s2] of this._square(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
+      } else {
+        if (n.id === w.carrying) continue;
+        const r = objType(n.kind)?.radius ?? CONN_R;
+        for (const [s1,s2] of this._square(n.pos, r)) segs.push([s1,s2,0,n.id]);
+      }
     }
     if (w.player_block && w.player) {
       for (const [s1,s2] of this._square(w.player, PLAYER_R))
@@ -67,6 +84,17 @@ export class Engine {
   beam_level(o, t) {
     const w = this.world;
     return (w._conn_elevated(o) || w._conn_elevated(t)) ? 1 : 0;
+  }
+
+  // What a connector emits given the set of distinct delivered incoming colours.
+  // A *coloured* connector (recoloured by a rewirer) always emits its own colour
+  // whenever it receives any light at all — incoming conflicts never kill it
+  // ("blue in, red out"). A plain connector relays a single incoming colour and
+  // goes dark on a conflict.
+  _connector_emit(cid, incoming) {
+    const col = this.world.nodes[cid]?.color;
+    if (col) return incoming.size >= 1 ? col : null;
+    return incoming.size === 1 ? [...incoming][0] : null;
   }
 
   // ---- light: beams + crossings ----
@@ -154,8 +182,7 @@ export class Engine {
       }
       let changed = false;
       for (const c of conns) {
-        const s = incoming[c];
-        const nc = s.size === 1 ? [...s][0] : null;
+        const nc = this._connector_emit(c, incoming[c]);
         if (nc !== emit[c]) { emit[c] = nc; changed = true; }
       }
       last = [beams, length, delivery];
@@ -193,7 +220,9 @@ export class Engine {
       if (w.nodes[t]?.kind === 'connector') inc[t].add(beams[k].color);
     }
     const dead = new Set();
-    for (const id in inc) if (inc[id].size >= 2) dead.add(id);
+    // A coloured connector emits its own colour regardless of conflict, so it is
+    // never "dead" — only plain connectors die on two-or-more incoming colours.
+    for (const id in inc) if (inc[id].size >= 2 && !w.nodes[id]?.color) dead.add(id);
     return dead;
   }
 
@@ -272,19 +301,13 @@ export class Engine {
   }
 
   // ---- jammer rays ----
-  // The jammer ray is "dark matter": it ignores light beams, other jam rays, the
-  // player, boxes and connectors. It is stopped ONLY by black walls and by a
-  // force field that is currently *active* (solid — neither open nor disabled).
-  // `excludeFieldId` is the ray's own target field, which must not count as a
-  // self-blocker. Reads the live is_open / disabled state, so it is re-evaluated
-  // every iteration as fields settle.
+  // The jammer ray is "dark matter": per RAY_OCCLUSION.jammer it ignores light
+  // beams, other rays, the player, boxes and connectors — it is stopped ONLY by
+  // black walls and by a force field that is currently *active* (and not the
+  // one it targets). `excludeFieldId` is that target. Reads live is_open /
+  // disabled state, so it is re-evaluated every iteration as fields settle.
   _jam_blocked(a, b, excludeFieldId = null) {
-    const w = this.world;
-    const segs = w.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of w.ffs) {
-      if (ff.id === excludeFieldId) continue;
-      if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);   // active/solid → blocks
-    }
+    const segs = rayBlockerSegments(this.world, rayProfile('jammer'), { excludeFieldId });
     return first_block_t(a, b, segs) !== null;
   }
 
@@ -351,6 +374,70 @@ export class Engine {
     this.jam_rays_draw = out;
   }
 
+  // ---- rewirer rays (recolour) ----
+  // Can a deployed rewirer see its target? The rewirer ray profile stops on
+  // walls, tan barriers, active force fields, objects and the player; only purple
+  // barriers and passable fields let it through. The rewirer's own body and the
+  // target's body are excluded so they never self-block.
+  _recolor_reaches(rw, tgt) {
+    const segs = rayBlockerSegments(this.world, rayProfile('rewirer'),
+      { excludeNodeIds: new Set([rw.id, tgt.id]) });
+    return first_block_t(rw.pos, tgt.pos, segs) === null;
+  }
+
+  // Advance each deployed rewirer's charge while it holds a clear shot; reset it
+  // to zero whenever it is carried, has no target, or cannot reach (the delay
+  // must run from a continuous clear shot). Firing itself is committed by the UI
+  // (so it can be made undoable) — see ready_rewirers. Returns whether anything
+  // changed (keeps the loop live while charging).
+  _update_recolor(now) {
+    const w = this.world;
+    const dt = this._recolor_t === null ? 0 : Math.max(0, now - this._recolor_t);
+    this._recolor_t = now;
+    let changed = false;
+    for (const [rid, tid] of w.recolor_links) {
+      const rw = w.nodes[rid];
+      if (!rw || rw.kind !== 'rewirer' || rw.spent) continue;
+      const tgt = w.nodes[tid];
+      const cur = rw.recolor_charge ?? 0;
+      let nv;
+      if (rid === w.carrying || !tgt || !this._recolor_reaches(rw, tgt)) nv = 0;
+      else nv = Math.min(RECOLOR_DELAY, cur + dt);
+      if (Math.abs(nv - cur) > 1e-9) changed = true;
+      rw.recolor_charge = nv;
+    }
+    return changed;
+  }
+
+  // Deployed rewirers whose charge has completed — ready for the UI to fire.
+  ready_rewirers() {
+    const w = this.world;
+    const out = [];
+    for (const [rid] of w.recolor_links) {
+      const rw = w.nodes[rid];
+      if (rw && !rw.spent && rid !== w.carrying && (rw.recolor_charge ?? 0) >= RECOLOR_DELAY - 1e-6)
+        out.push(rid);
+    }
+    return out;
+  }
+
+  _build_recolor_rays() {
+    const w = this.world;
+    const out = [];
+    for (const [rid, tid] of w.recolor_links) {
+      const rw = w.nodes[rid], tgt = w.nodes[tid];
+      if (!rw || !tgt || rw.spent) continue;
+      const live = rid !== w.carrying;
+      const reaches = live && this._recolor_reaches(rw, tgt);
+      out.push({
+        rid, from: [...rw.pos], to: [...tgt.pos], color: rw.color,
+        frac: Math.max(0, Math.min(1, (rw.recolor_charge ?? 0) / RECOLOR_DELAY)),
+        live, reaches,
+      });
+    }
+    this.recolor_rays_draw = out;
+  }
+
   solve(cold = false, fill_instant = true) {
     const w = this.world;
     this._fill_instant = fill_instant;
@@ -360,6 +447,8 @@ export class Engine {
     if (cold) {
       for (const ff of w.ffs) { ff.is_open = false; ff.disabled = false; }
       for (const n of Object.values(w.nodes)) if (kindIsJammable(n.kind)) n.disabled = false;
+      for (const n of Object.values(w.nodes)) if (n.kind === 'rewirer') n.recolor_charge = 0;
+      this._recolor_t = null;
       this.beam_anim.clear();
       this.charge = {};
       for (const n of Object.values(w.nodes))
@@ -385,6 +474,7 @@ export class Engine {
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
     this._build_jam_rays();
+    this._build_recolor_rays();
     this._last_solve = [beams, length, delivery];
     this.dead_conns = this._conflict_map(beams, delivery);
     this.beams_draw = this._animate_beams(beams, length, delivery);
@@ -487,8 +577,7 @@ export class Engine {
       }
       let changed = false;
       for (const c of conns) {
-        const s = incoming[c];
-        const nc = s.size === 1 ? [...s][0] : null;
+        const nc = this._connector_emit(c, incoming[c]);
         if (nc !== emit[c]) { emit[c] = nc; changed = true; }
       }
       last = [beams, target, instant, eff, delivery];
@@ -581,14 +670,16 @@ export class Engine {
     this.emit = emit;
     this.lit = this._lit_map(beams, delivery);
     const charge_changed = this._update_charge(this.lit, now);
+    const recolor_changed = this._update_recolor(now);
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
     this._build_jam_rays();
+    this._build_recolor_rays();
     this.dead_conns = this._conflict_map(beams, delivery);
     const eff_changed = this._advance_eff(beams, target, instant, now);
     this.beams_draw = this._build_draw_timed(beams);
-    return eff_changed || charge_changed
+    return eff_changed || charge_changed || recolor_changed
       || JSON.stringify(old_emit) !== JSON.stringify(this.emit)
       || w.ffs.some((ff,i) => ff.is_open !== old_open[i])
       || w.ffs.some((ff,i) => ff.disabled !== old_disabled[i]);

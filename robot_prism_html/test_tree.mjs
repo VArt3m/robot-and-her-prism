@@ -401,5 +401,29 @@ app._handleAction('clear', performance.now());
 ok(w.carrying === 'mine_a', 'C is a harmless no-op for a non-targeting device');
 clearHands();
 
+// =========================================================================
+// Rewirer firing + undo: a charged, deployed rewirer recolours its target ONCE
+// and is destroyed (spent); _rewind restores the target colour, the spent flag
+// and the intent. (The 3 s charge build-up itself is covered at the sim level
+// in test_rewirer; here we drive the committed effect through the App + undo.)
+// =========================================================================
+clearHands(); w.links.clear(); w.jam_links.clear(); w.recolor_links.clear();
+w.nodes['rw_a'].spent = false;
+w.nodes['rw_a'].color = 'red';
+const conColor0 = w.nodes['con_c'].color;          // a plain connector (no colour yet)
+w.set_recolor('rw_a', 'con_c');
+w.nodes['rw_a'].recolor_charge = 999;              // force the charge complete
+ok(w.ready_rewirers().includes('rw_a'), 'fire: a fully-charged deployed rewirer is ready');
+app._commitRecolors(performance.now());
+ok(w.nodes['con_c'].color === 'red', 'fire: the connector is recoloured to the rewirer\u2019s colour');
+ok(w.nodes['rw_a'].spent === true, 'fire: the rewirer is spent (destroyed) after firing');
+ok(!w.recolor_links.has('rw_a'), 'fire: the spent rewirer\u2019s intent is cleared');
+ok(!w.carriable_nodes().some(n => n.id === 'rw_a'), 'fire: a spent rewirer is no longer on the field');
+app._rewind();
+ok(w.nodes['con_c'].color === conColor0, 'undo: the target colour is restored');
+ok(w.nodes['rw_a'].spent === false, 'undo: the rewirer is un-spent (back on the field)');
+ok(w.recolor_links.get('rw_a') === 'con_c', 'undo: the recolour intent is restored');
+clearHands(); w.recolor_links.clear();
+
 console.log(`\ntree tests: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

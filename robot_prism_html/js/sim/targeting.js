@@ -79,22 +79,33 @@ export const TARGET_SPECS = {
     clear(world, deviceId) { world.clear_links_of(deviceId); },
   },
 
-  // Rewirer — recolours a source or receiver. The recolour EFFECT (and therefore
-  // a persistent, drawable, deletable recolour intent) is still to come, so for
-  // now this is a mark-only device: it acknowledges a valid target and stores
-  // nothing. When the effect lands, flip `persistent` on, give it a `sweep`, and
-  // fill in apply / intentRays / clear — no core change needed.
+  // Rewirer — holds one intent (re-marking overwrites). With a clear shot (the
+  // rewirer ray profile) it recolours a source, receiver, or connector after a
+  // short charge, then is spent. The golden arrow sets the single target.
   rewirer: {
     maxIntents: 1,
-    persistent: false,
+    persistent: true,
+    sweep: 'set',
     flash: 'recolourMarked',
     targetAt(world, deviceId, x, y) {
-      const n = nearestNode(world, x, y, ['source', 'receiver'], deviceId);
+      const n = nearestNode(world, x, y, ['source', 'receiver', 'connector'], deviceId);
       return n ? { id: n.id, pos: n.pos } : null;
     },
-    apply() { /* recolour effect pending — nothing persistent to record yet */ },
-    intentRays() { return []; },
-    clear() {},
+    apply(world, deviceId, targetId) { world.set_recolor(deviceId, targetId); },
+    intentRays(world) {
+      const out = [];
+      for (const [rid, tid] of world.recolor_links) {
+        const rw = world.nodes[rid], tg = world.nodes[tid];
+        if (!rw || !tg || rw.spent) continue;
+        out.push({
+          from: rw.pos, to: tg.pos,
+          key: `recolor\u0000${rid}`,         // one intent per rewirer
+          remove: () => world.clear_recolor(rid),
+        });
+      }
+      return out;
+    },
+    clear(world, deviceId) { world.clear_recolor(deviceId); },
   },
 
   // Jammer — holds exactly one intent. With line of sight (re-checked live once

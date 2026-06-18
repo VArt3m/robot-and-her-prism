@@ -25,6 +25,7 @@ robot_prism_html/
     │   ├── objects.js   # carriable-object attribute table (+ jammable)
     │   ├── targeting.js # per-kind targeting specs behind one generic core
     │   ├── programming.js # per-kind programming specs behind one generic core
+    │   ├── occlusion.js # what each emitted ray passes through (one table)
     │   ├── world.js     # scene state + facade over Engine / Motion
     │   └── level.js     # hand-built sample level
     └── ui/              # presentation + input (depends on core, sim)
@@ -87,10 +88,10 @@ If you have Node.js available, `npx serve .` also works.
 Beyond the connector and the box, three devices live on the field:
 
 - **Mine** — *programmable.* Carries a fuse (3 s by default, reprogrammable) that begins counting down the moment it is first set down; on zero it destroys nearby walls.
-- **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, with line of sight, recolours a source or receiver it targets.
+- **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, once deployed with a clear shot to its single target, charges for three seconds and then recolours that target — a source, receiver, **or connector** — exactly once, destroying itself. Picking it up before the charge completes cancels it; the charge will not even begin if the shot is blocked. A recoloured connector accepts light of any colour without conflict but always re-emits its own colour.
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 
-> The carry / placement / programming **interaction tree** is live, and the **jammer** now disables its target for real. Still pending: the mine actually counting down and exploding, and the rewirer's recolour propagating through the light engine.
+> The carry / placement / programming **interaction tree** is live, the **jammer** disables its target for real, and the **rewirer** now charges and recolours through the light engine (recoloured connectors emit their own colour). Still pending: the mine actually counting down and exploding, and the device that washes a connector's colour back to clear.
 
 ## Targeting & programming
 
@@ -107,6 +108,6 @@ What differs per object is *only* its data, declared in one spec in `js/sim/targ
 
 - **Connector** — many intents; targets sources / receivers / connectors; the arrow (and a character-drag) toggle light links.
 - **Jammer** — one intent; targets a force field or a jammable node; the arrow sets the single target.
-- **Rewirer** — *mark-only for now.* Targets a source / receiver and acknowledges the mark, but stores no persistent intent yet (the recolour effect is still to come); when it lands it becomes a full spec with no change to the core.
+- **Rewirer** — one intent; targets a source / receiver / connector; the arrow sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
 
 Programmable devices add a programming step on top, and it is **its own shared framework** (`js/sim/programming.js`): a long press on a carried programmable device always summons a chooser menu, and picking a value sets one of its fields. Only the menu *contents* differ per object, declared in one spec — the mine's spec offers fuse seconds, the rewirer's offers a colour; a future device could offer, say, a movement axis. A device that is both programmable and targeting (the rewirer) gets a **Setup / Target** menu that routes into whichever framework you pick. To add a new programmable object, give its type `programmable: true` and add one spec entry (plus its menu/flash strings) — the core does not change. (`test_programming.mjs` enforces that every `programmable` kind has a conforming spec, and `test_targeting.mjs` does the same for targeting.)

@@ -18,6 +18,9 @@ export class World {
     // that for free, and re-marking simply overwrites. The intent persists
     // while the jammer is carried, but only bites while it is on the ground.
     this.jam_links = new Map();
+    // Rewirer intents: rewirer-id → target-id (a source / receiver / connector).
+    // One intent per rewirer (a Map), like the jammer; re-marking overwrites.
+    this.recolor_links = new Map();
     this.goal = null;
     this.player = null;
     this.player_start = null;
@@ -40,6 +43,8 @@ export class World {
   get beams_draw(){ return this.engine.beams_draw; }
   get dead_conns(){ return this.engine.dead_conns; }
   get jam_rays_draw(){ return this.engine.jam_rays_draw; }
+  get recolor_rays_draw(){ return this.engine.recolor_rays_draw; }
+  ready_rewirers(){ return this.engine.ready_rewirers(); }
 
   new_id(prefix) { this._uid++; return `${prefix}${this._uid}`; }
 
@@ -53,7 +58,7 @@ export class World {
   // targeting devices: mine, rewirer, jammer). Boxes are tracked separately as
   // bare [x,y] points, not nodes.
   carriable_nodes() {
-    return Object.values(this.nodes).filter(n => OBJECT_TYPES[n.kind]?.carriable);
+    return Object.values(this.nodes).filter(n => OBJECT_TYPES[n.kind]?.carriable && !n.spent);
   }
 
   field_by_id(fid) {
@@ -104,6 +109,20 @@ export class World {
 
   clear_jam(jammer) { this.jam_links.delete(jammer); }
 
+  // ---- recolor links ----
+  // A rewirer targets at most one source / receiver / connector; re-marking
+  // overwrites. (Note: the "exactly one" here is this device's rule, not a
+  // framework assumption — other objects may allow a different fixed count.)
+  set_recolor(rewirer, target) {
+    const rw = this.nodes[rewirer];
+    if (!rw || rw.kind !== 'rewirer') return;
+    const tg = this.nodes[target];
+    if (!tg || !['source', 'receiver', 'connector'].includes(tg.kind)) return;
+    this.recolor_links.set(rewirer, target);
+  }
+
+  clear_recolor(rewirer) { this.recolor_links.delete(rewirer); }
+
   // Iterate jam intents as [jammer, target] pairs.
   get jam_pairs() { return [...this.jam_links]; }
 
@@ -122,6 +141,9 @@ export class World {
     this.jam_links.delete(nid);                                   // as a jammer
     for (const [j, t] of [...this.jam_links])                     // as a target
       if (t === nid) this.jam_links.delete(j);
+    this.recolor_links.delete(nid);                               // as a rewirer
+    for (const [r, t] of [...this.recolor_links])                 // as a target
+      if (t === nid) this.recolor_links.delete(r);
   }
 
   remove_field(ff) {

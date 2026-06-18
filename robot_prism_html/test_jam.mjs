@@ -170,5 +170,41 @@ function freshWorld() {
   ok(ray && ray.live === true && ray.reaches === true, 'draw list reports the live, reaching ray');
 }
 
+// ---------------------------------------------------------------------------
+// 10. Object placement (reach) treats a force field as solid in EVERY state:
+//     a drop can never cross the field line whether it is closed, logic-open,
+//     or jammer-disabled. (Open/disabled are equal here — both block — matching
+//     closed; this is the placement counterpart to "open == disabled" passage.)
+// ---------------------------------------------------------------------------
+{
+  const w = freshWorld(); w.player = [100, 300];
+  const ff = vfield('ff_r', 300, 300);          // vertical wall on the drop line
+  w.ffs.push(ff);
+  const A = [100, 300], B = [500, 300];
+  ff.is_open = false; ff.disabled = false;
+  ok(w.reach_blocked(A, B) === true, 'reach: a closed field blocks a drop across it');
+  ff.is_open = true;  ff.disabled = false;
+  ok(w.reach_blocked(A, B) === true, 'reach: a logic-open field still blocks a drop');
+  ff.is_open = false; ff.disabled = true;
+  ok(w.reach_blocked(A, B) === true, 'reach: a jammed (disabled) field blocks a drop too');
+}
+
+// ---------------------------------------------------------------------------
+// 11. A jammer-disabled gate is never "box-critical": the jammer, not the box,
+//     holds it passable, so stealing the box cannot close it — even if logic
+//     would also have it open. So it must not block a box theft.
+// ---------------------------------------------------------------------------
+{
+  const w = freshWorld(); w.player = [100, 300];
+  const ff = vfield('ff_c', 300, 300);
+  w.ffs.push(ff); w.boxes.push([300, 300]);     // a box sitting by the gate
+  ff.is_open = true; ff.disabled = false;       // logically open, box-propped, no jam
+  ok(w.motion._box_critical_fields(0, w.boxes).length === 1,
+     'a box-propped open gate IS critical (stealing the box would close it)');
+  ff.disabled = true;                           // now also jammed
+  ok(w.motion._box_critical_fields(0, w.boxes).length === 0,
+     'a jammed + logically-open gate is NOT critical → it does not block a box theft');
+}
+
 console.log(`\njam tests: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
