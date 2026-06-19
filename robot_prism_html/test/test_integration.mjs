@@ -155,24 +155,24 @@ ok(true, 'ticks ran without throwing');
   if (!w.carrying) app._pickItem({ kind: 'jammer', id: 'jam_a' });
 
   // Targets toggle ON → effective ON, hints populated; held Alt suppresses it.
-  ui.panel.targets = true; app.input.altHeld = false;
+  ui.panel.targets = true; app.input.held.delete('hl_targets');
   app._updateHighlights();
   ok(ui.showTargets === true, 'panel targets toggle → showTargets on');
   ok(Array.isArray(ui.targetHints) && ui.targetHints.length > 0, 'target hints populated for the jammer');
-  app.input.altHeld = true;
+  app.input.held.add('hl_targets');
   app._updateHighlights();
-  ok(ui.showTargets === false, 'held Alt suppresses the toggled-on targets highlight (XOR)');
+  ok(ui.showTargets === false, 'held Q suppresses the toggled-on targets highlight (XOR)');
   ok(ui.targetHints === null, 'no hints while suppressed');
-  app.input.altHeld = false;
+  app.input.held.delete('hl_targets');
 
   // Passable toggle ON → a polygon region for the jammer ray.
-  ui.panel.passable = true; app.input.ctrlHeld = false;
+  ui.panel.passable = true; app.input.held.delete('hl_passable');
   app._updateHighlights();
   ok(Array.isArray(ui.passableRegion) && ui.passableRegion.length > 2, 'passable region polygon built');
-  app.input.ctrlHeld = true;
+  app.input.held.add('hl_passable');
   app._updateHighlights();
-  ok(ui.passableRegion === null, 'held Ctrl suppresses the toggled-on passable highlight');
-  app.input.ctrlHeld = false;
+  ok(ui.passableRegion === null, 'held F suppresses the toggled-on passable highlight');
+  app.input.held.delete('hl_passable');
 
   // refresh + conflict must not throw against the inert (headless) panel.
   app._updatePanel(performance.now());

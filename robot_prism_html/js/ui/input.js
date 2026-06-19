@@ -13,7 +13,18 @@ const KEY_MAP = {
   'KeyR': 'reset',
   'KeyG': 'gates',
   'KeyZ': 'undo',
+  // Momentary highlight holds, chosen so one palm covers both (Shift under the
+  // pinky, Space under the thumb) while staying clear of browser-owned chords
+  // (Ctrl+W closes the tab; Alt steals focus to the menu bar and strands a held
+  // movement key). Space's own defaults — page scroll and activating a focused
+  // button — are suppressed in the keydown handler below. They live in the held
+  // set so the blur / visibility handlers clear them like any movement key.
+  'ShiftLeft': 'hl_targets', 'ShiftRight': 'hl_targets',  // show possible targets while held
+  'Space':     'hl_passable',                              // show passable ray area while held
 };
+
+// Held-while-pressed actions (added to `held` on keydown, removed on keyup).
+const HELD_ACTIONS = new Set(['up', 'down', 'left', 'right', 'hl_targets', 'hl_passable']);
 
 export class InputHandler {
   constructor(canvas) {
@@ -23,13 +34,6 @@ export class InputHandler {
     this.held = new Set();
     this.mouse = [0, 0];
     this.hasFocus = true;
-
-    // Momentary highlight modifiers. Alt = "show possible targets" while held,
-    // Ctrl = "show passable ray area" while held. app.js XORs each against its
-    // sticky panel toggle, so when a panel toggle is ON the matching key instead
-    // SUPPRESSES that highlight while pressed.
-    this.altHeld = false;
-    this.ctrlHeld = false;
 
     // Timestamp (ms) when the reset key was pressed; null when not held.
     // app.js uses this to require a continuous 3-second hold for a full reset.
@@ -58,16 +62,15 @@ export class InputHandler {
 
   _bind() {
     window.addEventListener('keydown', e => {
-      // Highlight modifiers — tracked even on auto-repeat, and BEFORE the
-      // e.repeat guard below (which would otherwise swallow a held modifier).
-      // preventDefault on Alt stops the browser stealing focus to its menu bar;
-      // Ctrl is left alone so the platform's own shortcuts still work.
-      if (e.code === 'AltLeft' || e.code === 'AltRight') { this.altHeld = true; e.preventDefault(); }
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.ctrlHeld = true;
+      // Suppress the browser default for keys we own: page scroll on arrows, and
+      // Space (which scrolls and would activate a focused button). Done before
+      // the repeat guard so a held Space never slips a default through on
+      // auto-repeat. (Shift needs no such guard — it has no default action.)
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       const action = KEY_MAP[e.code];
       if (!action) return;
-      if (['up','down','left','right'].includes(action)) {
+      if (HELD_ACTIONS.has(action)) {
         this.held.add(action);
       } else if (action === 'reset') {
         // Full reset is a timed hold, not a one-shot tap (handled in app.js).
@@ -79,13 +82,9 @@ export class InputHandler {
       } else {
         this._actions.push(action);
       }
-      // Prevent page scroll on arrows/space
-      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.code)) e.preventDefault();
     });
 
     window.addEventListener('keyup', e => {
-      if (e.code === 'AltLeft' || e.code === 'AltRight') this.altHeld = false;
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.ctrlHeld = false;
       const action = KEY_MAP[e.code];
       if (action) this.held.delete(action);
       if (action === 'reset') this.resetHeldSince = null;
@@ -97,8 +96,16 @@ export class InputHandler {
       this.hasFocus = false;
       this.resetHeldSince = null;
       this.carryHeldSince = null;
-      this.altHeld = false;
-      this.ctrlHeld = false;
+    });
+
+    // A hidden tab also stops delivering keyups; drop held state so nothing is
+    // left "stuck on" when the player tabs away mid-press.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.held.clear();
+        this.resetHeldSince = null;
+        this.carryHeldSince = null;
+      }
     });
 
     window.addEventListener('focus', () => { this.hasFocus = true; });

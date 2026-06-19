@@ -76,8 +76,8 @@ If you have Node.js available, `npx serve .` also works.
 | Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
 | Exit click-by-click | A brief click on empty space (not a target), or a tap of E |
 | C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark (works while carrying or in click-by-click) |
-| Hold Alt | Highlight what the carried item can target (rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
-| Hold Ctrl | Highlight where the carried item's ray can travel (a translucent area). Inverts the panel "Ray reach" toggle while held |
+| Hold Shift | Highlight what the carried item can target (rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
+| Hold Space | Highlight where the carried item's ray can travel (a translucent area). Inverts the panel "Ray reach" toggle while held |
 | Z | Rewind — undo the last meaningful action (up to 6 steps) |
 | Hold R (2s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |
@@ -103,12 +103,12 @@ header chevron collapses it vertically. The controls are:
 
 - **Targets** — sticky toggle: highlight everything the carried item can target.
   A bright ring marks a target with a clear shot; a faint dashed ring marks one
-  the ray cannot currently reach. Equivalent to holding **Alt** momentarily —
-  and when the toggle is on, holding Alt *suppresses* it.
+  the ray cannot currently reach. Equivalent to holding **Shift** momentarily —
+  and when the toggle is on, holding Shift *suppresses* it.
 - **Ray reach** — sticky toggle: highlight the whole area the carried item's ray
   could travel to from where the robot stands (as if she were a light source
   whose rays stop on whatever that item cannot pass). Equivalent to holding
-  **Ctrl**, with the same invert-while-held behaviour.
+  **Space**, with the same invert-while-held behaviour.
 - **Targeting** — enter or leave click-by-click targeting of the carried device.
 - **Reset** — press and hold for 2 s to rebuild the whole playfield (same as
   holding **R**).

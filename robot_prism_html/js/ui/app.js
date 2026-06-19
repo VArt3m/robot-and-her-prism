@@ -297,8 +297,10 @@ export class App {
   _updateHighlights() {
     const ui = this.uiState;
     const w = this.world;
-    ui.showTargets  = ui.panel.targets  !== this.input.altHeld;
-    ui.showPassable = ui.panel.passable !== this.input.ctrlHeld;
+    const targetsKey  = this.input.held.has('hl_targets');
+    const passableKey = this.input.held.has('hl_passable');
+    ui.showTargets  = ui.panel.targets  !== targetsKey;
+    ui.showPassable = ui.panel.passable !== passableKey;
     ui.targetHints = null;
     ui.passableRegion = null;
     if (ui.mode !== 'play' || !w.player) return;
@@ -336,8 +338,8 @@ export class App {
     this.panel.refresh({
       targets:  ui.panel.targets,
       passable: ui.panel.passable,
-      targetsFlip: this.input.altHeld,
-      passFlip:    this.input.ctrlHeld,
+      targetsFlip: this.input.held.has('hl_targets'),
+      passFlip:    this.input.held.has('hl_passable'),
       targetingActive: Boolean(ui.targeting),
       canTarget,
       canUndo: this._undo.length > 0,
