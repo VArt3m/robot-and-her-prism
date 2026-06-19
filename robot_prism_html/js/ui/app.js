@@ -14,7 +14,7 @@ import { InputHandler } from './input.js';
 import { Panel } from './panel.js';
 import { objType } from '../sim/objects.js';
 import { targetSpec, allIntentRays } from '../sim/targeting.js';
-import { programSpec } from '../sim/programming.js';
+import { programSpec, programIsNoop } from '../sim/programming.js';
 import { carriedRayType, visibilityPolygon, rayProfile } from '../sim/occlusion.js';
 import { STR } from '../core/strings.js';
 
@@ -999,8 +999,18 @@ export class App {
   _openProgramming(kind, anchor, forgeId = null) {
     const spec = programSpec(kind);
     if (!spec) return;
+    const nd = this.world.carrying ? this.world.nodes[this.world.carrying] : null;
     const label = STR.menu[spec.labelKey];
-    const items = spec.values.map(v => ({ label: label(v), act: 'program', value: v }));
+    // Each value becomes a menu item, but one that would not change the device's
+    // current state is offered as DISABLED (greyed, unclickable) — see
+    // programIsNoop. It costs a Forge use to apply a value, so an option that
+    // achieves nothing must never be spendable.
+    const items = spec.values.map(v => ({
+      label: label(v),
+      act: 'program',
+      value: v,
+      disabled: programIsNoop(spec, nd, v),
+    }));
     this._openMenu(anchor[0], anchor[1], items);
     if (this.uiState.menu) this.uiState.menu.forgeId = forgeId;
   }
@@ -1049,6 +1059,11 @@ export class App {
     if (it.act === 'program' && nd) {
       const spec = programSpec(this._carriedKind());
       if (!spec) return;
+      // The firm rule, enforced at the point of application too: applying a value
+      // equivalent to the current state changes nothing, so it must not run and
+      // must not spend a Forge use. (The chooser already greys these out; this is
+      // the belt-and-suspenders guard.)
+      if (programIsNoop(spec, nd, it.value)) { this._beep(); return; }
       const forge = forgeId ? w.nodes[forgeId] : null;
       if (forgeId && (!forge || (forge.uses ?? 0) <= 0)) { this._beep(); return; }
       this._pushUndo();
@@ -1082,16 +1097,20 @@ export class App {
 
   _handleMenuClick(x, y) {
     const menu = this.uiState.menu;
-    this.uiState.menu = null;
     if (!menu) return;
     for (const it of menu.items) {
       const [rx, ry, rw, rh] = it.rect;
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+        // A disabled (no-op) option is inert: keep the menu open so a real
+        // choice is still one click away, and spend nothing.
+        if (it.disabled) { this._beep(); return; }
+        this.uiState.menu = null;
         if (it.act) this._runMenuAct(it, menu.forgeId); else this._pickItem(it);
         return;
       }
     }
     // clicked outside the menu → just cancel
+    this.uiState.menu = null;
   }
 
   // Each frame: a ~half-second long-press on the left mouse button OR the E key

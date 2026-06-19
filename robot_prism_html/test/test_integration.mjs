@@ -212,5 +212,52 @@ ok(true, 'ticks ran without throwing');
   ok(app._panelConflict() === false, 'no conflict outside any targeting gesture');
 }
 
+// --- Forge chooser excludes no-op options (a use is never spent on nothing) ---
+{
+  const ui = app.uiState;
+  // Drop anything carried, then pick up the rewirer (defaults to red) and stand
+  // on the level's Forge so _invokeForge bites.
+  w.carrying = null; w.carry_box = null; ui.menu = null;
+  const forge = w.forges()[0];
+  ok(forge && (forge.uses ?? 0) > 0, 'a Forge with uses exists in the level');
+  w.player = [...forge.pos];                 // within FORGE_REACH of itself
+  ok(app._pickItem({ kind: 'rewirer', id: 'rw_a' }), 'carrying a rewirer at the Forge');
+  ok(w.nodes['rw_a'].color === 'red', 'rewirer is currently red');
+
+  app._invokeForge();
+  ok(ui.menu && ui.menu.items, 'Forge opened the programming chooser');
+  const red = ui.menu.items.find(it => it.value === 'red');
+  const green = ui.menu.items.find(it => it.value === 'green');
+  ok(red && red.disabled === true, 'the current colour (red) is offered DISABLED');
+  ok(green && !green.disabled, 'a different colour (green) is offered enabled');
+  ok(ui.menu.items.filter(it => !it.disabled).length === ui.menu.items.length - 1,
+     'exactly the current value is excluded');
+
+  // Clicking the disabled (red) option spends nothing and leaves the menu open.
+  const usesBefore = forge.uses;
+  const [rx, ry, rw, rh] = red.rect;
+  app._handleMenuClick(rx + rw / 2, ry + rh / 2);
+  ok(forge.uses === usesBefore, 'clicking the no-op option spends no Forge use');
+  ok(w.nodes['rw_a'].color === 'red', 'rewirer colour unchanged by the no-op click');
+  ok(ui.menu !== null, 'the chooser stays open after a no-op click');
+
+  // Clicking a real (green) option applies it and spends one use.
+  const g = ui.menu.items.find(it => it.value === 'green');
+  const [gx, gy, gw, gh] = g.rect;
+  app._handleMenuClick(gx + gw / 2, gy + gh / 2);
+  ok(w.nodes['rw_a'].color === 'green', 'a real choice (green) applies');
+  ok(forge.uses === usesBefore - 1, 'a real choice spends exactly one Forge use');
+
+  // Re-open: now green is the no-op and red is selectable again.
+  ui.menu = null;
+  app._invokeForge();
+  ok(ui.menu, 'chooser re-opens');
+  ok(ui.menu.items.find(it => it.value === 'green').disabled === true,
+     'after recolouring to green, "green" is now the excluded no-op');
+  ok(!ui.menu.items.find(it => it.value === 'red').disabled,
+     'and "red" is selectable again');
+  ui.menu = null; w.carrying = null;
+}
+
 console.log(`\nintegration smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

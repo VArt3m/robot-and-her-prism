@@ -627,11 +627,14 @@ export class Renderer2D {
       ctx.setLineDash([]);
       for (const it of uiState.menu.items) {
         const [rx, ry, rw, rh] = it.rect;
-        ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
+        // A disabled item is a no-op choice (e.g. recolouring to the colour it
+        // already is): drawn dim and inert so the player reads it as "already so".
+        const off = it.disabled;
+        ctx.fillStyle = off ? 'rgba(20, 22, 28, 0.6)' : 'rgba(20, 22, 28, 0.92)';
         ctx.fillRect(rx, ry, rw, rh);
-        ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = off ? '#5a6472' : '#f5c518'; ctx.lineWidth = 1.5;
         ctx.strokeRect(rx, ry, rw, rh);
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = off ? '#6b7280' : '#ffffff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillText(it.label, rx + 10, ry + rh / 2);

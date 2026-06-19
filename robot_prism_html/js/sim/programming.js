@@ -72,3 +72,26 @@ export const PROGRAM_SPECS = {
 export function programSpec(kind) {
   return PROGRAM_SPECS[kind] || null;
 }
+
+// Equality for a programmed field's value. `null` and `undefined` both mean
+// "unset / clean" (an unstamped device, a plain connector), so they compare
+// equal; every other value is compared strictly. Centralised so the notion of
+// "the same programmed state" has one definition.
+export function sameProgramValue(a, b) {
+  if (a == null && b == null) return true;
+  return a === b;
+}
+
+// The firm, kind-agnostic rule for what a Forge may offer: an option is a NO-OP
+// — and so should NOT be offered — when applying it would leave the device in a
+// state equivalent to the one it is already in. We compare the field's value
+// BEFORE against what it WOULD BECOME after the change ("set field = value"),
+// rather than hard-coding any one kind, so the rule keeps holding for every
+// present and future programmable device. A clean connector is not offered
+// "clean", a red rewirer is not offered "red", a 3 s mine is not offered "3 s".
+export function programIsNoop(spec, node, value) {
+  if (!spec || !node) return false;
+  const before = node[spec.field];      // the field as it stands now
+  const after = value;                  // apply is `node[spec.field] = value`
+  return sameProgramValue(before, after);
+}
