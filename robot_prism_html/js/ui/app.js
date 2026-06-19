@@ -879,11 +879,26 @@ export class App {
   }
 
   // ---- stack chooser menu ----
+  // Lay the items as a vertical stack near (x, y), then clamp the whole block to
+  // the playfield: it normally drops below the anchor, but flips to sit above it
+  // when that would spill off the bottom (e.g. a Forge near the bottom edge), and
+  // is nudged horizontally so it never runs past the left/right edges either.
   _openMenu(x, y, items) {
-    const MW = 116, MH = 26, GAP = 4;
+    const MW = 116, MH = 26, GAP = 4, MARGIN = 6, OFFSET = 14;
+    const blockH = items.length * MH + (items.length - 1) * GAP;
+    // Vertical: prefer below the anchor; flip above if it would overflow.
+    let top = y + OFFSET;
+    if (top + blockH > WORLD_H - MARGIN) {
+      const above = y - OFFSET - blockH;
+      top = above >= MARGIN ? above : WORLD_H - MARGIN - blockH;
+    }
+    top = Math.max(MARGIN, top);
+    // Horizontal: centre on the anchor, clamped to stay fully on-screen.
+    let left = x - MW / 2;
+    left = Math.max(MARGIN, Math.min(left, WORLD_W - MW - MARGIN));
     const laid = items.map((it, i) => ({
       ...it,
-      rect: [x - MW / 2, y + 14 + i * (MH + GAP), MW, MH],
+      rect: [left, top + i * (MH + GAP), MW, MH],
     }));
     this.uiState.menu = { x, y, items: laid };
   }
