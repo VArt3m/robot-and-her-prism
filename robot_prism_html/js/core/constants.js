@@ -1,4 +1,9 @@
 export const EPS = 1e-7;
+// The fixed internal playfield resolution. The canvas is letterboxed to this
+// aspect; world coordinates run 0..WORLD_W × 0..WORLD_H. Renderer, level border
+// and the ray-reach highlight all read these so there is one source of truth.
+export const WORLD_W = 1018;
+export const WORLD_H = 640;
 export const PLAYER_R = 8;
 export const BOX_R = 12;
 export const CONN_R = 12;

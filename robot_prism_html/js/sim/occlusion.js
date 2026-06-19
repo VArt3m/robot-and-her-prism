@@ -25,6 +25,7 @@
  */
 
 import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
+import { seg_inter } from '../core/geometry.js';
 import { objType } from './objects.js';
 
 export const RAY_OCCLUSION = {
@@ -75,4 +76,62 @@ export function rayBlockerSegments(world, profile, { excludeFieldId = null, excl
     for (const s of squareSegs(world.player, PLAYER_R)) segs.push(s);
   }
   return segs;
+}
+
+// The ray "kind" a carried object would emit, for highlight previews — the same
+// occlusion profile its real effect uses. Returns null for objects that aim no
+// ray at all (a box, a mine — the mine is programmable-only, not targeting), so
+// the "passable ray area" highlight simply shows nothing for them.
+export function carriedRayType(kind) {
+  switch (kind) {
+    case 'connector': return 'laser';
+    case 'rewirer':   return 'rewirer';
+    case 'jammer':    return 'jammer';
+    default:          return null;
+  }
+}
+
+// The reach region of a ray fired from `origin` in every direction at once — as
+// if the carried item were a light source there, its rays travelling outward and
+// stopping on whatever its `profile` cannot pass. The result is the (star-shaped)
+// visibility polygon: a list of boundary points in angular order, ready to fill.
+//
+// `bounds` is the world rectangle [x0, y0, x1, y1]; rays that hit nothing else
+// terminate on it, so the polygon is always closed and finite. The emitter's own
+// body is never a blocker (the carried object is in hand — rayBlockerSegments
+// already skips `world.carrying`) and the player is excluded by the caller
+// passing a profile with `player:false`, since the origin sits on her.
+export function visibilityPolygon(world, profile, origin, bounds) {
+  const [x0, y0, x1, y1] = bounds;
+  const segs = rayBlockerSegments(world, profile, {});
+  // The world frame, so a ray that escapes every obstacle still terminates.
+  segs.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]],
+            [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]);
+
+  // Aim a ray a hair to either side of every blocker corner so the boundary
+  // wraps cleanly around occluders (the classic visibility-polygon trick).
+  const NUDGE = 1e-4;
+  const angles = [];
+  for (const [a, b] of segs) {
+    for (const p of [a, b]) {
+      const ang = Math.atan2(p[1] - origin[1], p[0] - origin[0]);
+      angles.push(ang - NUDGE, ang, ang + NUDGE);
+    }
+  }
+  angles.sort((m, n) => m - n);
+
+  const FAR = 1e4;
+  const out = [];
+  for (const ang of angles) {
+    const far = [origin[0] + Math.cos(ang) * FAR, origin[1] + Math.sin(ang) * FAR];
+    let bestT = 1, hit = far;
+    for (const [s1, s2] of segs) {
+      const r = seg_inter(origin, far, s1, s2);   // u clamped to the blocker
+      if (!r) continue;
+      const t = r[1];
+      if (t > 1e-6 && t < bestT) { bestT = t; hit = r[0]; }
+    }
+    out.push([hit[0], hit[1]]);
+  }
+  return out;   // already in angular order
 }

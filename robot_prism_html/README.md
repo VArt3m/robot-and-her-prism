@@ -31,6 +31,7 @@ robot_prism_html/
     └── ui/              # presentation + input (depends on core, sim)
         ├── renderer2d.js  # Canvas 2D renderer (DPR-aware, letterboxed)
         ├── input.js       # keyboard / mouse input handler
+        ├── panel.js       # corner tool panel (DOM overlay above the canvas)
         └── app.js         # game loop, mode switching, play interactions
 ```
 
@@ -75,8 +76,10 @@ If you have Node.js available, `npx serve .` also works.
 | Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
 | Exit click-by-click | A brief click on empty space (not a target), or a tap of E |
 | C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark (works while carrying or in click-by-click) |
-| Z | Rewind — undo the last meaningful action (up to 3 steps) |
-| Hold R (3s) | Full reset — rebuild the entire playfield from scratch |
+| Hold Alt | Highlight what the carried item can target (rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
+| Hold Ctrl | Highlight where the carried item's ray can travel (a translucent area). Inverts the panel "Ray reach" toggle while held |
+| Z | Rewind — undo the last meaningful action (up to 6 steps) |
+| Hold R (2s) | Full reset — rebuild the entire playfield from scratch |
 | G | Reset gate latch states |
 
 > While you carry something, a **shadow** shows exactly where it will land — always clamped to a spot that is in reach with a clear line to it, so a drop can never cross a wall, force field, or barrier. The shadow predicts whichever action fits where your cursor is:
@@ -92,6 +95,29 @@ Beyond the connector and the box, three devices live on the field:
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 
 > The carry / placement / programming **interaction tree** is live, the **jammer** disables its target for real, and the **rewirer** now charges and recolours through the light engine (recoloured connectors emit their own colour). Still pending: the mine actually counting down and exploding, and the device that washes a connector's colour back to clear.
+
+## Tool panel
+
+A small translucent panel sits in the upper-left corner of the playfield. Its
+header chevron collapses it vertically. The controls are:
+
+- **Targets** — sticky toggle: highlight everything the carried item can target.
+  A bright ring marks a target with a clear shot; a faint dashed ring marks one
+  the ray cannot currently reach. Equivalent to holding **Alt** momentarily —
+  and when the toggle is on, holding Alt *suppresses* it.
+- **Ray reach** — sticky toggle: highlight the whole area the carried item's ray
+  could travel to from where the robot stands (as if she were a light source
+  whose rays stop on whatever that item cannot pass). Equivalent to holding
+  **Ctrl**, with the same invert-while-held behaviour.
+- **Targeting** — enter or leave click-by-click targeting of the carried device.
+- **Reset** — press and hold for 2 s to rebuild the whole playfield (same as
+  holding **R**).
+- **Undo** — rewind one step (up to 6; same as **Z**).
+
+If the panel happens to cover an item you are trying to target — while sweeping
+the golden link arrow or in click-by-click — and you move the cursor onto the
+panel, it politely fades out after a second so you can reach what is behind it,
+then fades back the moment the conflict is resolved.
 
 ## Targeting & programming
 

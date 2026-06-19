@@ -6,20 +6,23 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
+import { Panel } from './panel.js';
 import { objType } from '../sim/objects.js';
 import { targetSpec, allIntentRays } from '../sim/targeting.js';
 import { programSpec } from '../sim/programming.js';
+import { carriedRayType, visibilityPolygon, rayProfile } from '../sim/occlusion.js';
 import { STR } from '../core/strings.js';
 
 // How many rewind (undo) steps to retain, and how long the full-reset key
-// must be held continuously (seconds) before the playfield is rebuilt.
-const UNDO_MAX = 3;
-const RESET_HOLD_SEC = 3;
+// must be held continuously (seconds) before the playfield is rebuilt. Both are
+// honoured uniformly whether triggered from the keyboard or the tool panel.
+const UNDO_MAX = 6;
+const RESET_HOLD_SEC = 2;
 
 // Long-press duration (ms) that opens the stack chooser (mouse or E key). Kept
 // equal to the tree's AIM_HOLD_MS so every "operating hold" feels the same.
@@ -70,6 +73,18 @@ export class App {
     this.input.onMouseMove = (pos, e) => this._onMouseMove(pos, e);
     this.input.onMouseUp   = (pos, e) => this._onMouseUp(pos, e);
 
+    // Corner tool panel (DOM overlay above the canvas). It reports presses
+    // through these callbacks; app.js owns all the resulting game state.
+    this._panelResetSince = null;   // ms the panel Reset button has been held; null = up
+    this.panel = new Panel(canvas.parentElement, {
+      toggleTargets:   () => { this.uiState.panel.targets  = !this.uiState.panel.targets; },
+      togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
+      toggleTargeting: () => this._togglePanelTargeting(),
+      beginReset:      () => { this._panelResetSince = performance.now(); },
+      endReset:        () => { this._panelResetSince = null; },
+      undo:            () => this._rewind(),
+    });
+
     this.uiState = {
       mode:    'play',   // 'play' | 'edit' (editor not yet implemented)
       sel:     null,     // selected connector id
@@ -84,6 +99,13 @@ export class App {
       placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
       targeting: null,   // click-by-click targeting modal: { id, kind } | null
       hover:   null,     // hover tooltip: { pos:[x,y], radius, lines:[...] } | null
+      // Tool-panel sticky toggles. Alt/Ctrl XOR against these each frame to give
+      // the effective `showTargets` / `showPassable` highlight flags below.
+      panel:   { targets: false, passable: false },
+      showTargets:   false,   // effective "highlight possible targets" this frame
+      showPassable:  false,   // effective "highlight passable ray area" this frame
+      targetHints:   null,    // [{ pos, reachable, radius }] | null
+      passableRegion:null,    // visibility-polygon points | null
     };
 
     // Mouse drag tracking
@@ -224,10 +246,14 @@ export class App {
     this._setFlash(STR.flash.rewound(left));
   }
 
-  // ---- full reset (3-second hold of R) ----
+  // ---- full reset (2-second hold of R, or of the panel's Reset button) ----
   _updateResetHold() {
     const ui = this.uiState;
-    const since = this.input.resetHeldSince;
+    // Whichever source began holding first drives the gauge; releasing both
+    // clears the consumed flag so a later hold can fire again.
+    const a = this.input.resetHeldSince;
+    const b = this._panelResetSince;
+    const since = a === null ? b : (b === null ? a : Math.min(a, b));
     if (since === null) { ui.resetProgress = 0; this._resetConsumed = false; return; }
     if (this._resetConsumed) { ui.resetProgress = 0; return; }
     const elapsed = (performance.now() - since) / 1000;
@@ -262,6 +288,114 @@ export class App {
     this._flash = { text, until: performance.now() / 1000 + dur };
   }
 
+  // ---- highlights (possible targets / passable ray area) ----
+  // Each highlight is the XOR of its sticky panel toggle and the matching
+  // momentary key: Alt for targets, Ctrl for passable. So holding the key turns
+  // a highlight ON when its toggle is off, and (as requested) SUPPRESSES it
+  // while held when the toggle is on. Both only render something while carrying
+  // an item that actually has the relevant ray/targets.
+  _updateHighlights() {
+    const ui = this.uiState;
+    const w = this.world;
+    ui.showTargets  = ui.panel.targets  !== this.input.altHeld;
+    ui.showPassable = ui.panel.passable !== this.input.ctrlHeld;
+    ui.targetHints = null;
+    ui.passableRegion = null;
+    if (ui.mode !== 'play' || !w.player) return;
+    const kind = this._carriedKind();
+
+    if (ui.showTargets && w.carrying && objType(kind)?.requiresTarget) {
+      const spec = targetSpec(kind);
+      if (spec && spec.candidates) {
+        ui.targetHints = spec.candidates(w, w.carrying, w.player).map(c => ({
+          pos: c.pos,
+          reachable: c.reachable,
+          radius: objType(w.nodes[c.id]?.kind)?.radius ?? 13,
+        }));
+      }
+    }
+
+    if (ui.showPassable && (w.carrying || w.carry_box)) {
+      const rt = carriedRayType(kind);
+      if (rt) {
+        // Exclude the player from blockers — the ray emanates from where she
+        // stands, so her own body must not clip every outgoing direction.
+        const profile = { ...rayProfile(rt), player: false };
+        ui.passableRegion = visibilityPolygon(w, profile, w.player, [0, 0, WORLD_W, WORLD_H]);
+      }
+    }
+  }
+
+  // ---- tool panel ----
+  // Push button states each frame and drive the polite fade-on-conflict.
+  _updatePanel(nowMs) {
+    const ui = this.uiState;
+    const w = this.world;
+    const kind = this._carriedKind();
+    const canTarget = Boolean(w.carrying && objType(kind)?.requiresTarget);
+    this.panel.refresh({
+      targets:  ui.panel.targets,
+      passable: ui.panel.passable,
+      targetsFlip: this.input.altHeld,
+      passFlip:    this.input.ctrlHeld,
+      targetingActive: Boolean(ui.targeting),
+      canTarget,
+      canUndo: this._undo.length > 0,
+      resetProgress: ui.resetProgress ?? 0,
+    });
+    this.panel.setConflict(this._panelConflict(), nowMs);
+  }
+
+  // The panel "overrides a currently targetable item" when, during a targeting
+  // gesture (the golden-arrow link drag, or click-by-click), the pointer is over
+  // the panel AND at least one live target sits behind its footprint. That is
+  // the only situation in which the panel is in the player's way, so it is the
+  // only one that triggers the fade.
+  _panelConflict() {
+    const ui = this.uiState;
+    const inLinking = this._drag.active && this._drag.kind === 'wire';
+    const inClickByClick = Boolean(ui.targeting);
+    if (!inLinking && !inClickByClick) return false;
+    if (!this.panel.isPointerOver()) return false;
+    const cands = this._currentTargetCandidates();
+    if (!cands.length) return false;
+    const rect = this.panel.footprintRect();
+    const cr = this.canvas.getBoundingClientRect();
+    for (const c of cands) {
+      const [sx, sy] = this.renderer2d.worldToScreen(c.pos[0], c.pos[1]);
+      const cx = cr.left + sx, cy = cr.top + sy;     // world → client coords
+      if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) return true;
+    }
+    return false;
+  }
+
+  // Everything the active targeting context could currently target — used both
+  // by the conflict check above. Spec-driven, so no per-kind code lives here.
+  _currentTargetCandidates() {
+    const w = this.world;
+    const ui = this.uiState;
+    if (ui.targeting) {
+      const spec = targetSpec(ui.targeting.kind);
+      return spec && spec.candidates ? spec.candidates(w, ui.targeting.id, w.player) : [];
+    }
+    const kind = this._carriedKind();
+    if (w.carrying && objType(kind)?.requiresTarget) {
+      const spec = targetSpec(kind);
+      return spec && spec.candidates ? spec.candidates(w, w.carrying, w.player) : [];
+    }
+    return [];
+  }
+
+  // Panel "Targeting" button: enter click-by-click if a targeting device is in
+  // hand, or leave it if already active. (The button is disabled otherwise, so
+  // the empty-handed path is just a guard.)
+  _togglePanelTargeting() {
+    const w = this.world;
+    if (this.uiState.targeting) { this._exitTargeting(); return; }
+    const kind = this._carriedKind();
+    if (w.carrying && objType(kind)?.requiresTarget) this._enterTargeting(kind);
+  }
+
   _scheduleFrame() {
     this._frameId = requestAnimationFrame(ts => this._frame(ts));
   }
@@ -287,6 +421,8 @@ export class App {
       steps++;
     }
     this._updateHover();
+    this._updateHighlights();
+    this._updatePanel(ts);
     this._draw();
     this._updateStatus();
     this._scheduleFrame();

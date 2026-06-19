@@ -31,6 +31,13 @@
  *               every stored intent ray of THIS kind, globally, for click-delete.
  *               `key` dedupes a ray shared by two devices; `remove()` deletes
  *               that one intent. Empty for a mark-only device.
+ *   candidates(world, deviceId, origin) -> [{ id, pos, reachable }]
+ *               every thing this device could currently target, with `reachable`
+ *               telling whether a ray from `origin` (default: the device's own
+ *               position) reaches it unobstructed. Drives the UI's "possible
+ *               targets" highlight and the panel's covered-target detection. A
+ *               device whose effect ignores line of sight (the connector's links)
+ *               reports `reachable: true` for every candidate.
  *   clear(world, deviceId)
  *               drop every intent the device holds (the C key).
  *
@@ -53,6 +60,14 @@ function nearestNode(world, x, y, kinds, excludeId) {
   return best;
 }
 
+// Every node of one of `kinds` that could be targeted (excluding the device
+// itself and any spent/destroyed node). Shared by the connector and rewirer
+// candidate enumerators.
+function nodesOfKinds(world, kinds, excludeId) {
+  return Object.values(world.nodes)
+    .filter(n => n.id !== excludeId && !n.spent && kinds.includes(n.kind));
+}
+
 export const TARGET_SPECS = {
   // Connector — wires light between any number of sources, receivers and other
   // connectors. Many intents; the golden arrow toggles links on pass-over and a
@@ -68,6 +83,13 @@ export const TARGET_SPECS = {
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
+    // A light link can be wired regardless of obstruction (the beam simply will
+    // not deliver through a wall) — so every source / receiver / connector is a
+    // reachable candidate.
+    candidates(world, deviceId) {
+      return nodesOfKinds(world, ['source', 'receiver', 'connector'], deviceId)
+        .map(n => ({ id: n.id, pos: [...n.pos], reachable: true }));
+    },
     intentRays(world) {
       return world.links_pairs.map(([a, b]) => ({
         from: world.nodes[a].pos,
@@ -92,6 +114,17 @@ export const TARGET_SPECS = {
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.set_recolor(deviceId, targetId); },
+    // Recolour needs a clear shot (the rewirer ray profile), checked from
+    // `origin` (the robot while carrying). The device body and the target are
+    // excluded so neither self-blocks.
+    candidates(world, deviceId, origin = world.nodes[deviceId]?.pos) {
+      return nodesOfKinds(world, ['source', 'receiver', 'connector'], deviceId)
+        .map(n => ({
+          id: n.id, pos: [...n.pos],
+          reachable: origin ? world.ray_clear(origin, n.pos, 'rewirer',
+            { excludeNodeIds: new Set([deviceId, n.id]) }) : true,
+        }));
+    },
     intentRays(world) {
       const out = [];
       for (const [rid, tid] of world.recolor_links) {
@@ -130,6 +163,23 @@ export const TARGET_SPECS = {
       return best;
     },
     apply(world, deviceId, targetId) { world.set_jam(deviceId, targetId); },
+    // Targets are force fields (hit at their midpoint, never self-blocking) and
+    // jammable nodes (a mine). Reach uses the jammer ray profile from `origin`.
+    candidates(world, deviceId, origin = world.nodes[deviceId]?.pos) {
+      const out = [];
+      for (const ff of world.ffs) {
+        const pos = ff.mid();
+        out.push({ id: ff.id, pos: [...pos],
+          reachable: origin ? world.ray_clear(origin, pos, 'jammer',
+            { excludeFieldId: ff.id }) : true });
+      }
+      for (const n of Object.values(world.nodes)) {
+        if (n.spent || !kindIsJammable(n.kind)) continue;
+        out.push({ id: n.id, pos: [...n.pos],
+          reachable: origin ? world.ray_clear(origin, n.pos, 'jammer', {}) : true });
+      }
+      return out;
+    },
     intentRays(world) {
       const out = [];
       for (const [jid, tid] of world.jam_links) {

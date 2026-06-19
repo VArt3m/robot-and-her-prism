@@ -193,6 +193,8 @@ export class World {
   step(now = null) { return this.engine.step(now); }
   beams_live() { return this.engine.beams_live(); }
   light_blockers() { return this.engine.light_blockers(); }
+  // Unobstructed line of sight for a simple ray of `type` (see RAY_OCCLUSION).
+  ray_clear(a, b, type, opts = {}) { return this.engine.ray_clear(a, b, type, opts); }
 
   // ---- player / boxes ----
   move_player(dx, dy) { this.motion.move_player(dx, dy); }

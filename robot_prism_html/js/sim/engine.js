@@ -300,6 +300,19 @@ export class Engine {
     return ins.length > 0 && ins.some(Boolean);
   }
 
+  // ---- line of sight (shared) ----
+  // Is a simple ray of `type` (per RAY_OCCLUSION) unobstructed from `a` to `b`?
+  // The single chokepoint every line-of-sight check goes through — the jammer
+  // and rewirer reach tests below, plus the UI's "possible targets" highlight.
+  // `opts` forwards the per-ray exclusions (excludeFieldId / excludeNodeIds) so a
+  // ray never self-blocks on its own target / emitter.
+  ray_clear(a, b, type, opts = {}) {
+    const prof = rayProfile(type);
+    if (!prof) return true;
+    const segs = rayBlockerSegments(this.world, prof, opts);
+    return first_block_t(a, b, segs) === null;
+  }
+
   // ---- jammer rays ----
   // The jammer ray is "dark matter": per RAY_OCCLUSION.jammer it ignores light
   // beams, other rays, the player, boxes and connectors — it is stopped ONLY by
@@ -307,8 +320,7 @@ export class Engine {
   // one it targets). `excludeFieldId` is that target. Reads live is_open /
   // disabled state, so it is re-evaluated every iteration as fields settle.
   _jam_blocked(a, b, excludeFieldId = null) {
-    const segs = rayBlockerSegments(this.world, rayProfile('jammer'), { excludeFieldId });
-    return first_block_t(a, b, segs) !== null;
+    return !this.ray_clear(a, b, 'jammer', { excludeFieldId });
   }
 
   // Resolve a jam target id to { pos, excludeFieldId } or null. A force field
@@ -380,9 +392,8 @@ export class Engine {
   // barriers and passable fields let it through. The rewirer's own body and the
   // target's body are excluded so they never self-block.
   _recolor_reaches(rw, tgt) {
-    const segs = rayBlockerSegments(this.world, rayProfile('rewirer'),
+    return this.ray_clear(rw.pos, tgt.pos, 'rewirer',
       { excludeNodeIds: new Set([rw.id, tgt.id]) });
-    return first_block_t(rw.pos, tgt.pos, segs) === null;
   }
 
   // Advance each deployed rewirer's charge while it holds a clear shot; reset it

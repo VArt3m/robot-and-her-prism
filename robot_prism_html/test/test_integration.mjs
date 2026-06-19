@@ -147,5 +147,70 @@ app._draw(); ok(true, 'render after placing box');
 for (let i = 0; i < 5; i++) app._tick(performance.now() / 1000 + i * 0.033);
 ok(true, 'ticks ran without throwing');
 
+// --- highlight wiring (the panel + Alt/Ctrl XOR, driven through app) ---
+{
+  const ui = app.uiState;
+  // Pick up the jammer (a targeting device) so highlights have something to show.
+  w.player = [470, 380];
+  if (!w.carrying) app._pickItem({ kind: 'jammer', id: 'jam_a' });
+
+  // Targets toggle ON → effective ON, hints populated; held Alt suppresses it.
+  ui.panel.targets = true; app.input.altHeld = false;
+  app._updateHighlights();
+  ok(ui.showTargets === true, 'panel targets toggle → showTargets on');
+  ok(Array.isArray(ui.targetHints) && ui.targetHints.length > 0, 'target hints populated for the jammer');
+  app.input.altHeld = true;
+  app._updateHighlights();
+  ok(ui.showTargets === false, 'held Alt suppresses the toggled-on targets highlight (XOR)');
+  ok(ui.targetHints === null, 'no hints while suppressed');
+  app.input.altHeld = false;
+
+  // Passable toggle ON → a polygon region for the jammer ray.
+  ui.panel.passable = true; app.input.ctrlHeld = false;
+  app._updateHighlights();
+  ok(Array.isArray(ui.passableRegion) && ui.passableRegion.length > 2, 'passable region polygon built');
+  app.input.ctrlHeld = true;
+  app._updateHighlights();
+  ok(ui.passableRegion === null, 'held Ctrl suppresses the toggled-on passable highlight');
+  app.input.ctrlHeld = false;
+
+  // refresh + conflict must not throw against the inert (headless) panel.
+  app._updatePanel(performance.now());
+  ok(true, 'panel refresh/conflict ran without throwing');
+
+  // Render with highlights active must not throw.
+  app._updateHighlights();
+  app._draw();
+  ok(true, 'render with highlights active');
+
+  // Reset toggles so later assertions (if any) start clean.
+  ui.panel.targets = false; ui.panel.passable = false;
+}
+
+// --- panel conflict logic + screen transform round-trip ---
+{
+  const ui = app.uiState;
+  // worldToScreen is the exact inverse of screenToWorld.
+  const [sx, sy] = app.renderer2d.worldToScreen(300, 200);
+  const [wx, wy] = app.renderer2d.screenToWorld(sx, sy);
+  ok(Math.abs(wx - 300) < 1e-6 && Math.abs(wy - 200) < 1e-6, 'worldToScreen ↔ screenToWorld round-trips');
+
+  // Build a targeting context (jam_a exists as a placed node with field/mine
+  // candidates), then stub the panel geometry: pointer over it, footprint huge
+  // so any candidate counts as "behind" it, identity world→screen.
+  ui.targeting = { id: 'jam_a', kind: 'jammer' };
+  app.panel.isPointerOver = () => true;
+  app.panel.footprintRect = () => ({ left: 0, top: 0, right: 1e4, bottom: 1e4 });
+  app.renderer2d.worldToScreen = (x, y) => [x, y];
+  ok(app._panelConflict() === true, 'conflict: targeting + pointer over + target behind panel');
+
+  app.panel.isPointerOver = () => false;
+  ok(app._panelConflict() === false, 'no conflict when the pointer is off the panel');
+
+  app.panel.isPointerOver = () => true;
+  ui.targeting = null;                     // no targeting context at all
+  ok(app._panelConflict() === false, 'no conflict outside any targeting gesture');
+}
+
 console.log(`\nintegration smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

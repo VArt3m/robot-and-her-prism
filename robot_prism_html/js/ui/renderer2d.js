@@ -5,7 +5,7 @@
  * know about. A future renderer3d.js can sit alongside this with the same
  * interface so both can be driven from app.js simultaneously.
  */
-import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, LOGIC_KINDS } from '../core/constants.js';
+import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { STR } from '../core/strings.js';
 
@@ -69,9 +69,6 @@ function polygon(ctx, pts) {
   ctx.closePath();
 }
 
-const WORLD_W = 1018;
-const WORLD_H = 640;
-
 export class Renderer2D {
   constructor(canvas) {
     this.canvas = canvas;
@@ -98,6 +95,14 @@ export class Renderer2D {
   screenToWorld(cssX, cssY) {
     const { scale, ox, oy } = this._vp;
     return [(cssX - ox) / scale, (cssY - oy) / scale];
+  }
+
+  // Inverse of screenToWorld: world coords → CSS-space point relative to the
+  // canvas top-left. app.js adds the canvas's client offset to compare a world
+  // position against the DOM panel's footprint.
+  worldToScreen(wx, wy) {
+    const { scale, ox, oy } = this._vp;
+    return [wx * scale + ox, wy * scale + oy];
   }
 
   render(world, uiState) {
@@ -139,6 +144,22 @@ export class Renderer2D {
     // Game-world background (within letterbox).
     ctx.fillStyle = '#fafafa';
     ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    // "Passable ray area" highlight: the reach region of the carried item's ray,
+    // drawn first so the whole scene sits on top of it. A soft warm wash with a
+    // dashed edge reads as "everywhere this could be aimed" without hiding what
+    // is underneath. Populated by app.js (uiState.passableRegion).
+    const region = uiState.passableRegion;
+    if (region && region.length > 2) {
+      ctx.save();
+      polygon(ctx, region);
+      ctx.fillStyle = 'rgba(245, 197, 24, 0.13)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(214, 158, 10, 0.55)';
+      ctx.lineWidth = 1.25; ctx.setLineDash([5, 5]); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
 
     // Barriers
     for (const bar of w.barriers) {
@@ -503,6 +524,25 @@ export class Renderer2D {
       polygon(ctx, starPts(w.goal[0], w.goal[1]));
       ctx.fillStyle = '#f5c518'; ctx.fill();
       ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    // "Possible targets" highlight: a ring around everything the carried item
+    // can target. A reachable target (clear ray) gets a bright solid ring; an
+    // unreachable one (the shot is blocked) a fainter dashed ring, so the player
+    // can tell "I could mark it, but it won't bite from here". Populated by
+    // app.js (uiState.targetHints).
+    if (uiState.targetHints) {
+      for (const h of uiState.targetHints) {
+        const [hx, hy] = h.pos;
+        const r = (h.radius ?? 14) + 5;
+        ctx.beginPath(); ctx.arc(hx, hy, r, 0, 2 * Math.PI);
+        if (h.reachable) {
+          ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 2.5; ctx.setLineDash([]);
+        } else {
+          ctx.strokeStyle = 'rgba(120, 130, 145, 0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
     }
 
     // Player

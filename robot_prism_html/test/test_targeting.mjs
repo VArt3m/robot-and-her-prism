@@ -28,7 +28,7 @@ for (const kind of Object.keys(TARGET_SPECS)) {
 // 2. Every spec implements the full hook surface the core calls.
 // ---------------------------------------------------------------------------
 for (const [kind, spec] of Object.entries(TARGET_SPECS)) {
-  for (const hook of ['targetAt', 'apply', 'intentRays', 'clear']) {
+  for (const hook of ['targetAt', 'apply', 'intentRays', 'clear', 'candidates']) {
     ok(typeof spec[hook] === 'function', `${kind} spec implements ${hook}()`);
   }
   ok('maxIntents' in spec && 'persistent' in spec, `${kind} spec declares maxIntents + persistent`);

@@ -7,19 +7,20 @@ Browser port of a 2-D light-beam puzzle. Pure ES modules, **no build step, no fr
 ## Layout (dependency flow is one-way: core → sim → ui)
 
 ```
-js/core/   constants.js (physics consts, COLORS)  entities.js (Node/Wall/Barrier/ForceField)
-           geometry.js (seg_inter, pt_seg_dist, dist…)  strings.js (STR, i18n)
-js/sim/    engine.js   light/logic/forcefield solver  (solve + step, ~700 ln)
+js/core/   constants.js (physics consts, COLORS, WORLD_W/H)  entities.js (Node/Wall/Barrier/ForceField)
+           geometry.js (seg_inter, pt_seg_dist, dist…)  strings.js (STR, i18n; incl. STR.panel)
+js/sim/    engine.js   light/logic/forcefield solver  (solve + step, ~700 ln); ray_clear (shared LOS)
            motion.js   player/box movement, reach, placement_spot
            world.js    scene state + FACADE over Engine/Motion (read-through getters)
            objects.js  OBJECT_TYPES table (material/carriable/requiresTarget/programmable/jammable/radius)
-           targeting.js   TARGET_SPECS — per-kind targeting data behind a shared core
+           targeting.js   TARGET_SPECS — per-kind targeting data (incl. candidates()) behind a shared core
            programming.js PROGRAM_SPECS — per-kind programming data behind a shared core
-           occlusion.js   RAY_OCCLUSION — what each ray type passes through
+           occlusion.js   RAY_OCCLUSION + carriedRayType + visibilityPolygon (the "passable ray area")
            level.js    the single hand-built level (build_level())
-js/ui/     renderer2d.js  Canvas2D (DPR-aware, letterboxed); render(world, uiState)
-           input.js       keyboard/mouse → events + held/drainActions
-           app.js         game loop, all play interactions (~1400 ln, the big one)
+js/ui/     renderer2d.js  Canvas2D (DPR-aware, letterboxed); render(world, uiState); world↔screen transforms
+           input.js       keyboard/mouse → events + held/drainActions (incl. altHeld/ctrlHeld modifiers)
+           panel.js       DOM overlay tool panel (top-left): highlight toggles, targeting, reset-hold, undo
+           app.js         game loop, all play interactions (~1500 ln, the big one)
 ```
 
 ## Key patterns — learn these before adding features
@@ -31,11 +32,13 @@ js/ui/     renderer2d.js  Canvas2D (DPR-aware, letterboxed); render(world, uiSta
 - **Carry "shadow".** While carrying, `_syncCarried` + `_resolvePlacement` + `motion.placement_spot` continuously compute a guaranteed-legal, in-reach drop spot, so `_commitPlacement` needs no further reach test. Stacking legality lives in `STACK_RULES` (`app.js`).
 - **Strings.** All user-facing text goes through `STR.*` (`core/strings.js`), never inline literals.
 - **IDs/links.** Light links are a `Set` of sorted `"a\x00b"` keys; jam/recolor intents are `Map`s (one target per device, re-mark overwrites).
+- **Tool panel + highlights.** `panel.js` is a DOM overlay (not canvas-drawn) built by `app.js`; it reports presses through callbacks and is refreshed each frame via `panel.refresh()`. Two highlights — "possible targets" and "passable ray area" — are each the XOR of a sticky panel toggle and a momentary modifier (`input.altHeld` / `input.ctrlHeld`), so holding the key *suppresses* a toggled-on highlight. `app._updateHighlights()` computes `uiState.{showTargets,showPassable,targetHints,passableRegion}`; the renderer just draws them. "Possible targets" is spec-driven: each `TARGET_SPEC` exposes `candidates(world, deviceId, origin)` (reachability via `world.ray_clear`); add the hook, never per-kind UI branches. "Passable ray area" is `occlusion.visibilityPolygon` over the carried item's `carriedRayType`. The panel politely fades (`setConflict`, ~1 s) when it covers a live target the player is reaching for during a targeting gesture — `app._panelConflict()` decides this from the panel footprint vs. candidate screen positions.
+- **Reset/undo tuning.** `UNDO_MAX = 6`, `RESET_HOLD_SEC = 2` (in `app.js`), honoured identically for the keyboard (Z / hold R) and the panel buttons; the panel's reset hold is merged with the key in `_updateResetHold`.
 
 ## Run & test
 
 - **Run:** `python server.py` → http://127.0.0.1:8080 (server forces correct JS MIME). Or `npm run serve` / `npx serve .`.
-- **Tests:** headless suites in `test/` (`test_integration`, `_jam`, `_occlusion`, `_placement`, `_programming`, `_rewirer`, `_targeting`, `_tree`). Each is a standalone script that prints its tally and exits non-zero on failure.
+- **Tests:** headless suites in `test/` (`test_integration`, `_jam`, `_occlusion`, `_placement`, `_programming`, `_rewirer`, `_targeting`, `_tree`, `_highlight`). Each is a standalone script that prints its tally and exits non-zero on failure.
   - **All:** `npm test` (or `node run-tests.mjs`).
   - **Selected:** `node run-tests.mjs jam tree` — runs suites whose filename contains any given substring.
   - **One, directly:** `node test/test_targeting.mjs`.

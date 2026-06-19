@@ -21,9 +21,10 @@ const en = {
       '[E] — pick up nearest / drop in front',
       '[LMB] an item or [E] to grab; hold ½ s over a stack to choose',
       'carrying: [LMB] it = toggle ready, [LMB] node = program, [LMB] spot/box = place',
+      'hold [Alt] — show targets   |   hold [Ctrl] — show ray reach',
       '[C] — clear the carried device’s targets',
       '[Z] — rewind',
-      'hold [R] (3s) — full reset',
+      'hold [R] (2s) — full reset',
       '[G] — reset gates',
     ].join('   |   '),
   },
@@ -67,6 +68,22 @@ const en = {
     stackHere: '(stack here)',
     dropHere: '(drop here)',
     raised: '(raised)',
+  },
+
+  // The corner tool panel: title, button labels, and their hover hints.
+  panel: {
+    title: 'Tools',
+    collapseHint: 'Collapse / expand',
+    targets: 'Targets',
+    targetsHint: 'Highlight what the carried item can target (or hold Alt)',
+    passable: 'Ray reach',
+    passableHint: 'Highlight where the carried item’s ray can travel (or hold Ctrl)',
+    targeting: 'Targeting',
+    targetingHint: 'Enter / leave click-by-click targeting of the carried device',
+    reset: 'Reset',
+    resetHint: 'Hold 2s to rebuild the whole playfield',
+    undo: 'Undo',
+    undoHint: 'Rewind one step (up to 6)',
   },
 
   // Receiver fill-time label shown in edit mode.

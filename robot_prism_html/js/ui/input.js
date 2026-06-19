@@ -24,6 +24,13 @@ export class InputHandler {
     this.mouse = [0, 0];
     this.hasFocus = true;
 
+    // Momentary highlight modifiers. Alt = "show possible targets" while held,
+    // Ctrl = "show passable ray area" while held. app.js XORs each against its
+    // sticky panel toggle, so when a panel toggle is ON the matching key instead
+    // SUPPRESSES that highlight while pressed.
+    this.altHeld = false;
+    this.ctrlHeld = false;
+
     // Timestamp (ms) when the reset key was pressed; null when not held.
     // app.js uses this to require a continuous 3-second hold for a full reset.
     this.resetHeldSince = null;
@@ -51,6 +58,12 @@ export class InputHandler {
 
   _bind() {
     window.addEventListener('keydown', e => {
+      // Highlight modifiers — tracked even on auto-repeat, and BEFORE the
+      // e.repeat guard below (which would otherwise swallow a held modifier).
+      // preventDefault on Alt stops the browser stealing focus to its menu bar;
+      // Ctrl is left alone so the platform's own shortcuts still work.
+      if (e.code === 'AltLeft' || e.code === 'AltRight') { this.altHeld = true; e.preventDefault(); }
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.ctrlHeld = true;
       if (e.repeat) return;
       const action = KEY_MAP[e.code];
       if (!action) return;
@@ -71,6 +84,8 @@ export class InputHandler {
     });
 
     window.addEventListener('keyup', e => {
+      if (e.code === 'AltLeft' || e.code === 'AltRight') this.altHeld = false;
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.ctrlHeld = false;
       const action = KEY_MAP[e.code];
       if (action) this.held.delete(action);
       if (action === 'reset') this.resetHeldSince = null;
@@ -82,6 +97,8 @@ export class InputHandler {
       this.hasFocus = false;
       this.resetHeldSince = null;
       this.carryHeldSince = null;
+      this.altHeld = false;
+      this.ctrlHeld = false;
     });
 
     window.addEventListener('focus', () => { this.hasFocus = true; });
