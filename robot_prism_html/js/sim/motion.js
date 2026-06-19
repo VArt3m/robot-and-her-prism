@@ -166,6 +166,10 @@ export class Motion {
       if (c.id === w.carrying) continue;
       if (dist(new_, c.pos) < PLAYER_R + CONN_R - 2) return;
     }
+    // Forges are material fixtures — they stop the player like any solid object.
+    for (const f of w.forges()) {
+      if (dist(new_, f.pos) < PLAYER_R + OBJECT_TYPES.forge.radius - 2) return;
+    }
     if (this._static_blocked(old, new_, carry)) return;
     if (this._theft_blocked(old, new_, null, w.boxes)) return;
     w.player = [...new_];

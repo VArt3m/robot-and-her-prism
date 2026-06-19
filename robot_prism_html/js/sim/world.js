@@ -54,6 +54,12 @@ export class World {
     return Object.values(this.nodes).filter(n => n.kind === 'connector');
   }
 
+  // Forges — stationary programming stations. Material (they occlude and block)
+  // but not carriable, so they are tracked here rather than via carriable_nodes.
+  forges() {
+    return Object.values(this.nodes).filter(n => n.kind === 'forge');
+  }
+
   // Carriable objects that live as nodes (the connector plus the programmable /
   // targeting devices: mine, rewirer, jammer). Boxes are tracked separately as
   // bare [x,y] points, not nodes.
@@ -183,6 +189,9 @@ export class World {
       if (c.id === this.carrying || c.id === ignoreConn) continue;
       const cr = OBJECT_TYPES[c.kind].radius;
       if (dist(pos, c.pos) < r + cr) return true;
+    }
+    for (const f of this.forges()) {
+      if (dist(pos, f.pos) < r + OBJECT_TYPES.forge.radius) return true;
     }
     if (this.player && dist(pos, this.player) < r + PLAYER_R) return true;
     return false;

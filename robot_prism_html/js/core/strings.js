@@ -20,7 +20,8 @@ const en = {
       '[WASD] / arrows — move',
       '[E] — pick up nearest / drop in front',
       '[LMB] an item or [E] to grab; hold ½ s over a stack to choose',
-      'carrying: [LMB] it = toggle ready, [LMB] node = program, [LMB] spot/box = place',
+      'carrying: [LMB] it = toggle ready, [LMB] node = target, [LMB] spot/box = place',
+      '[F] at a Forge — program the carried item',
       'hold [Shift] — show targets   |   hold [Space] — show ray reach',
       '[C] — clear the carried device’s targets',
       '[Z] — rewind',
@@ -38,6 +39,7 @@ const en = {
     mine: 'Mine',
     rewirer: 'Rewirer',
     jammer: 'Jammer',
+    forge: 'Forge',
     and: 'AND gate',
     or: 'OR gate',
     box: 'Box',
@@ -80,6 +82,8 @@ const en = {
     passableHint: 'Highlight where the carried item’s ray can travel (or hold Space)',
     targeting: 'Targeting',
     targetingHint: 'Enter / leave click-by-click targeting of the carried device',
+    forge: 'Program',
+    forgeHint: 'Program the carried item at this Forge (or press F)',
     reset: 'Reset',
     resetHint: 'Hold 2s to rebuild the whole playfield',
     undo: 'Undo',
@@ -102,6 +106,10 @@ const en = {
     fullReset: 'Playfield fully reset',
     fuseSet: (s) => `Fuse set to ${s}s`,
     colourSet: (c) => `Colour set to ${en.colors[c] ?? c}`,
+    connColorSet: (c) => (c ? `Connector corrupted — locked to ${en.colors[c] ?? c}` : 'Connector cleaned — plain relay again'),
+    noForge: 'No Forge in range',
+    forgeSpent: 'This Forge is spent',
+    notProgrammable: 'Nothing here to program',
     recolourMarked: 'Recolour target set — it charges and fires once the rewirer is down with a clear shot',
     recolourDone: 'Recolour applied — the rewirer is spent',
     jamMarked: 'Jam target set — active once the jammer is on the ground',
@@ -119,10 +127,10 @@ const en = {
 
   // Stack-chooser / programming menu labels.
   menu: {
-    setup: 'Setup',
-    target: 'Target',
     fuse: (s) => `${s}s fuse`,
     color: (c) => ({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c),
+    // Connector corruption chooser: a "Clean" entry plus the corrupt-to-X colours.
+    connColor: (c) => (c == null ? 'Clean' : `Corrupt → ${({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c)}`),
   },
 
   // Bottom status bar.
@@ -198,6 +206,14 @@ const en = {
         : 'colour not set',
     ],
     jammer: () => [en.kinds.jammer, 'freezes a field or mine'],
+    forge: (uses, inRange) => {
+      const lines = [en.kinds.forge];
+      lines.push(uses > 0 ? `${uses} use${uses === 1 ? '' : 's'} left` : 'spent');
+      if (uses > 0) lines.push(inRange
+        ? [{ t: 'carry an item here, press ' }, { t: 'F', k: true }]
+        : 'program a carried item nearby');
+      return lines;
+    },
     and: (on) => [en.kinds.and, on ? 'output on' : 'output off'],
     or: (on) => [en.kinds.or, on ? 'output on' : 'output off'],
     box: (onButton) => [en.kinds.box, onButton ? 'on a button' : 'pushable platform'],

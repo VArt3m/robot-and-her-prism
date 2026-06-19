@@ -1,5 +1,6 @@
 import { Node, Wall, Barrier, ForceField } from '../core/entities.js';
 import { World } from './world.js';
+import { FORGE_USES_DEFAULT } from '../core/constants.js';
 
 export function build_level() {
   const w = new World();
@@ -43,6 +44,10 @@ export function build_level() {
   w.add(new Node('mine_a', 'mine',    [430, 440], { fuse: 3 }));
   w.add(new Node('rw_a',   'rewirer', [520, 440], { color: 'red' }));
   w.add(new Node('jam_a',  'jammer',  [470, 380]));
+
+  // The Forge — bottom-centre, clear of the existing beams so it occludes
+  // nothing in the starting puzzle. Programming is summoned here.
+  w.add(new Node('forge_a', 'forge', [509, 600], { uses: FORGE_USES_DEFAULT }));
 
   w.goal = [840, 70];
   w.player_start = [470, 500];

@@ -12,6 +12,8 @@
  *     • Targets   — sticky toggle: highlight what the carried item can target.
  *     • Ray reach — sticky toggle: highlight where its ray can travel.
  *     • Targeting — toggle: enter / leave click-by-click targeting.
+ *     • Program   — hidden until a programmable item is carried in a Forge's
+ *                   range; pressing it summons the programming menu (like F).
  *     • Reset     — press-and-hold (2 s) to rebuild the playfield.
  *     • Undo      — one rewind step.
  *
@@ -69,6 +71,7 @@ export class Panel {
         <button type="button" class="ui-btn ui-toggle" data-act="targets"></button>
         <button type="button" class="ui-btn ui-toggle" data-act="passable"></button>
         <button type="button" class="ui-btn ui-toggle" data-act="targeting"></button>
+        <button type="button" class="ui-btn ui-forge" data-act="forge" hidden></button>
         <button type="button" class="ui-btn ui-hold" data-act="reset"><span class="ui-fill"></span><span class="ui-label"></span></button>
         <button type="button" class="ui-btn" data-act="undo"></button>
       </div>`;
@@ -90,6 +93,7 @@ export class Panel {
     label(this.btn.targets,   P.targets,   P.targetsHint);
     label(this.btn.passable,  P.passable,  P.passableHint);
     label(this.btn.targeting, P.targeting, P.targetingHint);
+    label(this.btn.forge,     P.forge,     P.forgeHint);
     label(this.btn.reset,     P.reset,     P.resetHint);
     label(this.btn.undo,      P.undo,      P.undoHint);
 
@@ -106,6 +110,7 @@ export class Panel {
     click('targets',   () => this.actions.toggleTargets?.());
     click('passable',  () => this.actions.togglePassable?.());
     click('targeting', () => this.actions.toggleTargeting?.());
+    click('forge',     () => this.actions.forge?.());
     click('undo',      () => this.actions.undo?.());
 
     // Reset is a press-and-hold (mirrors the R key). Pointer events cover mouse,
@@ -137,6 +142,9 @@ export class Panel {
     this.btn.targets.classList.toggle('flip', !!s.targetsFlip);
     this.btn.passable.classList.toggle('flip', !!s.passFlip);
     this.btn.targeting.disabled = !s.canTarget && !s.targetingActive;
+    // The Forge button is entirely hidden until programming is actually available
+    // (a programmable item in hand, a Forge with uses in range); then it appears.
+    this.btn.forge.hidden = !s.canForge;
     this.btn.undo.disabled = !s.canUndo;
     const fill = this.btn.reset.querySelector('.ui-fill');
     if (fill) fill.style.width = `${Math.round((s.resetProgress ?? 0) * 100)}%`;

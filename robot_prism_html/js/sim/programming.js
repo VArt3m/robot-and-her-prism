@@ -1,10 +1,12 @@
 /**
  * The programming FRAMEWORK — sister to the targeting one (js/sim/targeting.js).
  *
- * Every object whose type sets `programmable` shares ONE interaction core: a
- * long press (E or mouse) on the carried device always summons a chooser menu;
- * picking a value sets one of the device's fields. That access pattern is
- * identical for all of them and lives in the UI.
+ * Every object whose type sets `programmable` shares ONE interaction core: at a
+ * Forge (press F / the panel's Program button while carrying the device within a
+ * Forge's radius) a chooser menu is summoned; picking a value sets one of the
+ * device's fields and spends one of that Forge's uses. That access pattern is
+ * identical for all of them and lives in the UI. (Programming used to be summoned
+ * by a long press anywhere; it is now gated behind Forges — see app._invokeForge.)
  *
  * What differs per object is ONLY its data, declared in one spec here — the menu
  * has different contents, and the value lands in a different field:
@@ -32,6 +34,19 @@
 import { MINE_FUSE_DEFAULT } from '../core/constants.js';
 
 export const PROGRAM_SPECS = {
+  // Connector — its locked colour (null = "clean", a plain relay). At a Forge it
+  // can be cleaned, freshly corrupted, or corrupted to a different colour. The
+  // default is `null`, so first-pickup stamping is a harmless no-op (a connector
+  // is born clean). Re-runs the sim — the corruption changes what it emits.
+  connector: {
+    field: 'color',
+    default: null,
+    values: [null, 'red', 'green', 'blue'],
+    labelKey: 'connColor',
+    flashKey: 'connColorSet',
+    live: true,
+  },
+
   // Mine — a reprogrammable fuse, in seconds. Inert until the mine is deployed,
   // so setting it does not re-run the sim.
   mine: {

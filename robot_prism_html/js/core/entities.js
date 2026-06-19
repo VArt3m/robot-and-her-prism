@@ -1,6 +1,6 @@
-// kinds: source / connector / receiver / button / and / or / mine / rewirer / jammer
+// kinds: source / connector / receiver / button / and / or / mine / rewirer / jammer / forge
 export class Node {
-  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null } = {}) {
+  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null, uses = null } = {}) {
     this.id = nid;
     this.kind = kind;
     this.pos = [pos[0], pos[1]];
@@ -8,6 +8,8 @@ export class Node {
     this.label = label;
     this.fill_time = fill_time;
     this.elevated = false;   // connector: true only while placed on a box
+    // Forge: remaining programming-menu uses; null for everything else.
+    this.uses = uses;
     // Mine state: fuse seconds (programmable), whether it is counting down
     // (begins on the first drop), and whether a jammer has frozen it.
     this.fuse = fuse;

@@ -6,7 +6,7 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
@@ -80,6 +80,7 @@ export class App {
       toggleTargets:   () => { this.uiState.panel.targets  = !this.uiState.panel.targets; },
       togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
       toggleTargeting: () => this._togglePanelTargeting(),
+      forge:           () => this._invokeForge(),
       beginReset:      () => { this._panelResetSince = performance.now(); },
       endReset:        () => { this._panelResetSince = null; },
       undo:            () => this._rewind(),
@@ -167,10 +168,11 @@ export class App {
       const n = w.nodes[id];
       nodePos[id] = [...n.pos];
       if (n.kind === 'connector') elevated[id] = !!n.elevated;
-      // Mutable per-node fields: a recoloured colour, a programmed fuse, and the
-      // spent flag (a fired rewirer). Capturing these makes recolour, fuse edits,
-      // and rewirer firing all undoable.
-      nodeState[id] = { color: n.color, fuse: n.fuse, spent: !!n.spent };
+      // Mutable per-node fields: a recoloured/corrupted colour, a programmed
+      // fuse, the spent flag (a fired rewirer), and a Forge's remaining uses.
+      // Capturing these makes recolour, fuse edits, connector corruption, rewirer
+      // firing, and Forge spending all undoable.
+      nodeState[id] = { color: n.color, fuse: n.fuse, spent: !!n.spent, uses: n.uses };
     }
     return {
       player: w.player ? [...w.player] : null,
@@ -210,7 +212,10 @@ export class App {
     }
     if (s.nodeState) for (const id in s.nodeState) {
       const n = w.nodes[id];
-      if (n) { n.color = s.nodeState[id].color; n.fuse = s.nodeState[id].fuse; n.spent = !!s.nodeState[id].spent; }
+      if (n) {
+        n.color = s.nodeState[id].color; n.fuse = s.nodeState[id].fuse;
+        n.spent = !!s.nodeState[id].spent; n.uses = s.nodeState[id].uses;
+      }
     }
     w.solve(true, false);   // cold solve also clears transient recolour charge
   }
@@ -342,6 +347,7 @@ export class App {
       passFlip:    this.input.held.has('hl_passable'),
       targetingActive: Boolean(ui.targeting),
       canTarget,
+      canForge: this._canForge(),
       canUndo: this._undo.length > 0,
       resetProgress: ui.resetProgress ?? 0,
     });
@@ -515,6 +521,13 @@ export class App {
       this._rewind();
     } else if (action === 'gates') {
       w.solve(true, false); ui.live = true;
+    } else if (action === 'forge') {
+      this._invokeForge();
+    } else if (action === 'escape') {
+      // Escape closes an open menu without acting (so a Forge menu can be
+      // dismissed for free); otherwise it leaves click-by-click targeting.
+      if (ui.menu) ui.menu = null;
+      else if (ui.targeting) this._exitTargeting();
     }
     // Note: 'reset' is no longer a one-shot action — a full reset is driven by
     // a continuous 3-second hold of R, handled in _updateResetHold().
@@ -895,29 +908,21 @@ export class App {
     const p = this._press;
     if (!kind || !w.player || !p || !p.active) { this._aim = null; return; }
     if (this._drag.active && this._drag.kind === 'player') { this._aim = null; return; }
-    const ot = objType(kind) || {};
-    const reqT = !!ot.requiresTarget, prog = !!ot.programmable;
+    const reqT = !!(objType(kind) || {}).requiresTarget;
 
-    // (1) Branch point at 1/3 s.
+    // (1) Branch point at 1/3 s. Programming is no longer reachable from a hold —
+    // it is summoned with F / the panel's Forge button while next to a Forge (see
+    // _invokeForge). So a held press only ever drives TARGETING:
+    //   • a targeting device launches the golden arrow + decision window;
+    //   • anything else (a programmable-only mine) is simply swallowed.
     if (!a.branched && now - a.since >= AIM_HOLD_MS) {
       a.branched = true;
-      if (!reqT && !prog) {
-        // A — neither: swallow. Nothing happens; the release will not drop.
-        p.consumed = true;
-        this._aim = null;
-      } else if (reqT && !prog) {
-        // B — targeting only: launch the golden arrow, open the decision window.
+      if (reqT) {
         this._startAimArrow();
         a.decideAt = now + AIM_DECIDE_MS;
-      } else if (!reqT && prog) {
-        // C — programmable only: open the programming sequence.
-        this._openProgramming(kind);
-        p.consumed = true;
-        this._aim = null;
       } else {
-        // D — both: program first if a field is blank, else arm the arrow.
-        if (this._progFieldsNA(kind)) { this._openProgramming(kind); p.consumed = true; this._aim = null; }
-        else { this._startAimArrow(); a.decideAt = now + AIM_DECIDE_MS; }
+        p.consumed = true;     // swallow: the release will not drop
+        this._aim = null;
       }
       return;
     }
@@ -927,11 +932,10 @@ export class App {
       a.decided = true;
       const inRing = dist(w.player, ui.mouse) < CONNECT_REACH;
       if (inRing) {
-        // Stayed inside → fall out of arrow-drawing into the sticky interaction.
+        // Stayed inside → fall out of arrow-drawing into click-by-click targeting.
         this._endAimArrow();
         p.consumed = true;
-        if (reqT && prog) this._openSetupTarget(kind);   // D → choose Setup or Target
-        else this._enterTargeting(kind);                 // B → click-by-click
+        this._enterTargeting(kind);
       }
       // Left the ring → the golden arrow keeps drawing (the wire drag lives on).
       this._aim = null;
@@ -973,52 +977,70 @@ export class App {
     this._setFlash(STR.flash.doneTargeting);
   }
 
-  // The programming sequence: a small chooser of values for the carried device.
-  // Open the programming chooser for the carried device — generic: the spec
-  // supplies the choosable values and how each is labelled.
-  _openProgramming(kind) {
-    const ui = this.uiState;
+  // The programming sequence: a small chooser of values for the carried device,
+  // anchored at the player (it is summoned by a key / button, not the cursor).
+  // Generic: the spec supplies the choosable values and how each is labelled.
+  // `forgeId` tags the menu so a chosen value spends that Forge a use.
+  _openProgramming(kind, anchor, forgeId = null) {
     const spec = programSpec(kind);
     if (!spec) return;
     const label = STR.menu[spec.labelKey];
     const items = spec.values.map(v => ({ label: label(v), act: 'program', value: v }));
-    this._openMenu(ui.mouse[0], ui.mouse[1], items);
+    this._openMenu(anchor[0], anchor[1], items);
+    if (this.uiState.menu) this.uiState.menu.forgeId = forgeId;
   }
 
-  _openSetupTarget(kind) {
+  // Summon the programming menu (F key / the panel's Forge button). It only
+  // bites when a programmable item is carried AND the robot stands within a
+  // Forge's radius (the item rides with her, so her position suffices) AND that
+  // Forge still has uses. The menu is anchored at the player since it is keyed,
+  // not aimed, and tagged with the Forge so a chosen value spends a use.
+  _invokeForge() {
+    const w = this.world;
     const ui = this.uiState;
-    this._openMenu(ui.mouse[0], ui.mouse[1], [
-      { label: STR.menu.setup,  act: 'setup' },
-      { label: STR.menu.target, act: 'target' },
-    ]);
+    if (ui.mode !== 'play' || !w.player) return;
+    if (ui.menu) ui.menu = null;            // not a toggle — a fresh press reopens
+    const kind = this._carriedKind();
+    if (!kind || !programSpec(kind)) { this._setFlash(STR.flash.notProgrammable); this._beep(); return; }
+    let anyInRange = false, usable = null, ub = FORGE_REACH;
+    for (const f of w.forges()) {
+      if (dist(w.player, f.pos) >= FORGE_REACH) continue;
+      anyInRange = true;
+      if ((f.uses ?? 0) > 0) {
+        const d = dist(w.player, f.pos);
+        if (d < ub) { usable = f; ub = d; }
+      }
+    }
+    if (!usable) { this._setFlash(anyInRange ? STR.flash.forgeSpent : STR.flash.noForge); this._beep(); return; }
+    this._openProgramming(kind, [...w.player], usable.id);
   }
 
-  // Is the carried device's programmable field still blank (so setup must come
-  // first)? Generic across every programmable kind.
-  _progFieldsNA(kind) {
-    const nd = this.world.carrying ? this.world.nodes[this.world.carrying] : null;
-    const spec = programSpec(kind);
-    if (!nd || !spec) return false;
-    return nd[spec.field] == null;
+  // Is programming available right now (a programmable item in hand and a Forge
+  // with uses in range)? Drives the panel's otherwise-hidden Forge button.
+  _canForge() {
+    const w = this.world;
+    const kind = this._carriedKind();
+    if (!w.player || !kind || !programSpec(kind)) return false;
+    return w.forges().some(f => (f.uses ?? 0) > 0 && dist(w.player, f.pos) < FORGE_REACH);
   }
 
   // Resolve a menu action item. 'program' (set a value) is generic over the
-  // carried device's spec; 'setup' / 'target' drive the shared Setup/Target menu.
-  _runMenuAct(it) {
+  // carried device's spec; if the menu came from a Forge (`forgeId`), applying a
+  // value spends one of that Forge's uses (the same undo step covers both).
+  _runMenuAct(it, forgeId = null) {
     const w = this.world;
     const ui = this.uiState;
     const nd = w.carrying ? w.nodes[w.carrying] : null;
     if (it.act === 'program' && nd) {
       const spec = programSpec(this._carriedKind());
       if (!spec) return;
+      const forge = forgeId ? w.nodes[forgeId] : null;
+      if (forgeId && (!forge || (forge.uses ?? 0) <= 0)) { this._beep(); return; }
       this._pushUndo();
       nd[spec.field] = it.value;
+      if (forge) forge.uses = Math.max(0, (forge.uses ?? 0) - 1);
       this._setFlash(STR.flash[spec.flashKey](it.value));
       if (spec.live) { ui.live = true; w.step(performance.now() / 1000); }
-    } else if (it.act === 'setup') {
-      this._openProgramming(this._carriedKind());     // re-open as the value chooser
-    } else if (it.act === 'target') {
-      this._enterTargeting(this._carriedKind());
     }
   }
 
@@ -1050,7 +1072,7 @@ export class App {
     for (const it of menu.items) {
       const [rx, ry, rw, rh] = it.rect;
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
-        if (it.act) this._runMenuAct(it); else this._pickItem(it);
+        if (it.act) this._runMenuAct(it, menu.forgeId); else this._pickItem(it);
         return;
       }
     }
@@ -1089,24 +1111,14 @@ export class App {
     }
   }
 
-  // E-as-operating-tool: a ~1/3 s E hold while carrying enters the carried
-  // device's end state directly — click-by-click for a targeting device, the
-  // programming chooser for a programmable one, the Setup/Target menu for both.
-  // No golden-arrow / linking step (that would be awkward off a key hold); a
-  // "neither" device (a box) is simply swallowed, exactly like the mouse tree.
+  // E-as-operating-tool: a ~1/3 s E hold while carrying a targeting device drops
+  // straight into click-by-click targeting (no golden-arrow / linking step —
+  // that would be awkward off a key hold). Programming is summoned separately
+  // (F / the Forge button), so a programmable-only device is just swallowed.
   _fireECarryTree() {
     const kind = this._carriedKind();
-    const ot = objType(kind) || {};
-    const reqT = !!ot.requiresTarget, prog = !!ot.programmable;
-    if (reqT && prog) {
-      if (this._progFieldsNA(kind)) this._openProgramming(kind);
-      else this._openSetupTarget(kind);
-    } else if (reqT) {
-      this._enterTargeting(kind);
-    } else if (prog) {
-      this._openProgramming(kind);
-    }
-    // neither → nothing (swallowed)
+    if ((objType(kind) || {}).requiresTarget) this._enterTargeting(kind);
+    // otherwise → nothing (swallowed)
   }
 
   // Open the chooser for the stack under (x, y), if it is a real (2+) stack in
@@ -1527,6 +1539,11 @@ export class App {
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;
       case 'rewirer':  lines = T.rewirer(node.color); break;
       case 'jammer':   lines = T.jammer(); break;
+      case 'forge': {
+        const inRange = Boolean(w.player && dist(w.player, node.pos) < FORGE_REACH);
+        lines = T.forge(node.uses ?? 0, inRange);
+        break;
+      }
       case 'and':      lines = T.and(w.logic_val[node.id] ?? false); break;
       case 'or':       lines = T.or(w.logic_val[node.id] ?? false); break;
       default:         lines = [STR.kinds[node.kind] || node.kind];

@@ -13,6 +13,8 @@ const KEY_MAP = {
   'KeyR': 'reset',
   'KeyG': 'gates',
   'KeyZ': 'undo',
+  'KeyF': 'forge',     // summon the programming menu (only bites next to a Forge)
+  'Escape': 'escape',  // close an open menu without acting
   // Momentary highlight holds, chosen so one palm covers both (Shift under the
   // pinky, Space under the thumb) while staying clear of browser-owned chords
   // (Ctrl+W closes the tab; Alt steals focus to the menu bar and strands a held

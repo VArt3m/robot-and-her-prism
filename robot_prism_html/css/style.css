@@ -173,6 +173,17 @@ html, body {
 }
 .ui-btn:hover:not(:disabled) { background: #1d3358; border-color: #3d6299; }
 .ui-btn:disabled { opacity: 0.4; cursor: default; }
+/* `display: flex` on .ui-btn would otherwise defeat the hidden attribute. */
+.ui-btn[hidden] { display: none; }
+
+/* The Program (Forge) button: amber accent so its sudden appearance reads as a
+   distinct, momentary affordance rather than another standing tool. */
+.ui-forge {
+  background: #4a3a12;
+  border-color: #8a6d1e;
+  color: #f3e3b0;
+}
+.ui-forge:hover:not(:disabled) { background: #5d4a18; border-color: #b8902a; }
 
 /* Sticky toggles that are currently ON. */
 .ui-toggle.active {

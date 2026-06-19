@@ -5,8 +5,9 @@
  * know about. A future renderer3d.js can sit alongside this with the same
  * interface so both can be driven from app.js simultaneously.
  */
-import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
+import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
+import { objType } from '../sim/objects.js';
 import { STR } from '../core/strings.js';
 
 function diamond(cx, cy, r = 13) {
@@ -516,6 +517,37 @@ export class Renderer2D {
           ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
           ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
         }
+
+      } else if (n.kind === 'forge') {
+        const uses = n.uses ?? 0;
+        const spent = uses <= 0;
+        // A programmable item carried within range lights the Forge up and draws
+        // its generous activation ring, so "go here to program" is legible.
+        const carriedKind = w.carrying ? w.nodes[w.carrying]?.kind : null;
+        const armed = !spent && !!carriedKind && objType(carriedKind)?.programmable
+          && w.player && dist(w.player, n.pos) < FORGE_REACH;
+        if (armed) {
+          ctx.beginPath(); ctx.arc(x, y, FORGE_REACH, 0, 2 * Math.PI);
+          ctx.fillStyle = 'rgba(245, 197, 24, 0.06)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(214, 158, 10, 0.5)'; ctx.lineWidth = 1.25;
+          ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
+        }
+        ctx.save();
+        ctx.globalAlpha = spent ? 0.45 : 1;
+        const bx0 = x - FORGE_R, by0 = y - FORGE_R, bs = 2 * FORGE_R;
+        ctx.fillStyle = spent ? '#3a3f47' : '#2b2f36';
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.fill(); }
+        else ctx.fillRect(bx0, by0, bs, bs);
+        ctx.strokeStyle = spent ? '#6b7280' : (armed ? '#f5c518' : '#b8902a');
+        ctx.lineWidth = armed ? 3 : 2;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.stroke(); }
+        else ctx.strokeRect(bx0, by0, bs, bs);
+        // Uses left, drawn boldly so the remaining count reads at a glance.
+        ctx.fillStyle = spent ? '#9aa3b0' : '#f3e3b0';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`${uses}`, x, y + 0.5);
+        ctx.restore();
       }
     }
 

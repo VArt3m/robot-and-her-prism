@@ -63,12 +63,13 @@ If you have Node.js available, `npx serve .` also works.
 |---|---|
 | WASD / arrow keys | Move player |
 | E (brief tap) | Empty-handed: pick up the nearest object in radius. Carrying: set it down at its live preview spot (the "shadow"). In click-by-click: exit the mode |
-| E (hold ~1/3 s) while carrying | Fires the same tree as the mouse, straight to the end state (no golden arrow): click-by-click for a targeting device, the programming chooser for a programmable one, the Setup/Target menu for both |
+| E (hold ~1/3 s) while carrying a targeting device | Drops straight into click-by-click targeting (no golden arrow). Programming is no longer on this hold — it lives at a Forge (see F) |
 | Boxes | Solid and not pushable — walk around them, or carry them to move them |
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
 | Hold the mouse (or E) ~1/3 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
-| Targeting / programming a carried device | Press & hold in the operating ring — see "Targeting & programming" below |
+| Targeting a carried device | Press & hold in the operating ring — see "Targeting & programming" below |
+| F (or the panel's hidden **Program** button) | Program the carried device — opens its chooser, but only while standing in a **Forge**'s radius with uses left; each applied value spends one of that Forge's uses. **Escape** closes the menu for free |
 | Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius; a click outside the ring is just an aim and never drops |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
@@ -94,7 +95,13 @@ Beyond the connector and the box, three devices live on the field:
 - **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, once deployed with a clear shot to its single target, charges for three seconds and then recolours that target — a source, receiver, **or connector** — exactly once, destroying itself. Picking it up before the charge completes cancels it; the charge will not even begin if the shot is blocked. A recoloured connector accepts light of any colour without conflict but always re-emits its own colour.
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 
-> The carry / placement / programming **interaction tree** is live, the **jammer** disables its target for real, and the **rewirer** now charges and recolours through the light engine (recoloured connectors emit their own colour). Still pending: the mine actually counting down and exploding, and the device that washes a connector's colour back to clear.
+The **connector** is *programmable* too: at a Forge it can be **cleaned** (back to a plain relay) or **corrupted** to a fixed colour — the same locked-colour state a fired rewirer leaves (it then emits that colour regardless of what comes in, never dying on a conflict).
+
+There is also one stationary fixture:
+
+- **Forge** — *not carriable.* A programming station: stand within its (generous) radius carrying a programmable device and press **F** (or the panel's Program button) to open its chooser. Each Forge has a limited number of uses, shown on its icon; an applied value spends one, and at zero the Forge grays out, spent. It is **material** — it occludes light and blocks movement like any solid object.
+
+> The carry / placement / targeting **interaction** is live, programming is now gated behind the **Forge**, the **jammer** disables its target for real, and the **rewirer** charges and recolours through the light engine. The Forge also cleans/corrupts connectors (so the old standalone "uncolour" device is unneeded). Still pending: the mine actually counting down and exploding.
 
 ## Tool panel
 
@@ -110,6 +117,9 @@ header chevron collapses it vertically. The controls are:
   whose rays stop on whatever that item cannot pass). Equivalent to holding
   **Space**, with the same invert-while-held behaviour.
 - **Targeting** — enter or leave click-by-click targeting of the carried device.
+- **Program** — *hidden* until programming is actually available (a programmable
+  item carried within a Forge's range); then it appears and, like **F**, summons
+  the programming chooser.
 - **Reset** — press and hold for 2 s to rebuild the whole playfield (same as
   holding **R**).
 - **Undo** — rewind one step (up to 6; same as **Z**).
@@ -121,7 +131,7 @@ then fades back the moment the conflict is resolved.
 
 ## Targeting & programming
 
-A brief click while carrying just **drops** the item (inside the ring). To target or program a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to the end state** (no arrow).
+A brief click while carrying just **drops** the item (inside the ring). To target a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to click-by-click** (no arrow). Programming is summoned separately, at a Forge — see below.
 
 **The targeting interaction is one shared framework**, identical for every object that can have targets — you never learn it twice. Any such object follows the same core:
 
@@ -136,4 +146,6 @@ What differs per object is *only* its data, declared in one spec in `js/sim/targ
 - **Jammer** — one intent; targets a force field or a jammable node; the arrow sets the single target.
 - **Rewirer** — one intent; targets a source / receiver / connector; the arrow sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
 
-Programmable devices add a programming step on top, and it is **its own shared framework** (`js/sim/programming.js`): a long press on a carried programmable device always summons a chooser menu, and picking a value sets one of its fields. Only the menu *contents* differ per object, declared in one spec — the mine's spec offers fuse seconds, the rewirer's offers a colour; a future device could offer, say, a movement axis. A device that is both programmable and targeting (the rewirer) gets a **Setup / Target** menu that routes into whichever framework you pick. To add a new programmable object, give its type `programmable: true` and add one spec entry (plus its menu/flash strings) — the core does not change. (`test_programming.mjs` enforces that every `programmable` kind has a conforming spec, and `test_targeting.mjs` does the same for targeting.)
+Programmable devices add a programming step on top, and it is **its own shared framework** (`js/sim/programming.js`): picking a value sets one of the device's fields. Only the menu *contents* differ per object, declared in one spec — the mine's offers fuse seconds, the rewirer's a colour, the connector's clean-or-corrupt; a future device could offer, say, a movement axis. To add a new programmable object, give its type `programmable: true` and add one spec entry (plus its menu/flash strings) — the core does not change. (`test_programming.mjs` enforces that every `programmable` kind has a conforming spec, and `test_targeting.mjs` does the same for targeting.)
+
+**Where programming happens has changed: it is gated behind Forges.** A long press no longer opens any programming menu — that hold is targeting-only now. Instead, carry a programmable device into a **Forge**'s radius and press **F** (or the panel's hidden **Program** button) to summon its chooser. Each *applied* value spends one of that Forge's limited uses; **Escape** closes the menu without spending anything. When a Forge's uses reach zero it grays out and is spent. A Forge is a stationary, material fixture (it occludes light and blocks movement), so where it sits is itself part of the puzzle.

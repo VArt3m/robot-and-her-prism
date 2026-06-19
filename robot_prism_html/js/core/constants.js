@@ -15,6 +15,13 @@ export const DWELL_THRESH = 0.5;
 export const SPEED = 150.0;
 export const TICK = 0.033;
 export const CONNECT_REACH = 37;
+// Forge: a stationary programming station. Its body half-extent (it occludes /
+// blocks like other material objects), its generous activation radius (at least
+// thrice the robot's CONNECT_REACH so it reads as an area, not a touch), and the
+// number of times its menu may be used before it grays out.
+export const FORGE_R = 16;
+export const FORGE_REACH = CONNECT_REACH * 3;
+export const FORGE_USES_DEFAULT = 3;
 export const CUT_LINGER = 0.33;
 export const CROSSING_CUT_INSTANT = false;
 export const RECOLOR_DELAY = 3.0;   // seconds a deployed rewirer must hold a clear shot before it fires

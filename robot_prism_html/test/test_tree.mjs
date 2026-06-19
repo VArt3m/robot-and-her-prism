@@ -1,6 +1,7 @@
-// Phase-2 state-machine test: the annulus press-and-hold targeting/programming
-// tree. Drives the gesture timers directly (back-dating press/aim timestamps)
-// and asserts each branch of the tree. Run: node test_tree.mjs
+// State-machine test: the annulus press-and-hold gesture (now TARGETING-only —
+// programming was decoupled to the Forge) plus the Forge programming gateway.
+// Drives the gesture timers directly (back-dating press/aim timestamps) and
+// asserts each branch. Run: node test_tree.mjs
 import { dist } from '../js/core/geometry.js';
 import { CONNECT_REACH } from '../js/core/constants.js';
 import { targetSpec } from '../js/sim/targeting.js';
@@ -79,18 +80,17 @@ ok(app.uiState.targeting === null && app.uiState.menu === null && !app._drag.act
    'A: nothing happens — no targeting, no menu, no arrow');
 
 // =========================================================================
-// C — programmable only (mine): opens the programming chooser.
+// C — programmable only (mine): the hold is SWALLOWED. Programming has moved to
+// the Forge (F), so a hold no longer opens a chooser — it behaves like a box.
 // =========================================================================
 clearHands();
 w.player = [430, 440];
 ok(app._pickItem({ kind: 'mine', id: 'mine_a' }), 'C: picked up the mine');
 holdInAnnulus([430, 440], [450, 440]);
 elapse(400); app._updateGestures();
-ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'program' && it.value === 5),
-   'C: programming chooser (fuse) opened');
+ok(app.uiState.menu === null && app.uiState.targeting === null && !app._drag.active,
+   'C: a hold on a programmable-only device does nothing (no chooser)');
 ok(app._aim === null && app._press.consumed, 'C: aim resolved + press consumed');
-clickMenu('5s fuse');
-ok(w.nodes['mine_a'].fuse === 5, 'C: selecting a value reprograms the fuse');
 clearHands();
 
 // =========================================================================
@@ -132,25 +132,22 @@ ok(w.carrying === 'con_c', 'B-in: still carrying after the exit click');
 clearHands();
 
 // =========================================================================
-// D — programmable + targeting (rewirer): Setup·Target menu, both branches.
+// D — programmable + targeting (rewirer): a hold now drives TARGETING only.
+// Programming (the colour) is summoned at a Forge, so there is no Setup/Target
+// menu and no programming-first branch anymore.
 // =========================================================================
-// D with fields filled (colour=red) → decision opens the Setup/Target menu.
 clearHands();
 w.player = [520, 440];
 ok(app._pickItem({ kind: 'rewirer', id: 'rw_a' }), 'D: picked up the rewirer');
-ok(w.nodes['rw_a'].color === 'red', 'D: rewirer colour is set (not N/A)');
 holdInAnnulus([520, 440], [540, 440]);
-elapse(400); app._updateGestures();        // branch → arrow (fields filled)
-ok(app._drag.active && app._drag.kind === 'wire', 'D: arrow launched (fields filled)');
+elapse(400); app._updateGestures();        // branch → arrow
+ok(app._drag.active && app._drag.kind === 'wire', 'D: a hold launches the golden arrow');
 app.uiState.mouse = [528, 440];            // stay inside the ring
 forceDecide(); app._updateGestures();
-ok(app.uiState.menu && menuItem('Setup') && menuItem('Target'), 'D: Setup·Target menu opened');
-ok(!app._drag.active, 'D: arrow ended for the menu');
-// choose Target → click-by-click
-clickMenu('Target');
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'D: Target → click-by-click targeting');
+ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'D: in-ring decision → click-by-click');
+ok(app.uiState.menu === null, 'D: no Setup/Target menu anymore');
 // the rewirer MARKS a target it has line of sight to, but does NOT recolour
-// instantly — the recolour is deferred to deployment (phase 3/4).
+// instantly — the recolour is deferred to deployment.
 w.player = [140, 90];
 w.nodes['rw_a'].pos[0] = 140; w.nodes['rw_a'].pos[1] = 90;   // (centred on her while targeting)
 w.nodes['rw_a'].color = 'blue';
@@ -161,18 +158,15 @@ ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'D: still 
 app.uiState.targeting = null;
 clearHands();
 
-// D with a blank field (colour N/A) → programming fires first, no arrow.
+// Even with a blank colour, a hold still just targets (no programming-first).
 clearHands();
 w.player = [520, 440];
 app._pickItem({ kind: 'rewirer', id: 'rw_a' });
-w.nodes['rw_a'].color = null;              // force N/A
+w.nodes['rw_a'].color = null;              // blank — used to force a chooser
 holdInAnnulus([520, 440], [540, 440]);
 elapse(400); app._updateGestures();
-ok(app.uiState.menu && app.uiState.menu.items.some(it => it.act === 'program' && it.value === 'red'),
-   'D/NA: blank field fires the programming chooser first');
-ok(!app._drag.active, 'D/NA: no arrow when a field is blank');
-clickMenu('Green');
-ok(w.nodes['rw_a'].color === 'green', 'D/NA: colour chooser sets the colour');
+ok(app._drag.active && app._drag.kind === 'wire', 'D/blank: a hold still launches the arrow');
+ok(app.uiState.menu === null, 'D/blank: no programming chooser from a hold');
 clearHands();
 
 // =========================================================================
@@ -268,23 +262,23 @@ eTap();
 ok(app.uiState.targeting === null, 'E: a brief E exits click-by-click');
 ok(w.carrying === 'con_c', 'E: still carrying after the exit tap');
 
-// programmable only (mine) → programming chooser
+// programmable only (mine) → swallowed (programming moved to the Forge)
 clearHands();
 w.player = [430, 440];
 app._pickItem({ kind: 'mine', id: 'mine_a' });
 eHold();
-ok(app.uiState.menu && app.uiState.menu.items.every(it => it.act === 'program'), 'E/C: hold opens the fuse chooser');
-app.uiState.menu = null;
+ok(app.uiState.menu === null && app.uiState.targeting === null, 'E/C: an E hold on a programmable-only device does nothing');
+clearHands();
 
-// both (rewirer, filled) → Setup/Target menu
+// both (rewirer) → click-by-click targeting (the reqT path)
 clearHands();
 w.player = [520, 440];
 app._pickItem({ kind: 'rewirer', id: 'rw_a' });
 w.nodes['rw_a'].color = 'red';
 eHold();
-ok(app.uiState.menu && app.uiState.menu.items.some(i => i.act === 'setup') && app.uiState.menu.items.some(i => i.act === 'target'),
-   'E/D: hold opens the Setup/Target menu');
-app.uiState.menu = null;
+ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'E/D: an E hold enters click-by-click targeting');
+ok(!app._drag.active, 'E/D: no golden arrow from an E hold');
+app.uiState.targeting = null;
 
 // brief E while carrying (not targeting) drops
 clearHands();
@@ -293,6 +287,59 @@ app._pickItem({ kind: 'connector', id: 'con_c' });
 eTap([w.player[0] + 15, w.player[1]]);
 ok(w.carrying === null, 'E: a brief E drops the carried item');
 clearHands(); w.links.clear();
+
+// =========================================================================
+// Forge — the only gateway to programming now. _invokeForge (F / the panel
+// button) opens the chooser for a carried programmable item ONLY within a
+// Forge's range, spends a use per applied value, and Escape closes it for free.
+// =========================================================================
+clearHands(); w.links.clear();
+const forge = w.nodes['forge_a'];
+forge.uses = 3;
+
+// Out of range → nothing opens, nothing spent.
+w.player = [100, 100];
+app._pickItem({ kind: 'mine', id: 'mine_a' });
+app._invokeForge();
+ok(app.uiState.menu === null, 'forge: out of range, F opens nothing');
+ok(forge.uses === 3, 'forge: an out-of-range F spends no use');
+clearHands();
+
+// In range with a programmable item → chooser opens, tagged with the forge.
+w.player = [forge.pos[0], forge.pos[1] - 30];   // well within FORGE_REACH
+app._pickItem({ kind: 'mine', id: 'mine_a' });
+app._invokeForge();
+ok(app.uiState.menu && app.uiState.menu.forgeId === 'forge_a', 'forge: in range, F opens the chooser tagged with the forge');
+// Escape closes it WITHOUT spending a use.
+app._handleAction('escape', performance.now());
+ok(app.uiState.menu === null && forge.uses === 3, 'forge: Escape closes the menu for free');
+// Re-open and actually pick a value → spends one use.
+app._invokeForge();
+clickMenu('5s fuse');
+ok(w.nodes['mine_a'].fuse === 5, 'forge: choosing a value programs the carried item');
+ok(forge.uses === 2, 'forge: an applied value spends one use');
+clearHands();
+
+// Connector corruption via the Forge: clean ↔ colour, the connector now being
+// "technically programmable".
+w.player = [forge.pos[0], forge.pos[1] - 30];
+w.nodes['con_c'].color = null;
+app._pickItem({ kind: 'connector', id: 'con_c' });
+ok(w.nodes['con_c'].color == null, 'forge: a fresh connector is clean (pickup never corrupts it)');
+app._invokeForge();
+clickMenu('Corrupt → Green');
+ok(w.nodes['con_c'].color === 'green', 'forge: a connector is corrupted to a colour');
+ok(forge.uses === 1, 'forge: corrupting spends a use');
+app._invokeForge();
+clickMenu('Clean');
+ok(w.nodes['con_c'].color == null, 'forge: a connector is cleaned back to a plain relay');
+ok(forge.uses === 0, 'forge: cleaning spends the last use');
+// Spent → grays out: opens nothing.
+app._invokeForge();
+ok(app.uiState.menu === null, 'forge: a spent Forge opens nothing');
+clearHands(); w.links.clear();
+w.nodes['con_c'].color = null;            // leave con_c clean for later sections
+forge.uses = 3;
 
 // =========================================================================
 // Jammer targeting — the two paths the player actually uses.

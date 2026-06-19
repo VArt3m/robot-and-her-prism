@@ -70,6 +70,12 @@ export class Engine {
         for (const [s1,s2] of this._square(n.pos, r)) segs.push([s1,s2,0,n.id]);
       }
     }
+    // Forges are material fixtures: they occlude beams at every level and are
+    // never a beam endpoint, so they always block.
+    for (const f of w.forges()) {
+      const r = objType(f.kind)?.radius ?? CONN_R;
+      for (const [s1,s2] of this._square(f.pos, r)) segs.push([s1,s2,null,f.id]);
+    }
     if (w.player_block && w.player) {
       for (const [s1,s2] of this._square(w.player, PLAYER_R))
         segs.push([s1,s2,0,PLAYER_OWNER]);
