@@ -7,22 +7,27 @@
  *     red|green   = yellow      red|blue   = magenta     green|blue = cyan
  *     red|green|blue = white
  *
- * So every colour the engine can carry is one of seven: the three primaries, the
- * three secondaries, and white. "No light" is the absence of a colour (null), not
- * a colour here. Used by the Mixer relay (sim/relays.js) to combine its inputs.
+ * BLACK is a real, carriable colour whose mask is 0 (no RGB bits) — the additive
+ * "negative" of white. It is NOT the same as the absence of light (`null`): an
+ * emitter with nothing to emit emits `null` (no beam at all), whereas a black RAY
+ * is a real beam that happens to carry the zero colour. Because `maskColor(0)`
+ * stays `null`, generic mixing never spontaneously invents black from an empty
+ * sum; black is only produced where a device explicitly means it (the complement
+ * inverter making black from a full white). Used by relays in sim/relays.js.
  */
 
-const MASK = { red: 1, green: 2, blue: 4, yellow: 3, magenta: 5, cyan: 6, white: 7 };
+const MASK = { black: 0, red: 1, green: 2, blue: 4, yellow: 3, magenta: 5, cyan: 6, white: 7 };
 const NAME = { 1: 'red', 2: 'green', 4: 'blue', 3: 'yellow', 5: 'magenta', 6: 'cyan', 7: 'white' };
 
 export const WHITE_MASK = 7;
 
-// Colour → RGB bitmask (0 for unknown / "no light").
+// Colour → RGB bitmask (0 for black, unknown, or "no light").
 export function colorMask(c) {
   return MASK[c] ?? 0;
 }
 
-// RGB bitmask → colour name (null for 0 / out of range).
+// RGB bitmask → colour name. 0 maps to null (an EMPTY additive sum is "no light",
+// not black — black is only ever emitted explicitly, never derived from a 0 sum).
 export function maskColor(m) {
   return NAME[m] ?? null;
 }

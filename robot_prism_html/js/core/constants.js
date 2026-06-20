@@ -31,13 +31,13 @@ export const COLORS = {
   red: '#e23b3b', green: '#27a838', blue: '#2b5cd6',
   yellow: '#e8c020', cyan: '#1fb6c4', magenta: '#c43fb0',
   orange: '#e07b2a', tan: '#d9c79a', purple: '#8e44ad',
-  white: '#f3f3f6',
+  white: '#f3f3f6', black: '#16161e',
 };
 
 export const DIM = {
   red: '#7a3030', green: '#2f5a36', blue: '#34406e',
   yellow: '#776617', cyan: '#175c63', magenta: '#5f2356',
-  orange: '#724321', white: '#8a8a93',
+  orange: '#724321', white: '#8a8a93', black: '#0c0c12',
 };
 
 export const PALETTE = ['red', 'green', 'blue', 'yellow', 'cyan', 'magenta', 'orange'];

@@ -139,8 +139,8 @@ function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
 // ---------------------------------------------------------------------------
 // 6. The alternate 'complement' form: emits what is MISSING to make white from
 //    its combined base-colour inputs. No pair swapping. Inputs must contain more
-//    than one base colour; a full white collected → black (dark). NO input is not
-//    "received black" (black needs a real source) → dark, never white from nothing.
+//    than one base colour; a full white collected → a real BLACK ray, and a black
+//    ray received → white. NO input at all → dark (null), never black from nothing.
 // ---------------------------------------------------------------------------
 {
   const comp = (incoming) => relayEmit({ kind: 'inverter', mode: 'complement', color: null }, incoming);
@@ -152,10 +152,12 @@ function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
   ok(comp(new Set(['magenta'])) === 'green', 'complement: magenta (red+blue) → green');
   ok(comp(new Set(['yellow']))  === 'blue',  'complement: yellow (red+green) → blue');
   ok(comp(new Set(['cyan']))    === 'red',   'complement: cyan (green+blue) → red');
-  // The two boundary cases.
-  ok(comp(new Set())          === null,  'complement: no input → dark (NOT white; black needs a real source)');
-  ok(comp(new Set(['white'])) === null,  'complement: white collected → black (dark, null)');
-  ok(comp(new Set(['red', 'cyan'])) === null, 'complement: inputs summing to white → black (dark)');
+  // The boundary cases. White collected → a real BLACK ray (mask 0); receiving a
+  // black ray → white. No input is NOT "received black" → dark (null, no beam).
+  ok(comp(new Set())          === null,    'complement: no input → dark (NOT black; needs a real ray/source)');
+  ok(comp(new Set(['white'])) === 'black', 'complement: white collected → a black ray');
+  ok(comp(new Set(['red', 'cyan'])) === 'black', 'complement: inputs summing to white → a black ray');
+  ok(comp(new Set(['black'])) === 'white', 'complement: receiving black → white');
   // A lone single base colour is too little (needs MORE than one) → confused/dark.
   ok(comp(new Set(['red']))   === null, 'complement: a single primary → null (needs more than one)');
   ok(comp(new Set(['green'])) === null, 'complement: a single primary (green) → null');
@@ -180,14 +182,36 @@ function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
     w.add(new Node('I', 'inverter', [300, 80], { mode: 'complement' }));
     w.toggle_link('R', 'Ca'); w.toggle_link('G', 'Cb'); w.toggle_link('B', 'Cc');
     w.toggle_link('Ca', 'I'); w.toggle_link('Cb', 'I'); w.toggle_link('Cc', 'I');
+    w.add(new Node('dn', 'connector', [460, 80]));
+    w.toggle_link('I', 'dn');
     w.solve(true);
-    ok(w.engine.emit['I'] === null, 'complement: red+green+blue collected → black (no light)');
-    ok(!w.dead_conns.has('I'), 'making black from a full white is NOT confused (deliberate dark)');
+    ok(w.engine.emit['I'] === 'black', 'complement: red+green+blue collected → a real black ray');
+    ok(!w.dead_conns.has('I'), 'making black from a full white is NOT confused (deliberate output)');
+    const [, [beams, , delivery]] = w.engine.propagate();
+    const blk = beams.map((b, k) => ({ b, del: delivery[k] })).filter(({ b }) => b.o === 'I' && b.t === 'dn');
+    ok(blk.length === 1 && blk[0].b.color === 'black' && blk[0].del === true,
+       'the black ray is a real beam that delivers downstream');
+    ok(w.engine.emit['dn'] === 'black', 'a connector relays the black ray through');
+  }
 
-    // Swap two sources off so only a lone primary reaches it → genuinely confused.
-    w.toggle_link('G', 'Cb'); w.toggle_link('B', 'Cc');
+  // Full black round trip: one complement inverter makes black from a white it
+  // collects; a second receives that black ray and emits white (complement of
+  // black), lighting a white receiver. Black is a real, carriable colour.
+  {
+    const w = new World(); w.player = null; w._uid = 1;
+    w.add(new Node('R', 'source', [0, 0],   { color: 'red' }));
+    w.add(new Node('G', 'source', [0, 80],  { color: 'green' }));
+    w.add(new Node('B', 'source', [0, 160], { color: 'blue' }));
+    w.add(new Node('A',  'inverter', [250, 80], { mode: 'complement' }));   // → black
+    w.add(new Node('B2', 'inverter', [450, 80], { mode: 'complement' }));   // black → white
+    w.add(new Node('wr', 'receiver', [650, 80], { color: 'white' }));
+    w.toggle_link('R', 'A'); w.toggle_link('G', 'A'); w.toggle_link('B', 'A');
+    w.toggle_link('A', 'B2'); w.toggle_link('B2', 'wr');
     w.solve(true);
-    ok(w.dead_conns.has('I'), 'a lone primary into a complement inverter IS confused');
+    ok(w.engine.emit['A'] === 'black', 'first inverter emits black from collected white');
+    ok(w.engine.emit['B2'] === 'white', 'second inverter, receiving black, emits white');
+    ok(!!w.engine.lit['wr'], 'the white it makes lights a white receiver');
+    ok(!w.dead_conns.has('A') && !w.dead_conns.has('B2'), 'neither inverter is confused along the way');
   }
 }
 

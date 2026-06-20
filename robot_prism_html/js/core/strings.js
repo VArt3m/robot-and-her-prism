@@ -54,7 +54,7 @@ const en = {
   colors: {
     red: 'red', green: 'green', blue: 'blue',
     yellow: 'yellow', cyan: 'cyan', magenta: 'magenta', white: 'white',
-    orange: 'orange', tan: 'tan', purple: 'purple',
+    orange: 'orange', tan: 'tan', purple: 'purple', black: 'black',
   },
 
   // Short glyphs drawn inside shapes on the canvas.

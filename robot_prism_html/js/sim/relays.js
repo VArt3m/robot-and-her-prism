@@ -37,22 +37,28 @@ export const RELAY_SPECS = {
   //          emits what is still MISSING to make white (the additive complement,
   //          7 & ~m). So a duo of primaries (a secondary) → the third, missing
   //          primary; a full white collected at the input (three primaries, or two
-  //          colours where one is a secondary, or white itself) → black, which has
-  //          no transmittable colour yet and so reads as dark (null). A lone single
-  //          base colour is too little to complement (the inputs must contain more
-  //          than one colour) → dark/confused. NO input is NOT "received black":
-  //          black is a real colour that needs a real source (the environment, not
-  //          yet implemented), so an unfed complement inverter sits DARK rather than
-  //          inventing white from nothing.
+  //          colours where one is a secondary, or white itself) → a real BLACK ray
+  //          (the additive negative of white). RECEIVING black (a black ray, mask
+  //          0) → white (the complement of black). A lone single base colour is too
+  //          little to complement (the inputs must contain more than one colour) →
+  //          confused. NO input at all is NOT "received black": black is a real
+  //          colour that needs a real ray/source, so an unfed complement inverter
+  //          sits DARK (emits nothing) rather than inventing black or white from
+  //          nothing — black only ever appears downstream of a real white.
   inverter: {
     cleanEmit: (node, incoming) => {
       if (node.mode === 'complement') {
+        if (incoming.size === 0) return null;     // truly nothing in → dark (no black from nothing)
         let m = 0;
         for (const c of incoming) m |= colorMask(c);
-        if (m === 0) return null;                // no input ≠ received black → dark
+        // m is the combined base-colour content. Black contributes no bits, so a
+        // black ray (and nothing else) leaves m === 0 even though something DID
+        // arrive — the complement of black is white. (No input was handled above.)
+        if (m === 0) return 'white';              // received black → white
         const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
-        if (bits === 1) return null;             // one base colour: needs more than one
-        return maskColor(WHITE_MASK & ~m);       // duo→missing primary; white→black(null)
+        if (bits === 1) return null;              // one base colour: needs more than one → confused
+        const comp = WHITE_MASK & ~m;
+        return comp === 0 ? 'black' : maskColor(comp);   // full white collected → BLACK ray; duo → missing primary
       }
       // 'swap' (the original form): swap within the colour pair.
       if (incoming.size !== 1) return null;
