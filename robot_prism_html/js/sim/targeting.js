@@ -113,6 +113,7 @@ export const TARGET_SPECS = {
   // character-drag does the same as a convenience.
   connector: WIRE_SPEC(),
   inverter:  WIRE_SPEC(),
+  mixer:     WIRE_SPEC(),
 
   // Rewirer — holds one intent (re-marking overwrites). With a clear shot (the
   // rewirer ray profile) it recolours a source, receiver, or connector after a

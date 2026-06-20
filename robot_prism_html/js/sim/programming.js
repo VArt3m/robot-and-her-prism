@@ -63,6 +63,22 @@ export const PROGRAM_SPECS = {
     ],
   },
 
+  // Mixer — corruption (as any relay) PLUS its form: 'blend' (add two primaries)
+  // or 'whiten' (make white). Both facets share one chooser.
+  mixer: {
+    facets: [
+      COLOR_CORRUPTION_FACET,
+      {
+        field: 'mode',
+        default: 'blend',
+        values: ['blend', 'whiten'],
+        labelKey: 'mixerMode',
+        flashKey: 'mixerModeSet',
+        live: true,
+      },
+    ],
+  },
+
   // Mine — a reprogrammable fuse, in seconds. Inert until deployed, so setting it
   // does not re-run the sim.
   mine: {

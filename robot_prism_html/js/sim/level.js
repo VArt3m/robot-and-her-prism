@@ -38,6 +38,8 @@ export function build_level() {
   w.add(new Node('con_1', 'connector', [845,590], { label:'1' }));
   // An inverter (sister of the connector): clean, swapping red↔blue by default.
   w.add(new Node('inv_a', 'inverter', [660,293], { label:'I' }));
+  // A mixer (another sister): clean, in its default 'blend' form (adds two primaries).
+  w.add(new Node('mix_a', 'mixer', [660,420], { label:'X' }));
   w.add(new Node('con_2', 'connector', [915,590], { label:'2' }));
 
   w.boxes.push([580, 500]);   // test box in the open area near the player start

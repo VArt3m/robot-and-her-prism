@@ -89,16 +89,24 @@ If you have Node.js available, `npx serve .` also works.
 
 ## Carriable devices
 
-Beyond the connector and the box, three devices live on the field:
+Beyond the connector and the box, several devices live on the field:
 
 - **Mine** — *programmable.* Carries a fuse (3 s by default, reprogrammable) that begins counting down the moment it is first set down; on zero it destroys nearby walls.
 - **Rewirer** — *programmable + targeting.* Holds a colour (red by default, or green/blue) and, once deployed with a clear shot to its single target, charges for three seconds and then recolours that target — a source, receiver, **or relay** — exactly once, destroying itself. Picking it up before the charge completes cancels it; the charge will not even begin if the shot is blocked. A recoloured relay accepts light of any colour without conflict but always re-emits its own colour.
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 - **Inverter** — *programmable + targeting; a "sister" of the connector.* A clean inverter knows a colour **pair** (red↔blue by default) and swaps within it: in-pair light comes out as the **other** half. It is confused — and goes dark — by no light, two colours at once, or a single colour outside its pair. It wires light, rides on boxes, presses buttons and is recoloured exactly like a connector; at a Forge it can be cleaned/corrupted *and* reprogrammed to another pair (red↔green, blue↔green). A **corrupted** inverter behaves just like a corrupted connector (emits its locked colour on any input, never confused).
 
-Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection (each node is ranked by its link-distance from a source, and a higher-rank node won't send light to a lower-rank one it is already fed by). Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. This lets an inverter feed another relay without confusing itself.
+- **Mixer** — *programmable + targeting; another "sister."* Where a connector relays one colour, a mixer **combines** what it receives — so a single colour always confuses it. It has two forms, switchable at a Forge:
+  - **Blend** (default) — sums everything it receives and succeeds only when the result is a **secondary** (exactly two of the three primaries present). So two distinct primaries make their secondary (red+green→**yellow**, red+blue→**magenta**, green+blue→**cyan**); a lone secondary is **retranslated** unchanged; and a secondary plus a primary already inside it stays that secondary. It is confused by a single primary, by white, and by anything that sums all the way to white (the missing primary, a complementary primary+secondary, two secondaries, …).
+  - **Make white** — tries to build **white** from whatever arrives, primary or secondary. It succeeds exactly when the inputs together cover all three primaries (e.g. red+green+blue, or red+cyan, or yellow+blue, or incoming white) and then radiates white like a source; otherwise it is confused. This form does nothing but white.
 
-The **connector** and **inverter** are *programmable* too: at a Forge a relay can be **cleaned** (back to a plain relay) or **corrupted** to a fixed colour — the same locked-colour state a fired rewirer leaves (it then emits that colour regardless of what comes in, never dying on a conflict).
+  Wiring, boxes, buttons, recolour and corruption work as for any relay. Because a mixer must *consume* its feeders, place it **downstream** of them (a higher rank); a mixer that is the same rank as a relay it is wired to are peers that split rather than feed (see directionality below).
+
+  This expands the palette to seven colours — the three primaries, the three secondaries, and white.
+
+Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection (each node is ranked by its link-distance from a source, and a higher-rank node won't send light to a lower-rank one it is already fed by). Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. Two relays of the **same rank** are peers: on a clear link each beam stops at the **midpoint** and feeds neither end (the ray splits), *unless* both ends carry the **same colour**, in which case there is nothing to clash over and the ray simply connects. This lets an inverter feed another relay without confusing itself, and keeps mixer chains stable.
+
+The **connector**, **inverter** and **mixer** are *programmable* too: at a Forge a relay can be **cleaned** (back to a plain relay) or **corrupted** to a fixed colour — the same locked-colour state a fired rewirer leaves (it then emits that colour regardless of what comes in, never dying on a conflict).
 
 There is also one stationary fixture:
 

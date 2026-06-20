@@ -19,6 +19,8 @@
  * kind emits (or null for "dark / confused").
  */
 
+import { colorMask, maskColor, WHITE_MASK } from './colormix.js';
+
 export const RELAY_SPECS = {
   // Connector — a plain relay: pass a single incoming colour straight through;
   // go dark on none, or on a conflict (two or more distinct colours).
@@ -37,6 +39,32 @@ export const RELAY_SPECS = {
       const pair = node.pair || ['red', 'blue'];
       const i = pair.indexOf(c);
       return i === -1 ? null : pair[1 - i];
+    },
+  },
+
+  // Mixer — COMBINES its inputs; a single PRIMARY always confuses it (there is
+  // nothing to mix). It has two programmable forms (node.mode):
+  //   'blend'  (default) — sums (additively ORs) everything it receives and
+  //            succeeds only when that sum is a SECONDARY, i.e. exactly two of the
+  //            three primaries are present. So: two distinct primaries → their
+  //            secondary; a lone secondary → itself (retranslated); a secondary
+  //            plus a primary already inside it → that same secondary. It is
+  //            confused by a single primary (sum is one primary), by white, and by
+  //            anything whose sum reaches white (all three primaries).
+  //   'whiten' — tries to make WHITE from whatever it receives, primary or
+  //            secondary. It succeeds (emits white, and so can relay/retranslate
+  //            white) exactly when the inputs together cover all three primaries
+  //            (their additive sum is white); otherwise it is confused. This form
+  //            can produce nothing but white.
+  mixer: {
+    cleanEmit: (node, incoming) => {
+      let m = 0;
+      for (const c of incoming) m |= colorMask(c);
+      if (node.mode === 'whiten') return m === WHITE_MASK ? 'white' : null;
+      // 'blend' (the original form): the sum must be a secondary — exactly two of
+      // the three primary bits set (one primary = too little, white = too much).
+      const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+      return bits === 2 ? maskColor(m) : null;
     },
   },
 };

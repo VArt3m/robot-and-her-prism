@@ -1,6 +1,6 @@
 // kinds: source / connector / inverter / receiver / button / and / or / mine / rewirer / jammer / forge
 export class Node {
-  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null, uses = null, corrupts = true, pair = null } = {}) {
+  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null, uses = null, corrupts = true, pair = null, mode = null } = {}) {
     this.id = nid;
     this.kind = kind;
     this.pos = [pos[0], pos[1]];
@@ -12,6 +12,9 @@ export class Node {
     // every non-inverter. A clean inverter re-emits in-pair light as the other
     // half. Reprogrammable at a Forge. Order is irrelevant — it is treated as a set.
     this.pair = pair;
+    // Mixer: which form it is in — 'blend' (add two primaries) or 'whiten' (make
+    // white); null for every non-mixer. Reprogrammable at a Forge.
+    this.mode = mode;
     // Forge: remaining programming-menu uses; null for everything else.
     this.uses = uses;
     // Forge: whether this station may CORRUPT (lock a colour onto a connector /

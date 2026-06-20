@@ -173,7 +173,7 @@ export class App {
       // a programmed fuse, the spent flag (a fired rewirer), and a Forge's
       // remaining uses. Capturing these makes recolour, fuse edits, corruption,
       // pair reprogramming, rewirer firing, and Forge spending all undoable.
-      nodeState[id] = { color: n.color, pair: n.pair ? [...n.pair] : null, fuse: n.fuse, spent: !!n.spent, uses: n.uses };
+      nodeState[id] = { color: n.color, pair: n.pair ? [...n.pair] : null, mode: n.mode, fuse: n.fuse, spent: !!n.spent, uses: n.uses };
     }
     return {
       player: w.player ? [...w.player] : null,
@@ -216,6 +216,7 @@ export class App {
       if (n) {
         n.color = s.nodeState[id].color; n.fuse = s.nodeState[id].fuse;
         n.pair = s.nodeState[id].pair ? [...s.nodeState[id].pair] : null;
+        n.mode = s.nodeState[id].mode ?? n.mode;
         n.spent = !!s.nodeState[id].spent; n.uses = s.nodeState[id].uses;
       }
     }
@@ -1582,6 +1583,12 @@ export class App {
         const emit = w.emit[node.id] ?? null;
         const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
         lines = T.inverter(emit, links, w._conn_elevated(node.id), node.color, node.pair);
+        break;
+      }
+      case 'mixer': {
+        const emit = w.emit[node.id] ?? null;
+        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        lines = T.mixer(emit, links, w._conn_elevated(node.id), node.color, node.mode);
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;

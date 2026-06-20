@@ -120,6 +120,22 @@ function beamsBetween(w, x, y) {
   const r = w.engine._linkRanks();
   ok(r.get('A') === 1 && r.get('B') === 1, 'A and B are the same rank');
   ok(beamsBetween(w, 'A', 'B').join() === 'A->B,B->A', 'same-rank clear link → both directions radiate');
+
+  // Same rank but the SAME colour on both sides: nothing to clash over, so the
+  // ray simply connects (full length, delivers across) rather than splitting.
+  const w3 = new World(); w3.player = null; w3._uid = 1;
+  w3.add(new Node('r1', 'source',    [0, 0],   { color: 'red' }));
+  w3.add(new Node('r2', 'source',    [400, 0], { color: 'red' }));
+  w3.add(new Node('A',  'connector', [100, 0]));
+  w3.add(new Node('B',  'connector', [300, 0]));
+  w3.toggle_link('r1', 'A'); w3.toggle_link('r2', 'B'); w3.toggle_link('A', 'B');
+  w3.solve(true);
+  const [, [b3, l3, d3]] = w3.engine.propagate();
+  const ab3 = b3.map((b, k) => ({ b, len: l3[k], del: d3[k] }))
+    .filter(({ b }) => (b.o === 'A' && b.t === 'B') || (b.o === 'B' && b.t === 'A'));
+  ok(ab3.length === 2 && ab3.every(({ b, len }) => Math.abs(len - b.dl) < 1e-6),
+     'same-rank, SAME colour → beams run the FULL length (no midpoint split)');
+  ok(ab3.every(({ del }) => del === true), 'same-rank same colour → the ray connects (delivers across)');
 }
 
 // ===========================================================================
