@@ -4,7 +4,7 @@ import {
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist } from '../core/geometry.js';
 import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
-import { isRelayKind, relayEmit } from './relays.js';
+import { isRelayKind, relayEmit, relayConfused } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
@@ -300,9 +300,7 @@ export class Engine {
     }
     const dead = new Set();
     for (const id in inc) {
-      const nd = w.nodes[id];
-      if (nd?.color) continue;                 // corrupted relays never die
-      if (inc[id].size >= 1 && this._relay_emit(id, inc[id]) === null) dead.add(id);
+      if (relayConfused(w.nodes[id], inc[id])) dead.add(id);
     }
     return dead;
   }

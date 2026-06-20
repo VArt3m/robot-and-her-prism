@@ -61,6 +61,21 @@ export const RELAY_SPECS = {
       const i = pair.indexOf(c);
       return i === -1 ? null : pair[1 - i];
     },
+    // When is a DARK output an error vs. a deliberate "black"? For the swap form,
+    // dark while lit is always confusion (the default). For the complement form,
+    // ONLY a lone single base colour is an error ("needs more than one"); a full
+    // white collected at the input is a deliberate black output, NOT confusion —
+    // so the device must not show the confused mark when it makes black from white.
+    isConfused: (node, incoming) => {
+      if (node.mode === 'complement') {
+        let m = 0;
+        for (const c of incoming) m |= colorMask(c);
+        const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+        return bits === 1;   // lone primary only; white(3 bits)→black is deliberate
+      }
+      // swap form: dark while lit = confused (the default rule).
+      return RELAY_SPECS.inverter.cleanEmit(node, incoming) === null;
+    },
   },
 
   // Mixer — COMBINES its inputs; a single PRIMARY always confuses it (there is
@@ -107,4 +122,18 @@ export function relayEmit(node, incoming) {
   if (node.color) return incoming.size >= 1 ? node.color : null;
   const spec = RELAY_SPECS[node.kind];
   return spec ? spec.cleanEmit(node, incoming) : null;
+}
+
+// Is this relay in a CONFUSED (error) state — the dotted-link "dead" mark — given
+// its delivered incoming colours? A corrupted relay never dies; an unlit one is
+// merely idle, not confused. Otherwise a spec may define `isConfused` to separate
+// a genuine error from a DELIBERATE dark output (a complement inverter making
+// black from white emits null but is NOT confused); the default is the historical
+// rule that any dark-while-lit clean relay is confused.
+export function relayConfused(node, incoming) {
+  if (!node || node.color) return false;       // corrupted relays never die
+  if (incoming.size === 0) return false;       // unlit is idle, not confused
+  const spec = RELAY_SPECS[node.kind];
+  if (!spec) return false;
+  return spec.isConfused ? spec.isConfused(node, incoming) : spec.cleanEmit(node, incoming) === null;
 }

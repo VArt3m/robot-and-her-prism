@@ -165,6 +165,30 @@ function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
   // Corruption still wins over the form: a locked colour emits on any input.
   ok(relayEmit({ kind: 'inverter', mode: 'complement', color: 'red' }, new Set(['white'])) === 'red',
      'complement + corruption → the locked colour, regardless of form');
+
+  // White collected at a complement inverter → BLACK output, and it is NOT confused
+  // (a deliberate dark output, not an error). A lone primary, by contrast, IS
+  // confused. Through the full solver so the dead/confused map is exercised.
+  {
+    const w = new World(); w.player = null; w._uid = 1;
+    w.add(new Node('R', 'source', [0, 0],   { color: 'red' }));
+    w.add(new Node('G', 'source', [0, 80],  { color: 'green' }));
+    w.add(new Node('B', 'source', [0, 160], { color: 'blue' }));
+    w.add(new Node('Ca', 'connector', [120, 0]));
+    w.add(new Node('Cb', 'connector', [120, 80]));
+    w.add(new Node('Cc', 'connector', [120, 160]));
+    w.add(new Node('I', 'inverter', [300, 80], { mode: 'complement' }));
+    w.toggle_link('R', 'Ca'); w.toggle_link('G', 'Cb'); w.toggle_link('B', 'Cc');
+    w.toggle_link('Ca', 'I'); w.toggle_link('Cb', 'I'); w.toggle_link('Cc', 'I');
+    w.solve(true);
+    ok(w.engine.emit['I'] === null, 'complement: red+green+blue collected → black (no light)');
+    ok(!w.dead_conns.has('I'), 'making black from a full white is NOT confused (deliberate dark)');
+
+    // Swap two sources off so only a lone primary reaches it → genuinely confused.
+    w.toggle_link('G', 'Cb'); w.toggle_link('B', 'Cc');
+    w.solve(true);
+    ok(w.dead_conns.has('I'), 'a lone primary into a complement inverter IS confused');
+  }
 }
 
 // ---------------------------------------------------------------------------
