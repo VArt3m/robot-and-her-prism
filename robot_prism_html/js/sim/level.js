@@ -38,16 +38,19 @@ export function build_level() {
   w.add(new Node('con_1', 'connector', [845,590], { label:'1' }));
   // An inverter (sister of the connector): clean, swapping red↔blue by default.
   w.add(new Node('inv_a', 'inverter', [660,293], { label:'I' }));
-  // A mixer (another sister): clean, in its default 'blend' form (adds two primaries).
-  w.add(new Node('mix_a', 'mixer', [660,420], { label:'X' }));
   w.add(new Node('con_2', 'connector', [915,590], { label:'2' }));
 
   w.boxes.push([580, 500]);   // test box in the open area near the player start
 
-  // Programmable / targeting devices (phase 1: real, carriable, placeable).
+  // Programmable / targeting devices (phase 1: real, carriable, placeable) — a
+  // cluster near the player start to pick up and try.
   w.add(new Node('mine_a', 'mine',    [430, 440], { fuse: 3 }));
   w.add(new Node('rw_a',   'rewirer', [520, 440], { color: 'red' }));
   w.add(new Node('jam_a',  'jammer',  [470, 380]));
+  // A mixer (another relay sister): clean, in its default 'blend' form (sums its
+  // inputs to a secondary). Sits with the other gadgets so it's easy to grab,
+  // wire to two colours, and test — reprogram it to 'whiten' at a Forge.
+  w.add(new Node('mix_a',  'mixer',   [590, 380], { label:'X', mode:'blend' }));
 
   // Two Forges, bottom-centre, clear of the existing beams. forge_a is a normal
   // (corrupting) station; forge_b is clean-only (corrupts:false) — it can strip a
