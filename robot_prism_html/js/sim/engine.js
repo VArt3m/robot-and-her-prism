@@ -88,6 +88,36 @@ export class Engine {
     return this._leveled_blockers().map(([p1,p2]) => [p1,p2]);
   }
 
+  // Source-distance RANK of every emitting node, by breadth-first search over the
+  // LINK graph (purely topological — walls are irrelevant here). Sources are 0,
+  // relays linked to a source are 1, relays linked to those are 2, and so on; the
+  // shortest link-path wins. Receivers are sinks (never forward), and a carried
+  // relay is inert, so neither propagates rank. Unreached relays are absent from
+  // the map (treated as +Infinity). Used to make light directional: it flows from
+  // lower rank to higher, never back upstream along a connection that is complete.
+  _linkRanks() {
+    const w = this.world;
+    const adj = new Map();
+    for (const [a, b] of w.links_pairs) {
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a).push(b); adj.get(b).push(a);
+    }
+    const rank = new Map();
+    const queue = [];
+    for (const n of Object.values(w.nodes))
+      if (n.kind === 'source') { rank.set(n.id, 0); queue.push(n.id); }
+    for (let head = 0; head < queue.length; head++) {
+      const u = queue[head], ru = rank.get(u);
+      for (const v of (adj.get(u) || [])) {
+        if (rank.has(v) || v === w.carrying) continue;
+        const nv = w.nodes[v];
+        if (nv && isRelayKind(nv.kind)) { rank.set(v, ru + 1); queue.push(v); }
+      }
+    }
+    return rank;
+  }
+
   beam_level(o, t) {
     const w = this.world;
     return (w._conn_elevated(o) || w._conn_elevated(t)) ? 1 : 0;
@@ -107,6 +137,8 @@ export class Engine {
   _beams_and_cross(emit) {
     const w = this.world;
     const blockers = this._leveled_blockers();
+    const rank = this._linkRanks();
+    const RANK = id => (rank.has(id) ? rank.get(id) : Infinity);
     const beams = [];
     for (const [a, b] of w.links_pairs) {
       for (const [o, t] of [[a,b],[b,a]]) {
@@ -128,6 +160,13 @@ export class Engine {
         const bt_mat = first_block_t(O, T, blk_mat);
         const hard = bt === null ? dl : bt * dl;
         const hard_mat = bt_mat === null ? dl : bt_mat * dl;
+        // Directional law: light flows from a lower rank to a higher one, never
+        // back. So a higher→lower beam is suppressed WHEN the connection is
+        // complete — i.e. nothing material stands between them (hard_mat reaches).
+        // With a wall between, the connection is incomplete and BOTH ends radiate
+        // at it (no suppression). Same-rank / unreached pairs are never suppressed.
+        const clear = hard_mat >= dl - 1e-6;
+        if (clear && RANK(o) > RANK(t)) continue;
         const dx = (T[0]-O[0])/dl, dy = (T[1]-O[1])/dl;
         beams.push({ o, t, color: emit[o], O, T, dl, hard, hard_mat, level, dx, dy });
       }
@@ -148,6 +187,24 @@ export class Engine {
         if (EPS < tA && tA < 1-EPS && EPS < tB && tB < 1-EPS)
           cross.push([i, j, tA*bi.hard, tB*bj.hard]);
       }
+    }
+    // Head-on clash. Two SAME-RANK relays linked on a clear path each fire a beam
+    // at the other (the directional law suppresses neither) — so two opposing,
+    // collinear beams share the segment. They must NOT pass through and confuse
+    // each other; they meet head-on at the midpoint and stop, splitting the ray
+    // (each half keeps its own colour) and delivering to neither end. A wall
+    // between already cuts both short, so this only matters on a clear link.
+    const beamIndex = new Map();
+    for (let k = 0; k < beams.length; k++) beamIndex.set(beams[k].o + '\x00' + beams[k].t, k);
+    for (const [a, b] of w.links_pairs) {
+      if (RANK(a) !== RANK(b)) continue;                 // equal priority only
+      const i = beamIndex.get(a + '\x00' + b);
+      const j = beamIndex.get(b + '\x00' + a);
+      if (i == null || j == null) continue;              // both ends must be firing
+      const bi = beams[i];
+      if (bi.hard_mat < bi.dl - 1e-6) continue;          // clear path only
+      const mid = bi.dl / 2;
+      cross.push([i, j, mid, mid]);
     }
     return [beams, cross];
   }

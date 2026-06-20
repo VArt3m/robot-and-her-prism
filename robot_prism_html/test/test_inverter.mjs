@@ -118,20 +118,22 @@ function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
   ok(isRelay('connector'), 'connector is still a relay kind');
   ok(!isRelay('mine') && !isRelay('rewirer') && !isRelay('jammer'), 'devices are not relays');
 
-  // A link may attach to an inverter exactly like a connector. (Note: because
-  // links are UNDIRECTED, an inverter's output flows back along the same link —
-  // so an inverter feeds a *terminal* receiver, not another relay it would then
-  // conflict with. That is a property of the link model, not the inverter.)
+  // A link may attach to an inverter exactly like a connector, and — now that
+  // light is directional (see test_directional.mjs) — an inverter can feed
+  // another relay: its inverted output flows downstream and does NOT loop back to
+  // confuse it. Chain: source → inverter(1) → connector(2) → receiver.
   const w = new World(); w.player = null; w._uid = 1;
-  w.add(new Node('rs', 'source',   [0, 0],    { color: 'red' }));
-  w.add(new Node('I',  'inverter', [150, 0],  { pair: ['red', 'blue'] }));
-  w.add(new Node('br', 'receiver', [300, 0],  { color: 'blue' }));
-  w.add(new Node('rr', 'receiver', [300, 80], { color: 'red' }));
-  w.toggle_link('rs', 'I'); w.toggle_link('I', 'br'); w.toggle_link('I', 'rr');
+  w.add(new Node('rs', 'source',    [0, 0],   { color: 'red' }));
+  w.add(new Node('I',  'inverter',  [150, 0], { pair: ['red', 'blue'] }));
+  w.add(new Node('C',  'connector', [300, 0]));
+  w.add(new Node('br', 'receiver',  [450, 0], { color: 'blue' }));
+  w.toggle_link('rs', 'I'); w.toggle_link('I', 'C'); w.toggle_link('C', 'br');
   ok(w.links.size === 3, 'links wire onto an inverter just like a connector');
   w.solve(true);
-  ok(w.engine.emit['I'] === 'blue', 'red source through the inverter emits blue');
-  ok(!!w.engine.lit['br'] && !w.engine.lit['rr'], 'only the blue receiver lights — the inverted colour delivered');
+  ok(w.engine.emit['I'] === 'blue' && w.engine.emit['C'] === 'blue',
+     'inverted blue flows downstream through a connector (no upstream feedback)');
+  ok(!!w.engine.lit['br'], 'the blue receiver at the end of the chain lights');
+  ok(!w.dead_conns.has('I'), 'the inverter is not confused by its own downstream output');
 }
 
 console.log(`\ninverter tests: ${pass} passed, ${fail} failed`);

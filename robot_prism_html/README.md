@@ -96,6 +96,8 @@ Beyond the connector and the box, three devices live on the field:
 - **Jammer** — *targeting only.* With line of sight it freezes a force field or a deployed mine; its effect is live only while the jammer itself is on the ground.
 - **Inverter** — *programmable + targeting; a "sister" of the connector.* A clean inverter knows a colour **pair** (red↔blue by default) and swaps within it: in-pair light comes out as the **other** half. It is confused — and goes dark — by no light, two colours at once, or a single colour outside its pair. It wires light, rides on boxes, presses buttons and is recoloured exactly like a connector; at a Forge it can be cleaned/corrupted *and* reprogrammed to another pair (red↔green, blue↔green). A **corrupted** inverter behaves just like a corrupted connector (emits its locked colour on any input, never confused).
 
+Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection (each node is ranked by its link-distance from a source, and a higher-rank node won't send light to a lower-rank one it is already fed by). Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. This lets an inverter feed another relay without confusing itself.
+
 The **connector** and **inverter** are *programmable* too: at a Forge a relay can be **cleaned** (back to a plain relay) or **corrupted** to a fixed colour — the same locked-colour state a fired rewirer leaves (it then emits that colour regardless of what comes in, never dying on a conflict).
 
 There is also one stationary fixture:

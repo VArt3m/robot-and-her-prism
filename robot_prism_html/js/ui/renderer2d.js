@@ -360,6 +360,54 @@ export class Renderer2D {
       ctx.setLineDash([]);
     }
 
+    // Forge control-zone overlay. While carrying a programmable item within reach
+    // of a live Forge, show every live Forge's reach so the player can read where
+    // programming is available — with the OVERLAP of two zones carved OUT as an
+    // unfilled hole (not a special colour; the exclusion isn't painted, just not
+    // enclosed as usable). Each zone keeps its warm/cool tint; the Forge the
+    // player can actually use right now reads brighter.
+    {
+      const ck = w.carrying ? w.nodes[w.carrying]?.kind : null;
+      const live = (ck && objType(ck)?.programmable)
+        ? w.forges().filter(f => (f.uses ?? 0) > 0) : [];
+      const R = FORGE_REACH;
+      const nearby = w.player && live.some(f => dist(w.player, f.pos) < R);
+      if (live.length && nearby) {
+        const sole = live.filter(f => dist(w.player, f.pos) < R).length === 1;
+        // Faint fill of each zone MINUS the other live zones, so the shared lens
+        // stays empty. (Clip to this disk, then clip away each other disk.)
+        for (const f of live) {
+          const cool = f.corrupts === false;
+          ctx.save();
+          ctx.beginPath(); ctx.arc(f.pos[0], f.pos[1], R, 0, 2 * Math.PI); ctx.clip();
+          for (const g of live) {
+            if (g === f) continue;
+            ctx.beginPath();
+            ctx.rect(-R, -R, WORLD_W + 2 * R, WORLD_H + 2 * R);
+            ctx.arc(g.pos[0], g.pos[1], R, 0, 2 * Math.PI);
+            ctx.clip('evenodd');
+          }
+          ctx.fillStyle = cool ? 'rgba(127,147,166,0.06)' : 'rgba(245,197,24,0.06)';
+          ctx.fillRect(-R, -R, WORLD_W + 2 * R, WORLD_H + 2 * R);
+          ctx.restore();
+        }
+        // Dashed contour of each full circle; the carved lens is the hole between
+        // them, bounded by both rings — so the exclusion reads without painting it.
+        ctx.setLineDash([6, 6]);
+        for (const f of live) {
+          const cool = f.corrupts === false;
+          const usable = sole && dist(w.player, f.pos) < R;
+          ctx.beginPath(); ctx.arc(f.pos[0], f.pos[1], R, 0, 2 * Math.PI);
+          ctx.strokeStyle = usable
+            ? (cool ? 'rgba(207,224,240,0.8)' : 'rgba(245,197,24,0.8)')
+            : (cool ? 'rgba(120,150,180,0.4)' : 'rgba(214,158,10,0.4)');
+          ctx.lineWidth = usable ? 1.5 : 1;
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
+    }
+
     // Nodes
     for (const n of Object.values(w.nodes)) {
       if (n.spent) continue;            // a fired (destroyed) rewirer is gone
@@ -528,22 +576,13 @@ export class Renderer2D {
         const cool = n.corrupts === false;
         const accent   = spent ? '#6b7280' : (cool ? '#7f93a6' : '#b8902a');
         const accentHi = cool ? '#cfe0f0' : '#f5c518';
-        const ringRGB  = cool ? '120, 150, 180' : '214, 158, 10';
-        const glowRGB  = cool ? '127, 147, 166' : '245, 197, 24';
-        // A programmable item carried within range lights the Forge up and draws
-        // its generous activation ring — but only where programming is actually
-        // available: not while the robot sits in another Forge's area too (the
-        // overlap cancels out), so the ring stays dark there and never lies.
+        // The reach ring (and the carved exclusion overlay) is drawn once, before
+        // the nodes — see the Forge control-zone overlay above. Here we only style
+        // the Forge icon: it brightens when programming is available at it.
         const carriedKind = w.carrying ? w.nodes[w.carrying]?.kind : null;
         const sole = w.player && w.forges().filter(f => dist(w.player, f.pos) < FORGE_REACH && (f.uses ?? 0) > 0).length === 1;
         const armed = !spent && sole && !!carriedKind && objType(carriedKind)?.programmable
           && w.player && dist(w.player, n.pos) < FORGE_REACH;
-        if (armed) {
-          ctx.beginPath(); ctx.arc(x, y, FORGE_REACH, 0, 2 * Math.PI);
-          ctx.fillStyle = `rgba(${glowRGB}, 0.06)`; ctx.fill();
-          ctx.strokeStyle = `rgba(${ringRGB}, 0.5)`; ctx.lineWidth = 1.25;
-          ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
-        }
         ctx.save();
         ctx.globalAlpha = spent ? 0.45 : 1;
         const bx0 = x - FORGE_R, by0 = y - FORGE_R, bs = 2 * FORGE_R;

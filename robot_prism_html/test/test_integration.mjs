@@ -332,6 +332,10 @@ ok(true, 'ticks ran without throwing');
   beeps = 0; app._flash = null;
   app._invokeForge();
   ok(ui.menu == null && beeps === 0 && app._flash == null, 'overlap of live areas → silent');
+  // Render in the overlap while carrying a programmable item: the carved Forge
+  // control-zone overlay (with its clip ops) must draw without throwing.
+  w.carrying = 'con_c';
+  app._draw(); ok(true, 'carved Forge-zone overlay renders in the overlap without throwing');
 
   // The tweak: a SPENT Forge has no live area, so it never blocks. Empty forge_b,
   // stand at the same midpoint: now only forge_a is live there → programming works.
