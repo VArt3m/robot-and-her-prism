@@ -41,23 +41,21 @@ const AIM_DECIDE_MS = 500;
 // inside the operating ring) pulls a connection wire instead of moving her.
 const PLAYER_GRAB_R = 11;
 
-// Stacking rules: may an object of type `carried` be set down onto a target of
+// Stacking rule: may an object of kind `carried` be set down onto a target of
 // type `onto`? Target types: 'ground', 'box' (empty), 'box+connector' (a box
-// that already carries a connector), 'connector'. The relation is one-way by
-// design — a connector may rest on a box, a box may not rest on a connector,
-// and (for now) no two connectors share a box and no connector rests on a
-// connector. Extend this table as new objects and rules are introduced.
-const STACK_RULES = {
-  connector: { ground: true,  box: true,  'box+connector': false, connector: false },
-  inverter:  { ground: true,  box: true,  'box+connector': false, connector: false },
-  box:       { ground: true,  box: false, 'box+connector': false, connector: false },
-  // The programmable / targeting devices set down on the ground only (for now).
-  mine:      { ground: true,  box: false, 'box+connector': false, connector: false },
-  rewirer:   { ground: true,  box: false, 'box+connector': false, connector: false },
-  jammer:    { ground: true,  box: false, 'box+connector': false, connector: false },
-};
+// that already carries a relay), 'connector'. The rule is derived from object
+// kind — NOT enumerated per device — so every relay (connector / inverter /
+// mixer / future sisters) and every carriable device obeys it automatically:
+//   • anything carriable rests on the ground;
+//   • a relay may additionally elevate onto an empty box;
+//   • nothing stacks onto an occupied box or directly onto another relay.
+// The relation is one-way by design (a relay may rest on a box, a box may not
+// rest on a relay), and (for now) no two relays share a box.
 function canPlace(carried, onto) {
-  return Boolean(STACK_RULES[carried] && STACK_RULES[carried][onto]);
+  if (!carried) return false;
+  if (onto === 'ground') return true;
+  if (onto === 'box') return isRelay(carried);
+  return false;  // 'box+connector' / 'connector' — no stacking (yet)
 }
 
 export class App {
@@ -1201,7 +1199,7 @@ export class App {
   }
 
   // Classify what sits under (x, y) for placement, ignoring `excludeId`.
-  // Returns { type, point } where type is one of the STACK_RULES target kinds.
+  // Returns { type, point } where type is one of the canPlace target kinds.
   _targetUnder(x, y, excludeId) {
     const w = this.world;
     let box = null, bd = BOX_R + 4;
