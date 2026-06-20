@@ -5,7 +5,7 @@
  * know about. A future renderer3d.js can sit alongside this with the same
  * interface so both can be driven from app.js simultaneously.
  */
-import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
+import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { objType } from '../sim/objects.js';
 import { isRelayKind } from '../sim/relays.js';
@@ -571,6 +571,45 @@ export class Renderer2D {
         if (carriedNow) {
           ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
           ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
+        }
+
+      } else if (n.kind === 'accumulator') {
+        const carriedNow = w.carrying === n.id;
+        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
+        const near = canPickup(n.pos);
+        const charged = !!n.color;
+        const c = COLORS[n.color] ?? '#999';
+        const r = 12;
+        const x0 = x - r, y0 = y - r, s = 2 * r;
+        // A rounded square (battery-like) marks it apart from the diamond source
+        // and round jammer. Filled with its colour when charged; white when empty.
+        ctx.fillStyle = charged ? c : '#fff';
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x0, y0, s, s, 4); ctx.fill(); }
+        else ctx.fillRect(x0, y0, s, s);
+        // Empty accumulators show a charge arc (fraction of ACCUM_FILL_SEC).
+        if (!charged) {
+          const frac = Math.max(0, Math.min(1, (w.engine.accum_charge[n.id] ?? 0) / ACCUM_FILL_SEC));
+          if (frac > 0) {
+            const ic = COLORS[w.engine.accum_in?.[n.id]] ?? '#7fb0e0';
+            ctx.beginPath();
+            ctx.arc(x, y, r - 2, -Math.PI / 2, -Math.PI / 2 + frac * 2 * Math.PI);
+            ctx.strokeStyle = ic; ctx.lineWidth = 3; ctx.setLineDash([]); ctx.stroke();
+          }
+        }
+        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : (charged ? '#222' : '#90a4ae'));
+        ctx.lineWidth = charged ? 2 : 3;
+        if (carriedNow && !targetingNow) ctx.setLineDash([2, 3]);
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x0, y0, s, s, 4); ctx.stroke(); }
+        else ctx.strokeRect(x0, y0, s, s);
+        ctx.setLineDash([]);
+        ctx.fillStyle = charged ? (n.color === 'white' || n.color === 'yellow' ? '#333' : '#fff') : '#607d8b';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(STR.glyph.accumulator, x, y);
+        if (carriedNow) {
+          ctx.fillStyle = targetingNow ? '#f5c518' : (charged ? c : '#607d8b');
+          ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
+          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y - 15);
         }
 
       } else if (n.kind === 'forge') {

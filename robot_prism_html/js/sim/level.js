@@ -50,6 +50,11 @@ export function build_level() {
   w.add(new Node('inv_b', 'inverter', [700,180], { label:'J' }));
   w.add(new Node('mix_b', 'mixer',    [680,440], { label:'Y', mode:'blend' }));
 
+  // Two accumulators (portable sources) for testing: one empty (wire a single
+  // colour to it for ~2s to charge it), one pre-charged blue.
+  w.add(new Node('acc_e', 'accumulator', [640,255], { color:null }));
+  w.add(new Node('acc_c', 'accumulator', [770,255], { color:'blue' }));
+
   w.boxes.push([580, 500]);   // test box in the open area near the player start
 
   // Programmable / targeting devices (phase 1: real, carriable, placeable) — a

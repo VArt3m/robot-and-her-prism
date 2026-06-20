@@ -25,6 +25,7 @@ export const FORGE_USES_DEFAULT = 3;
 export const CUT_LINGER = 0.33;
 export const CROSSING_CUT_INSTANT = false;
 export const RECOLOR_DELAY = 3.0;   // seconds a deployed rewirer must hold a clear shot before it fires
+export const ACCUM_FILL_SEC = 2.0;  // seconds of an uninterrupted single colour to charge an empty accumulator
 
 export const COLORS = {
   red: '#e23b3b', green: '#27a838', blue: '#2b5cd6',

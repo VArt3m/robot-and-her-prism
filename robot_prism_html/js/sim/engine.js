@@ -1,13 +1,19 @@
 import {
   EPS, PLAYER_R, BOX_R, CONN_R, BTN_R,
-  CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY,
+  CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY, ACCUM_FILL_SEC,
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist } from '../core/geometry.js';
-import { objType, kindIsJammable } from './objects.js';
+import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
 import { isRelayKind, relayEmit } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
+
+// A node that emits as a rank-0 SOURCE of its own colour: a real source, or a
+// CHARGED accumulator (a portable source). An empty accumulator emits nothing.
+function emitsAsSource(n) {
+  return n.kind === 'source' || (isAccumulatorKind(n.kind) && !!n.color);
+}
 
 export class Engine {
   constructor(world) {
@@ -35,6 +41,13 @@ export class Engine {
     // `frac` is charge / RECOLOR_DELAY; `reaches` whether the shot is currently clear.
     this.recolor_rays_draw = [];
     this._recolor_t = null;   // last timestamp the recolor charge advanced
+    // Empty-accumulator charging: accum_charge[id] = seconds of an uninterrupted
+    // single incoming colour so far; accum_in[id] = that colour (null when zero or
+    // a conflict). At ACCUM_FILL_SEC the UI commits the fill (sets the colour, drops
+    // the link). Advanced only in real-time `step`; reset by a cold `solve`.
+    this.accum_charge = {};
+    this.accum_in = {};
+    this._accum_t = null;
   }
 
   // ---- blockers ----
@@ -106,7 +119,7 @@ export class Engine {
     const rank = new Map();
     const queue = [];
     for (const n of Object.values(w.nodes))
-      if (n.kind === 'source') { rank.set(n.id, 0); queue.push(n.id); }
+      if (emitsAsSource(n)) { rank.set(n.id, 0); queue.push(n.id); }
     for (let head = 0; head < queue.length; head++) {
       const u = queue[head], ru = rank.get(u);
       for (const v of (adj.get(u) || [])) {
@@ -175,9 +188,17 @@ export class Engine {
         // mutual cut needing both ends lit) keeps the clash stable — a lit peer
         // still only reaches halfway whether or not the other is lit — so no
         // feedback loop can form (e.g. a mixer that consumes a same-rank relay).
+        // The cap is a clash between two opposing emitters. The TARGET counts as a
+        // clash peer when it emits a beam back (`emit[t] != null` — a source, a
+        // charged accumulator, or a lit relay) OR is a relay (which could emit, and
+        // must still cap even while dark to block feedback). A pure sink — a
+        // receiver, or an EMPTY accumulator charging up — emits nothing back and so
+        // is no peer: its beam runs full length and delivers (a source-less emitter
+        // must light a receiver; a source must fill an accumulator).
         let H = hard, HM = hard_mat;
         const sameColour = emit[o] != null && emit[o] === emit[t];
-        if (clear && RANK(o) === RANK(t) && !sameColour) { H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2); }
+        const peer = emit[t] != null || isRelayKind(nt.kind);
+        if (clear && RANK(o) === RANK(t) && peer && !sameColour) { H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2); }
         const dx = (T[0]-O[0])/dl, dy = (T[1]-O[1])/dl;
         beams.push({ o, t, color: emit[o], O, T, dl, hard: H, hard_mat: HM, level, dx, dy });
       }
@@ -226,7 +247,7 @@ export class Engine {
       .map(n => n.id);
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
-      emit[nid] = nd.kind === 'source' ? nd.color : null;
+      emit[nid] = emitsAsSource(nd) ? nd.color : null;   // sources + charged accumulators
     let last = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
       const [beams, length, delivery] = this.resolve(emit);
@@ -509,6 +530,58 @@ export class Engine {
     this.recolor_rays_draw = out;
   }
 
+  // ---- accumulator charging ----
+  // The set of distinct delivered colours reaching each EMPTY accumulator. A
+  // charged accumulator is a source (never charges); the carried one is inert.
+  _accum_incoming(beams, delivery) {
+    const w = this.world;
+    const inc = {};
+    for (const n of Object.values(w.nodes))
+      if (isAccumulatorKind(n.kind) && !n.color && n.id !== w.carrying) inc[n.id] = new Set();
+    for (let k = 0; k < beams.length; k++) {
+      if (!delivery[k]) continue;
+      const t = beams[k].t;
+      if (inc[t]) inc[t].add(beams[k].color);
+    }
+    return inc;
+  }
+
+  // Advance each empty accumulator's charge while EXACTLY ONE colour reaches it;
+  // reset to zero on none or a conflict (more than one colour) — so a clean fill
+  // needs an uninterrupted single colour. Stores that colour in accum_in for the
+  // fill. Real-time only (like the rewirer charge); a cold solve resets it.
+  _update_accum_charge(incoming, now) {
+    const dt = this._accum_t === null ? 0 : Math.max(0, now - this._accum_t);
+    this._accum_t = now;
+    let changed = false;
+    const live = new Set(Object.keys(incoming));
+    for (const id in incoming) {
+      const colours = incoming[id];
+      const cur = this.accum_charge[id] ?? 0;
+      let nv, col;
+      if (colours.size === 1) { col = [...colours][0]; nv = Math.min(ACCUM_FILL_SEC, cur + dt); }
+      else { col = null; nv = 0; }             // none or a conflict → reset
+      if (Math.abs(nv - cur) > 1e-9 || this.accum_in[id] !== col) changed = true;
+      this.accum_charge[id] = nv;
+      this.accum_in[id] = col;
+    }
+    // Drop charge state for anything no longer an empty accumulator (filled/carried).
+    for (const id of Object.keys(this.accum_charge))
+      if (!live.has(id)) { delete this.accum_charge[id]; delete this.accum_in[id]; changed = true; }
+    return changed;
+  }
+
+  // Empty accumulators whose charge has completed — ready for the UI to fill (set
+  // the colour and drop the link). Returns [{ id, color }].
+  ready_accumulators() {
+    const out = [];
+    for (const id in this.accum_charge) {
+      const col = this.accum_in[id];
+      if (col && (this.accum_charge[id] ?? 0) >= ACCUM_FILL_SEC - 1e-6) out.push({ id, color: col });
+    }
+    return out;
+  }
+
   solve(cold = false, fill_instant = true) {
     const w = this.world;
     this._fill_instant = fill_instant;
@@ -525,6 +598,9 @@ export class Engine {
       for (const n of Object.values(w.nodes))
         if (n.kind === 'receiver') this.charge[n.id] = 0;
       this._charge_t = null;
+      this.accum_charge = {};
+      this.accum_in = {};
+      this._accum_t = null;
     }
     for (let iter = 0; iter < 30; iter++) {
       let changed = this._apply_jam_disabled(this._compute_jam_disabled());
@@ -636,7 +712,7 @@ export class Engine {
       .map(n => n.id);
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
-      emit[nid] = nd.kind === 'source' ? nd.color : null;
+      emit[nid] = emitsAsSource(nd) ? nd.color : null;   // sources + charged accumulators
     let last = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
       const [beams, target, instant, eff, delivery] = this.resolve_timed(emit);
@@ -742,6 +818,7 @@ export class Engine {
     this.lit = this._lit_map(beams, delivery);
     const charge_changed = this._update_charge(this.lit, now);
     const recolor_changed = this._update_recolor(now);
+    const accum_changed = this._update_accum_charge(this._accum_incoming(beams, delivery), now);
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);
@@ -750,7 +827,7 @@ export class Engine {
     this.dead_conns = this._conflict_map(beams, delivery);
     const eff_changed = this._advance_eff(beams, target, instant, now);
     this.beams_draw = this._build_draw_timed(beams);
-    return eff_changed || charge_changed || recolor_changed
+    return eff_changed || charge_changed || recolor_changed || accum_changed
       || JSON.stringify(old_emit) !== JSON.stringify(this.emit)
       || w.ffs.some((ff,i) => ff.is_open !== old_open[i])
       || w.ffs.some((ff,i) => ff.disabled !== old_disabled[i]);

@@ -253,5 +253,33 @@ function beamsBetween(w, x, y) {
   ok(ab.every(({ del }) => del === false), 'neither delivers across (A is not made stronger by two sources)');
 }
 
+// ---------------------------------------------------------------------------
+// Source-less emitter → receiver: the same-rank midpoint cap is relay↔relay only.
+// No gameplay piece emits without a source yet (the planned black / environment
+// source will), so we feed `resolve` a crafted emit map. An unranked (rank ∞)
+// emitter must still light an unranked receiver — the receiver is no clash peer —
+// while the same emitter aimed at another unranked RELAY of a different colour is
+// still capped at the midpoint (the peer-clash behaviour is unchanged).
+// ---------------------------------------------------------------------------
+{
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('I',  'connector', [100, 0]));
+  w.add(new Node('wr', 'receiver',  [300, 0], { color: 'white' }));
+  w.toggle_link('I', 'wr');
+  const [beams, , delivery] = w.engine.resolve({ I: 'white', wr: null });
+  const k = beams.findIndex(b => b.o === 'I' && b.t === 'wr');
+  ok(k >= 0 && delivery[k] === true,
+     'a source-less (rank ∞) emitter delivers full length to a receiver (no peer cap)');
+
+  const w2 = new World(); w2.player = null; w2._uid = 1;
+  w2.add(new Node('I', 'connector', [100, 0]));
+  w2.add(new Node('J', 'connector', [300, 0]));
+  w2.toggle_link('I', 'J');
+  const [b2, len2, del2] = w2.engine.resolve({ I: 'white', J: 'red' });
+  const k2 = b2.findIndex(b => b.o === 'I' && b.t === 'J');
+  ok(k2 >= 0 && del2[k2] === false && Math.abs(len2[k2] - b2[k2].dl / 2) < 1e-6,
+     'but the same emitter aimed at a same-rank RELAY of a different colour is still capped at the midpoint');
+}
+
 console.log(`\ndirectional light tests: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

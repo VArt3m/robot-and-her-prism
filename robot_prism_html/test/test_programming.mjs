@@ -95,16 +95,26 @@ for (const v of invPair.values) ok(!isCorruptionValue(invPair, v), `inverter pai
   const cleanOnly = programOptions(programSpec('connector'), { color: 'red' }, { canCorrupt: false });
   ok(cleanOnly.length === 1 && cleanOnly[0].value === null, 'corrupted connector at a clean-only Forge → only Clean');
 
-  // A clean inverter (pair red/blue) at a corrupting Forge → 3 corruptions + 2
-  // other pairs = 5 options spanning BOTH facets.
-  const inv = programOptions(programSpec('inverter'), { color: null, pair: ['red', 'blue'] }, { canCorrupt: true });
-  ok(inv.length === 5, 'clean inverter → 5 options (3 corruptions + 2 pair swaps)');
+  // A clean inverter in SWAP form at a corrupting Forge → 3 corruptions + 1 mode
+  // switch ('complement'; 'swap' is the current no-op) + 2 other pairs = 6 options
+  // spanning all three facets.
+  const inv = programOptions(programSpec('inverter'), { color: null, mode: 'swap', pair: ['red', 'blue'] }, { canCorrupt: true });
+  ok(inv.length === 6, 'clean swap inverter → 6 options (3 corruptions + 1 mode + 2 pair swaps)');
   ok(inv.filter(o => o.field === 'color').length === 3, '…three on the colour facet');
+  ok(inv.filter(o => o.field === 'mode').length === 1, '…one on the mode facet (→ complement)');
   ok(inv.filter(o => o.field === 'pair').length === 2, '…two on the pair facet (current pair excluded)');
-  // …at a clean-only Forge → only the 2 pair swaps (corruptions gated).
-  const invClean = programOptions(programSpec('inverter'), { color: null, pair: ['red', 'blue'] }, { canCorrupt: false });
-  ok(invClean.length === 2 && invClean.every(o => o.field === 'pair'),
-     'clean inverter at a clean-only Forge → only pair swaps');
+  // …at a clean-only Forge → corruptions gated, leaving 1 mode + 2 pair = 3.
+  const invClean = programOptions(programSpec('inverter'), { color: null, mode: 'swap', pair: ['red', 'blue'] }, { canCorrupt: false });
+  ok(invClean.length === 3 && invClean.every(o => o.field !== 'color'),
+     'clean swap inverter at a clean-only Forge → mode + pair only (corruptions gated)');
+
+  // In COMPLEMENT form the pair facet is HIDDEN (available=false): swapping colours
+  // is meaningless there, so to change the pair you must switch back to swap first.
+  const invComp = programOptions(programSpec('inverter'), { color: null, mode: 'complement', pair: ['red', 'blue'] }, { canCorrupt: true });
+  ok(invComp.filter(o => o.field === 'pair').length === 0, 'complement inverter hides the pair facet');
+  ok(invComp.filter(o => o.field === 'mode').length === 1 && invComp.find(o => o.field === 'mode').value === 'swap',
+     'complement inverter still offers the switch back to swap');
+  ok(invComp.length === 4, 'clean complement inverter → 4 options (3 corruptions + 1 mode, no pair)');
 }
 
 // 7. stampProgramDefaults fills every facet's field (copying array defaults), and
@@ -112,8 +122,8 @@ for (const v of invPair.values) ok(!isCorruptionValue(invPair, v), `inverter pai
 {
   const node = { kind: 'inverter' };
   stampProgramDefaults(node, programSpec('inverter'));
-  ok(node.color === null && Array.isArray(node.pair) && sameProgramValue(node.pair, ['red', 'blue']),
-     'inverter stamps color=null and pair=[red,blue]');
+  ok(node.color === null && node.mode === 'swap' && Array.isArray(node.pair) && sameProgramValue(node.pair, ['red', 'blue']),
+     'inverter stamps color=null, mode=swap and pair=[red,blue]');
   node.pair[0] = 'green';                          // mutating the node must not touch the spec default
   const node2 = { kind: 'inverter' };
   stampProgramDefaults(node2, programSpec('inverter'));

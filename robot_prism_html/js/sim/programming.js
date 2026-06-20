@@ -21,6 +21,9 @@
  *   corrupts  (optional) this facet's non-clean values are "corruptions" — only a
  *             corrupting Forge may apply them; `cleanValue` is the one value that
  *             is NOT a corruption (cleaning is always allowed).
+ *   available (optional) `(node) => boolean` — when present and false, the facet
+ *             is hidden from the chooser for the device's current state (e.g. the
+ *             inverter's pair facet is hidden while it is in its complement form).
  *
  * Resolving labelKey / flashKey to text is left to the UI, so this module stays
  * free of presentation strings. The chooser is built generically from the facets
@@ -47,11 +50,22 @@ export const PROGRAM_SPECS = {
   // Connector — only its corruption colour (null = "clean", a plain relay).
   connector: { facets: [COLOR_CORRUPTION_FACET] },
 
-  // Inverter — corruption (exactly as a connector) PLUS its colour pair. The two
-  // facets share one chooser: clean/corrupt, and which two colours it swaps.
+  // Inverter — corruption (exactly as a connector) PLUS its FORM and its colour
+  // pair. 'mode' switches between the basic 'swap' form and the alternate
+  // 'complement' form; the pair facet only swaps colours and so is meaningless in
+  // the complement form — its `available` hides it there, so to change the pair
+  // you must switch back to 'swap' first. All facets share one chooser.
   inverter: {
     facets: [
       COLOR_CORRUPTION_FACET,
+      {
+        field: 'mode',
+        default: 'swap',
+        values: ['swap', 'complement'],
+        labelKey: 'invMode',
+        flashKey: 'invModeSet',
+        live: true,
+      },
       {
         field: 'pair',
         default: ['red', 'blue'],
@@ -59,6 +73,7 @@ export const PROGRAM_SPECS = {
         labelKey: 'invPair',
         flashKey: 'invPairSet',
         live: true,
+        available: (node) => node.mode !== 'complement',
       },
     ],
   },
@@ -159,6 +174,7 @@ export function programOptions(spec, node, { canCorrupt = true } = {}) {
   const out = [];
   if (!spec) return out;
   for (const facet of spec.facets) {
+    if (facet.available && !facet.available(node)) continue;   // facet hidden in this state
     for (const v of facet.values) {
       if (programIsNoop(facet, node, v)) continue;
       if (!canCorrupt && isCorruptionValue(facet, v)) continue;

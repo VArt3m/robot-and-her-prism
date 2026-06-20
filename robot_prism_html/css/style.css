@@ -185,6 +185,15 @@ html, body {
 }
 .ui-forge:hover:not(:disabled) { background: #5d4a18; border-color: #b8902a; }
 
+/* The Discharge button: a distinct teal accent (like the Forge button, its
+   sudden appearance reads as a momentary, carried-only affordance). */
+.ui-discharge {
+  background: #123a3a;
+  border-color: #1e7d7d;
+  color: #b0e3e3;
+}
+.ui-discharge:hover:not(:disabled) { background: #185050; border-color: #2aa8a8; }
+
 /* Sticky toggles that are currently ON. */
 .ui-toggle.active {
   background: #2b6cb0;

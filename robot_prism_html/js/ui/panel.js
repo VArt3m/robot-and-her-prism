@@ -72,6 +72,7 @@ export class Panel {
         <button type="button" class="ui-btn ui-toggle" data-act="passable"></button>
         <button type="button" class="ui-btn ui-toggle" data-act="targeting"></button>
         <button type="button" class="ui-btn ui-forge" data-act="forge" hidden></button>
+        <button type="button" class="ui-btn ui-discharge" data-act="discharge" hidden></button>
         <button type="button" class="ui-btn ui-hold" data-act="reset"><span class="ui-fill"></span><span class="ui-label"></span></button>
         <button type="button" class="ui-btn" data-act="undo"></button>
       </div>`;
@@ -94,6 +95,7 @@ export class Panel {
     label(this.btn.passable,  P.passable,  P.passableHint);
     label(this.btn.targeting, P.targeting, P.targetingHint);
     label(this.btn.forge,     P.forge,     P.forgeHint);
+    label(this.btn.discharge, P.discharge, P.dischargeHint);
     label(this.btn.reset,     P.reset,     P.resetHint);
     label(this.btn.undo,      P.undo,      P.undoHint);
 
@@ -111,6 +113,7 @@ export class Panel {
     click('passable',  () => this.actions.togglePassable?.());
     click('targeting', () => this.actions.toggleTargeting?.());
     click('forge',     () => this.actions.forge?.());
+    click('discharge', () => this.actions.discharge?.());
     click('undo',      () => this.actions.undo?.());
 
     // Reset is a press-and-hold (mirrors the R key). Pointer events cover mouse,
@@ -145,6 +148,9 @@ export class Panel {
     // The Forge button is entirely hidden until programming is actually available
     // (a programmable item in hand, a Forge with uses in range); then it appears.
     this.btn.forge.hidden = !s.canForge;
+    // The Discharge button mirrors the Forge button: entirely hidden until a
+    // charged accumulator is actually in hand (carried-only, like Q); then it shows.
+    this.btn.discharge.hidden = !s.canDischarge;
     this.btn.undo.disabled = !s.canUndo;
     const fill = this.btn.reset.querySelector('.ui-fill');
     if (fill) fill.style.width = `${Math.round((s.resetProgress ?? 0) * 100)}%`;

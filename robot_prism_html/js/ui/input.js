@@ -14,6 +14,7 @@ const KEY_MAP = {
   'KeyG': 'gates',
   'KeyZ': 'undo',
   'KeyF': 'forge',     // summon the programming menu (only bites next to a Forge)
+  'KeyQ': 'discharge', // empty a carried accumulator (only bites while carrying one)
   'Escape': 'escape',  // close an open menu without acting
   // Momentary highlight holds, chosen so one palm covers both (Shift under the
   // pinky, Space under the thumb) while staying clear of browser-owned chords

@@ -55,10 +55,24 @@ export const OBJECT_TYPES = {
   // while the robot stands within its (generous) radius carrying a programmable
   // item. Material, so it occludes light and blocks movement like other objects.
   forge:     { material: true, pushable: false, carriable: false, requiresTarget: false, programmable: false, jammable: false, radius: FORGE_R },
+  // An Accumulator — a PORTABLE source with a charge. Two states keyed by its
+  // `color` field: EMPTY (null) and CHARGED (a colour). A charged accumulator is
+  // a rank-0 source that emits ONLY its own colour (it never relays incoming
+  // light and is never confused — incoming rays are dead weight); an empty one is
+  // a sink that fills over a couple of uninterrupted seconds of a single incoming
+  // colour, then becomes charged and drops the link that filled it. It can be
+  // wired (targeted) like a connector. Material, carriable; same footprint as a
+  // relay. NOT a relay (`relay` unset) so it stays out of the relay machinery.
+  accumulator: { material: true, pushable: false, carriable: true, requiresTarget: true, programmable: false, jammable: false, radius: CONN_R },
 };
 
 export function objType(kind) {
   return OBJECT_TYPES[kind] || null;
+}
+
+// Is this an accumulator (a portable source)? One physical source of truth.
+export function isAccumulatorKind(kind) {
+  return kind === 'accumulator';
 }
 
 // Is this a light relay (connector / inverter / future sister)? Single physical

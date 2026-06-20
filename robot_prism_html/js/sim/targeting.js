@@ -115,6 +115,47 @@ export const TARGET_SPECS = {
   inverter:  WIRE_SPEC(),
   mixer:     WIRE_SPEC(),
 
+  // Accumulator — a portable source that wires light like a connector, but what
+  // it may target depends on its state. A CHARGED accumulator is a source, so it
+  // may feed receivers, relays and (to clash) sources. An EMPTY one is only being
+  // filled, so it wires to sources and relays (a receiver cannot fill it). Many
+  // intents, toggled on pass-over; no character-drag convenience.
+  accumulator: (() => {
+    const kindsFor = (world, deviceId) => {
+      const relays = Object.keys(RELAY_SPECS);
+      return world.nodes[deviceId]?.color
+        ? ['source', 'receiver', ...relays]      // charged: a source, may feed receivers
+        : ['source', ...relays];                 // empty: wires to sources/relays to be filled
+    };
+    return {
+      maxIntents: Infinity,
+      persistent: true,
+      sweep: 'toggle',
+      dragAutoWire: false,
+      flash: null,
+      targetAt(world, deviceId, x, y) {
+        const n = nearestNode(world, x, y, kindsFor(world, deviceId), deviceId);
+        return n ? { id: n.id, pos: n.pos } : null;
+      },
+      apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
+      candidates(world, deviceId) {
+        return nodesOfKinds(world, kindsFor(world, deviceId), deviceId)
+          .map(n => ({ id: n.id, pos: [...n.pos], reachable: true }));
+      },
+      // Light links share one set; surfacing every link here (deduped by key with
+      // the relay specs) keeps click-delete working for accumulator links too.
+      intentRays(world) {
+        return world.links_pairs.map(([a, b]) => ({
+          from: world.nodes[a].pos,
+          to: world.nodes[b].pos,
+          key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
+          remove: () => world.toggle_link(a, b),
+        }));
+      },
+      clear(world, deviceId) { world.clear_links_of(deviceId); },
+    };
+  })(),
+
   // Rewirer — holds one intent (re-marking overwrites). With a clear shot (the
   // rewirer ray profile) it recolours a source, receiver, or connector after a
   // short charge, then is spent. The golden arrow sets the single target.

@@ -1,6 +1,6 @@
 import { BOX_R, CONN_R, PLAYER_R } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES, kindIsJammable, isRelay } from './objects.js';
+import { OBJECT_TYPES, kindIsJammable, isRelay, isAccumulatorKind } from './objects.js';
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
@@ -45,6 +45,7 @@ export class World {
   get jam_rays_draw(){ return this.engine.jam_rays_draw; }
   get recolor_rays_draw(){ return this.engine.recolor_rays_draw; }
   ready_rewirers(){ return this.engine.ready_rewirers(); }
+  ready_accumulators(){ return this.engine.ready_accumulators(); }
 
   new_id(prefix) { this._uid++; return `${prefix}${this._uid}`; }
 
@@ -84,7 +85,10 @@ export class World {
 
   toggle_link(a, b) {
     if (a === b || !this.nodes[a] || !this.nodes[b]) return;
-    if (!isRelay(this.nodes[a].kind) && !isRelay(this.nodes[b].kind)) return;
+    // A light link needs at least one "wireable initiator" — a relay or an
+    // accumulator (a portable source). Sources/receivers never wire to each other.
+    const wireable = (k) => isRelay(k) || isAccumulatorKind(k);
+    if (!wireable(this.nodes[a].kind) && !wireable(this.nodes[b].kind)) return;
     const key = this._link_key(a, b);
     if (this.links.has(key)) this.links.delete(key); else this.links.add(key);
   }

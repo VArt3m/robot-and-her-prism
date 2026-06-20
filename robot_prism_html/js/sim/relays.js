@@ -28,12 +28,33 @@ export const RELAY_SPECS = {
     cleanEmit: (_node, incoming) => (incoming.size === 1 ? [...incoming][0] : null),
   },
 
-  // Inverter — swaps within a colour pair (default red↔blue). A single incoming
-  // colour that is IN the pair is re-emitted as the OTHER half. Anything else
-  // confuses it → dark: no light, a conflict (2+ distinct colours), or a single
-  // colour that is not in the pair.
+  // Inverter — TWO programmable forms (node.mode):
+  //   'swap' (default) — swaps within a colour pair (default red↔blue). A single
+  //          incoming colour that is IN the pair re-emits as the OTHER half;
+  //          anything else confuses it → dark (no light, a conflict, or a single
+  //          colour not in the pair).
+  //   'complement' — does NOT swap. It combines all incoming BASE colours and
+  //          emits what is still MISSING to make white (the additive complement,
+  //          7 & ~m). So a duo of primaries (a secondary) → the third, missing
+  //          primary; a full white collected at the input (three primaries, or two
+  //          colours where one is a secondary, or white itself) → black, which has
+  //          no transmittable colour yet and so reads as dark (null). A lone single
+  //          base colour is too little to complement (the inputs must contain more
+  //          than one colour) → dark/confused. NO input is NOT "received black":
+  //          black is a real colour that needs a real source (the environment, not
+  //          yet implemented), so an unfed complement inverter sits DARK rather than
+  //          inventing white from nothing.
   inverter: {
     cleanEmit: (node, incoming) => {
+      if (node.mode === 'complement') {
+        let m = 0;
+        for (const c of incoming) m |= colorMask(c);
+        if (m === 0) return null;                // no input ≠ received black → dark
+        const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+        if (bits === 1) return null;             // one base colour: needs more than one
+        return maskColor(WHITE_MASK & ~m);       // duo→missing primary; white→black(null)
+      }
+      // 'swap' (the original form): swap within the colour pair.
       if (incoming.size !== 1) return null;
       const c = [...incoming][0];
       const pair = node.pair || ['red', 'blue'];

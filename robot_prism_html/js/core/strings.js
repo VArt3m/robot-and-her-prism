@@ -41,6 +41,7 @@ const en = {
     mine: 'Mine',
     rewirer: 'Rewirer',
     jammer: 'Jammer',
+    accumulator: 'Accumulator',
     forge: 'Forge',
     and: 'AND gate',
     or: 'OR gate',
@@ -63,6 +64,7 @@ const en = {
     connector: 'c',
     inverter: 'i',
     mixer: 'm',
+    accumulator: 'a',
     and: 'AND',
     or: 'OR',
     negate: '!',
@@ -88,6 +90,8 @@ const en = {
     targetingHint: 'Enter / leave click-by-click targeting of the carried device',
     forge: 'Program',
     forgeHint: 'Program the carried item at this Forge (or press F)',
+    discharge: 'Discharge',
+    dischargeHint: 'Empty the carried accumulator so it can be charged again (or press Q)',
     reset: 'Reset',
     resetHint: 'Hold 2s to rebuild the whole playfield',
     undo: 'Undo',
@@ -112,6 +116,7 @@ const en = {
     colourSet: (c) => `Colour set to ${en.colors[c] ?? c}`,
     connColorSet: (c) => (c ? `Corrupted — locked to ${en.colors[c] ?? c}` : 'Cleaned — a plain relay again'),
     invPairSet: (p) => `Inverter set to swap ${en.colors[p[0]] ?? p[0]} ↔ ${en.colors[p[1]] ?? p[1]}`,
+    invModeSet: (m) => (m === 'complement' ? 'Inverter set to output the complement (fill to white)' : 'Inverter set to swap a colour pair'),
     mixerModeSet: (m) => (m === 'whiten' ? 'Mixer set to make white' : 'Mixer set to blend two colours'),
     // (No "No Forge in range" message: pressing F out of any Forge's radius is a
     // silent no-op, not a programming attempt, so there is nothing to report.)
@@ -121,6 +126,8 @@ const en = {
     recolourMarked: 'Recolour target set — it charges and fires once the rewirer is down with a clear shot',
     recolourDone: 'Recolour applied — the rewirer is spent',
     jamMarked: 'Jam target set — active once the jammer is on the ground',
+    accumFilled: 'Accumulator charged — it is now a portable source, and the link that filled it dropped',
+    accumDischarged: 'Accumulator emptied — it can be charged again',
     noLineOfSight: 'No line of sight',
     targeting: (what) => `Targeting — click ${what}; click empty or tap E to finish`,
     doneTargeting: 'Done targeting',
@@ -129,6 +136,7 @@ const en = {
   // What the click-by-click targeting prompt should tell the player to click.
   targetWhat: {
     connector: 'a node',
+    accumulator: 'a node',
     rewirer: 'a source/receiver',
     default: 'a field or mine',
   },
@@ -139,6 +147,8 @@ const en = {
     color: (c) => ({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c),
     // Connector corruption chooser: a "Clean" entry plus the corrupt-to-X colours.
     connColor: (c) => (c == null ? 'Clean' : `Corrupt → ${({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c)}`),
+    // Inverter form chooser: swap a colour pair, or output the complement.
+    invMode: (m) => (m === 'complement' ? 'Complement (fill to white)' : 'Swap a pair'),
     // Inverter colour-pair chooser: the two colours it swaps between.
     invPair: (p) => `Swap ${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[0]] ?? p[0])}↔${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[1]] ?? p[1])}`,
     // Mixer form chooser: blend two primaries, or make white.
@@ -204,9 +214,10 @@ const en = {
       if (raised) lines.push('raised on a box');
       return lines;
     },
-    inverter: (emitColor, links, raised, fixedColor, pair) => {
+    inverter: (emitColor, links, raised, fixedColor, pair, mode) => {
       const lines = [en.kinds.inverter];
       if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
+      else if (mode === 'complement') lines.push('complement — fills to white');
       else if (pair) lines.push([
         { t: 'swaps ' }, { t: en.colors[pair[0]] ?? pair[0], c: pair[0] },
         { t: ' ↔ ' }, { t: en.colors[pair[1]] ?? pair[1], c: pair[1] },
@@ -243,6 +254,20 @@ const en = {
         : 'colour not set',
     ],
     jammer: () => [en.kinds.jammer, 'freezes a field or mine'],
+    // Accumulator — a portable source. Charged shows its colour and link count;
+    // empty shows the charge progress toward filling (0 when nothing reaches it).
+    accumulator: (color, links, frac) => {
+      const lines = [en.kinds.accumulator];
+      if (color) {
+        lines.push([{ t: 'charged — emits ' }, { t: en.colors[color] ?? color, c: color }]);
+        lines.push(`${links} link${links === 1 ? '' : 's'}`);
+      } else if (frac > 0) {
+        lines.push(`charging… ${Math.round(frac * 100)}%`);
+      } else {
+        lines.push('empty — wire a single colour to fill it');
+      }
+      return lines;
+    },
     forge: (uses, inRange) => {
       const lines = [en.kinds.forge];
       lines.push(uses > 0 ? `${uses} use${uses === 1 ? '' : 's'} left` : 'spent');

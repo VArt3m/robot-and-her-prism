@@ -6,7 +6,7 @@
  * loop with the same (world, uiState) contract, enabling simultaneous views.
  */
 
-import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
+import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
@@ -80,6 +80,7 @@ export class App {
       togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
       toggleTargeting: () => this._togglePanelTargeting(),
       forge:           () => this._invokeForge(),
+      discharge:       () => this._handleAction('discharge', performance.now() / 1000),
       beginReset:      () => { this._panelResetSince = performance.now(); },
       endReset:        () => { this._panelResetSince = null; },
       undo:            () => this._rewind(),
@@ -349,6 +350,7 @@ export class App {
       targetingActive: Boolean(ui.targeting),
       canTarget,
       canForge: this._canForge(),
+      canDischarge: Boolean(w.carrying && w.nodes[w.carrying]?.kind === 'accumulator' && w.nodes[w.carrying]?.color),
       canUndo: this._undo.length > 0,
       resetProgress: ui.resetProgress ?? 0,
     });
@@ -482,6 +484,7 @@ export class App {
     // Fire any rewirer whose charge has completed. Committed here (not in the
     // engine) so the recolour + destruction is a single undoable event.
     this._commitRecolors(now);
+    this._commitFills(now);
 
     // Process one-shot key actions
     for (const action of this.input.drainActions()) {
@@ -524,6 +527,18 @@ export class App {
       w.solve(true, false); ui.live = true;
     } else if (action === 'forge') {
       this._invokeForge();
+    } else if (action === 'discharge') {
+      // Q empties a carried accumulator. Carried-only and silent otherwise — like
+      // the Forge menu, it does nothing (and shows nothing) unless the item is in
+      // hand. Undoable; charge restarts from zero once it is empty again.
+      const cid = w.carrying;
+      const nd = cid ? w.nodes[cid] : null;
+      if (nd && nd.kind === 'accumulator' && nd.color) {
+        this._pushUndo();
+        nd.color = null;
+        ui.live = true; w.step(now);
+        this._setFlash(STR.flash.accumDischarged);
+      }
     } else if (action === 'escape') {
       // Escape closes an open menu without acting (so a Forge menu can be
       // dismissed for free); otherwise it leaves click-by-click targeting.
@@ -745,6 +760,26 @@ export class App {
   // target and spend the rewirer (it vanishes). One undo snapshot covers the
   // batch, taken pre-fire — so undo reverts the recolour and un-spends the
   // rewirer, and its charge restarts from zero (cold-solve clears it).
+  // Fill every accumulator that has finished charging: stamp its colour (it
+  // becomes a portable source) and drop the link(s) that filled it. One pre-fill
+  // undo snapshot covers the batch, so undo reverts the colour and restores the
+  // link, and its charge restarts from zero (cold-solve clears it).
+  _commitFills(now) {
+    const w = this.world;
+    const ready = w.ready_accumulators();
+    if (!ready.length) return;
+    this._pushUndo();
+    for (const { id, color } of ready) {
+      const nd = w.nodes[id];
+      if (!nd || nd.kind !== 'accumulator') continue;
+      nd.color = color;          // empty → charged: now a rank-0 portable source
+      w.clear_links_of(id);      // the connection that got it filled drops
+    }
+    this.uiState.live = true;
+    w.step(now);
+    this._setFlash(STR.flash.accumFilled);
+  }
+
   _commitRecolors(now) {
     const w = this.world;
     const ready = w.ready_rewirers();
@@ -1580,7 +1615,7 @@ export class App {
       case 'inverter': {
         const emit = w.emit[node.id] ?? null;
         const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
-        lines = T.inverter(emit, links, w._conn_elevated(node.id), node.color, node.pair);
+        lines = T.inverter(emit, links, w._conn_elevated(node.id), node.color, node.pair, node.mode);
         break;
       }
       case 'mixer': {
@@ -1590,6 +1625,12 @@ export class App {
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;
+      case 'accumulator': {
+        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        const ch = node.color ? 1 : (w.engine.accum_charge[node.id] ?? 0) / ACCUM_FILL_SEC;
+        lines = T.accumulator(node.color, links, Math.max(0, Math.min(1, ch)));
+        break;
+      }
       case 'rewirer':  lines = T.rewirer(node.color); break;
       case 'jammer':   lines = T.jammer(); break;
       case 'forge': {
