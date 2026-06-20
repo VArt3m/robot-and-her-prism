@@ -360,23 +360,24 @@ export class Renderer2D {
       ctx.setLineDash([]);
     }
 
-    // Forge control-zone overlay. While carrying a programmable item within reach
-    // of a live Forge, show every live Forge's reach so the player can read where
-    // programming is available — with the OVERLAP of two zones carved OUT as an
-    // unfilled hole (not a special colour; the exclusion isn't painted, just not
-    // enclosed as usable). Each zone keeps its warm/cool tint; the Forge the
-    // player can actually use right now reads brighter.
+    // Forge control-zone overlay. While carrying a programmable item, show the
+    // reach of only the Forge(s) the robot is actually STANDING IN: one zone in a
+    // single Forge's area, or BOTH when in their shared exclusion lens — there the
+    // two zones appear together as an invitation to step out and disambiguate.
+    // Each shown zone keeps its warm/cool tint and is carved against every live
+    // Forge, so any dead overlap stays an unfilled hole rather than usable area;
+    // the Forge the player can actually use right now reads brighter.
     {
       const ck = w.carrying ? w.nodes[w.carrying]?.kind : null;
       const live = (ck && objType(ck)?.programmable)
         ? w.forges().filter(f => (f.uses ?? 0) > 0) : [];
       const R = FORGE_REACH;
-      const nearby = w.player && live.some(f => dist(w.player, f.pos) < R);
-      if (live.length && nearby) {
-        const sole = live.filter(f => dist(w.player, f.pos) < R).length === 1;
-        // Faint fill of each zone MINUS the other live zones, so the shared lens
-        // stays empty. (Clip to this disk, then clip away each other disk.)
-        for (const f of live) {
+      const inside = w.player ? live.filter(f => dist(w.player, f.pos) < R) : [];
+      if (inside.length) {
+        const sole = inside.length === 1;
+        // Faint fill of each shown zone MINUS every other live zone, so a shared
+        // lens stays empty. (Clip to this disk, then clip away each other disk.)
+        for (const f of inside) {
           const cool = f.corrupts === false;
           ctx.save();
           ctx.beginPath(); ctx.arc(f.pos[0], f.pos[1], R, 0, 2 * Math.PI); ctx.clip();
@@ -391,17 +392,16 @@ export class Renderer2D {
           ctx.fillRect(-R, -R, WORLD_W + 2 * R, WORLD_H + 2 * R);
           ctx.restore();
         }
-        // Dashed contour of each full circle; the carved lens is the hole between
-        // them, bounded by both rings — so the exclusion reads without painting it.
+        // Dashed contour of each shown zone's full circle. When in the overlap,
+        // both are drawn and the carved lens is the empty hole between them.
         ctx.setLineDash([6, 6]);
-        for (const f of live) {
+        for (const f of inside) {
           const cool = f.corrupts === false;
-          const usable = sole && dist(w.player, f.pos) < R;
           ctx.beginPath(); ctx.arc(f.pos[0], f.pos[1], R, 0, 2 * Math.PI);
-          ctx.strokeStyle = usable
+          ctx.strokeStyle = sole
             ? (cool ? 'rgba(207,224,240,0.8)' : 'rgba(245,197,24,0.8)')
             : (cool ? 'rgba(120,150,180,0.4)' : 'rgba(214,158,10,0.4)');
-          ctx.lineWidth = usable ? 1.5 : 1;
+          ctx.lineWidth = sole ? 1.5 : 1;
           ctx.stroke();
         }
         ctx.setLineDash([]);
