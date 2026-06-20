@@ -36,6 +36,8 @@ export function build_level() {
 
   w.add(new Node('con_c', 'connector', [445,293], { label:'C' }));
   w.add(new Node('con_1', 'connector', [845,590], { label:'1' }));
+  // An inverter (sister of the connector): clean, swapping red↔blue by default.
+  w.add(new Node('inv_a', 'inverter', [660,293], { label:'I' }));
   w.add(new Node('con_2', 'connector', [915,590], { label:'2' }));
 
   w.boxes.push([580, 500]);   // test box in the open area near the player start
@@ -45,9 +47,14 @@ export function build_level() {
   w.add(new Node('rw_a',   'rewirer', [520, 440], { color: 'red' }));
   w.add(new Node('jam_a',  'jammer',  [470, 380]));
 
-  // The Forge — bottom-centre, clear of the existing beams so it occludes
-  // nothing in the starting puzzle. Programming is summoned here.
+  // Two Forges, bottom-centre, clear of the existing beams. forge_a is a normal
+  // (corrupting) station; forge_b is clean-only (corrupts:false) — it can strip a
+  // connector's corruption but never impose one, and wears a cooler rim to say so.
+  // They sit 129 px apart: more than one FORGE_REACH (111) so each centre is a
+  // sole-Forge zone you can program at, but less than two (222) so their control
+  // areas overlap in the middle — and in that overlap programming is unavailable.
   w.add(new Node('forge_a', 'forge', [509, 600], { uses: FORGE_USES_DEFAULT }));
+  w.add(new Node('forge_b', 'forge', [380, 600], { uses: FORGE_USES_DEFAULT, corrupts: false }));
 
   w.goal = [840, 70];
   w.player_start = [470, 500];

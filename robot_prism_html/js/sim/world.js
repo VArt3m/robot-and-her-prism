@@ -1,6 +1,6 @@
 import { BOX_R, CONN_R, PLAYER_R } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES, kindIsJammable } from './objects.js';
+import { OBJECT_TYPES, kindIsJammable, isRelay } from './objects.js';
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
@@ -54,6 +54,13 @@ export class World {
     return Object.values(this.nodes).filter(n => n.kind === 'connector');
   }
 
+  // All light relays (connector / inverter / future sisters) — the generalised
+  // counterpart of connectors(), used wherever the physics treats relays alike
+  // (material ground objects, box stacking, elevation).
+  relays() {
+    return Object.values(this.nodes).filter(n => isRelay(n.kind));
+  }
+
   // Forges — stationary programming stations. Material (they occlude and block)
   // but not carriable, so they are tracked here rather than via carriable_nodes.
   forges() {
@@ -77,7 +84,7 @@ export class World {
 
   toggle_link(a, b) {
     if (a === b || !this.nodes[a] || !this.nodes[b]) return;
-    if (this.nodes[a].kind !== 'connector' && this.nodes[b].kind !== 'connector') return;
+    if (!isRelay(this.nodes[a].kind) && !isRelay(this.nodes[b].kind)) return;
     const key = this._link_key(a, b);
     if (this.links.has(key)) this.links.delete(key); else this.links.add(key);
   }
@@ -116,14 +123,14 @@ export class World {
   clear_jam(jammer) { this.jam_links.delete(jammer); }
 
   // ---- recolor links ----
-  // A rewirer targets at most one source / receiver / connector; re-marking
-  // overwrites. (Note: the "exactly one" here is this device's rule, not a
-  // framework assumption — other objects may allow a different fixed count.)
+  // A rewirer targets at most one source / receiver / relay (connector or
+  // inverter); re-marking overwrites. (The "exactly one" is this device's rule,
+  // not a framework assumption — other objects may allow a different fixed count.)
   set_recolor(rewirer, target) {
     const rw = this.nodes[rewirer];
     if (!rw || rw.kind !== 'rewirer') return;
     const tg = this.nodes[target];
-    if (!tg || !['source', 'receiver', 'connector'].includes(tg.kind)) return;
+    if (!tg || !(tg.kind === 'source' || tg.kind === 'receiver' || isRelay(tg.kind))) return;
     this.recolor_links.set(rewirer, target);
   }
 
@@ -166,11 +173,11 @@ export class World {
     return ff ? ff.mid() : null;
   }
 
-  // A connector is elevated only when it has been placed onto a box (an
-  // explicit state set at placement time) — not merely by being near one.
+  // A relay is elevated only when it has been placed onto a box (an explicit
+  // state set at placement time) — not merely by being near one.
   _conn_elevated(nid) {
     const nd = this.nodes[nid];
-    if (!nd || nd.kind !== 'connector' || nid === this.carrying) return false;
+    if (!nd || !isRelay(nd.kind) || nid === this.carrying) return false;
     return nd.elevated === true;
   }
 

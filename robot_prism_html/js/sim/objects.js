@@ -20,12 +20,20 @@ import { BOX_R, CONN_R, MINE_R, FORGE_R } from '../core/constants.js';
 //               fields are jammable too, but they are entities, not carriable
 //               objects, so their jammability is intrinsic (see isJammable).
 //   radius    : circular collision half-extent, in world units.
+//   relay     : a light relay — it receives beams and re-emits (connector,
+//               inverter, and future sisters). Drives the shared occlusion /
+//               solver / stacking / corruption treatment (see sim/relays.js).
 export const OBJECT_TYPES = {
   box:       { material: true, pushable: false, carriable: true, requiresTarget: false, programmable: false, jammable: false, radius: BOX_R },
   // Programmable too: at a Forge, a connector can be cleaned (back to a plain
   // relay) or corrupted to a fixed colour — the same locked-colour state a fired
   // rewirer leaves. The colour lives in the node's `color` field (null = clean).
-  connector: { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R },
+  connector: { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R, relay: true },
+  // Inverter — a sister of the connector. A clean inverter swaps within a colour
+  // pair (default red↔blue): in-pair light comes out as the other half, anything
+  // else confuses it. Corruption (`color`) and recolouring work exactly as for a
+  // connector; programming also reprograms its `pair`. Same physical footprint.
+  inverter:  { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R, relay: true },
   // Programmable only — a portable mine. Fuse (seconds) is reprogrammable and
   // counts down from its first drop; on zero it destroys walls in a small radius.
   // Jammable: a jam ray freezes it (its countdown is held).
@@ -46,6 +54,12 @@ export const OBJECT_TYPES = {
 
 export function objType(kind) {
   return OBJECT_TYPES[kind] || null;
+}
+
+// Is this a light relay (connector / inverter / future sister)? Single physical
+// source of truth; the emit behaviour itself lives in sim/relays.js.
+export function isRelay(kind) {
+  return Boolean(OBJECT_TYPES[kind]?.relay);
 }
 
 // May a jammer target this thing? Force fields are always jammable (they are

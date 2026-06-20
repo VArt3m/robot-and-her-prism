@@ -4,6 +4,7 @@ import {
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist } from '../core/geometry.js';
 import { objType, kindIsJammable } from './objects.js';
+import { isRelayKind, relayEmit } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
@@ -60,7 +61,7 @@ export class Engine {
     // endpoint, so it always blocks — a device not wired into the chain is just an
     // obstacle. The carried object is skipped (it is in hand, not on the field).
     for (const n of w.carriable_nodes()) {
-      if (n.kind === 'connector') {
+      if (isRelayKind(n.kind)) {
         if (n.id === w.carrying) continue;
         const lvl = w._conn_elevated(n.id) ? 1 : 0;
         for (const [s1,s2] of this._square(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
@@ -92,15 +93,14 @@ export class Engine {
     return (w._conn_elevated(o) || w._conn_elevated(t)) ? 1 : 0;
   }
 
-  // What a connector emits given the set of distinct delivered incoming colours.
-  // A *coloured* connector (recoloured by a rewirer) always emits its own colour
-  // whenever it receives any light at all — incoming conflicts never kill it
-  // ("blue in, red out"). A plain connector relays a single incoming colour and
-  // goes dark on a conflict.
-  _connector_emit(cid, incoming) {
-    const col = this.world.nodes[cid]?.color;
-    if (col) return incoming.size >= 1 ? col : null;
-    return incoming.size === 1 ? [...incoming][0] : null;
+  // What a relay (connector / inverter / sister) emits given the set of distinct
+  // delivered incoming colours. A *corrupted* relay always emits its own locked
+  // colour whenever it receives any light at all — conflicts never kill it ("blue
+  // in, red out"). A clean relay defers to its kind's rule (relays.js): a clean
+  // connector relays a single colour and goes dark on a conflict; a clean inverter
+  // swaps within its pair. One generic call, no per-kind branching here.
+  _relay_emit(cid, incoming) {
+    return relayEmit(this.world.nodes[cid], incoming);
   }
 
   // ---- light: beams + crossings ----
@@ -172,7 +172,7 @@ export class Engine {
   propagate() {
     const w = this.world;
     const conns = Object.values(w.nodes)
-      .filter(n => n.kind === 'connector' && n.id !== w.carrying)
+      .filter(n => isRelayKind(n.kind) && n.id !== w.carrying)
       .map(n => n.id);
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
@@ -183,12 +183,12 @@ export class Engine {
       const incoming = {};
       for (const c of conns) incoming[c] = new Set();
       for (let k = 0; k < beams.length; k++) {
-        if (delivery[k] && w.nodes[beams[k].t]?.kind === 'connector')
+        if (delivery[k] && isRelayKind(w.nodes[beams[k].t]?.kind))
           incoming[beams[k].t].add(beams[k].color);
       }
       let changed = false;
       for (const c of conns) {
-        const nc = this._connector_emit(c, incoming[c]);
+        const nc = this._relay_emit(c, incoming[c]);
         if (nc !== emit[c]) { emit[c] = nc; changed = true; }
       }
       last = [beams, length, delivery];
@@ -212,23 +212,27 @@ export class Engine {
     return lit;
   }
 
-  // Connectors that received two or more distinct delivered colours and so
-  // emit nothing — "dead" by colour conflict. Their links render dotted, the
-  // same inert look a carried connector's links have.
+  // Relays that received light but emit nothing — "dead" / confused. For a clean
+  // connector that means two or more distinct incoming colours; for a clean
+  // inverter, also a single off-pair colour. A corrupted relay emits its locked
+  // colour regardless, so it is never dead. Their links render dotted, the same
+  // inert look a carried relay's links have.
   _conflict_map(beams, delivery) {
     const w = this.world;
     const inc = {};
     for (const n of Object.values(w.nodes))
-      if (n.kind === 'connector') inc[n.id] = new Set();
+      if (isRelayKind(n.kind)) inc[n.id] = new Set();
     for (let k = 0; k < beams.length; k++) {
       if (!delivery[k]) continue;
       const t = beams[k].t;
-      if (w.nodes[t]?.kind === 'connector') inc[t].add(beams[k].color);
+      if (isRelayKind(w.nodes[t]?.kind)) inc[t].add(beams[k].color);
     }
     const dead = new Set();
-    // A coloured connector emits its own colour regardless of conflict, so it is
-    // never "dead" — only plain connectors die on two-or-more incoming colours.
-    for (const id in inc) if (inc[id].size >= 2 && !w.nodes[id]?.color) dead.add(id);
+    for (const id in inc) {
+      const nd = w.nodes[id];
+      if (nd?.color) continue;                 // corrupted relays never die
+      if (inc[id].size >= 1 && this._relay_emit(id, inc[id]) === null) dead.add(id);
+    }
     return dead;
   }
 
@@ -238,7 +242,7 @@ export class Engine {
     if (w.player && dist(w.player, bp) < BTN_R) return true;
     if (w.boxes.some(bx => dist(bx, bp) < BTN_R)) return true;
     return Object.values(w.nodes).some(
-      n => n.kind === 'connector' && n.id !== w.carrying && dist(n.pos, bp) < BTN_R
+      n => isRelayKind(n.kind) && n.id !== w.carrying && dist(n.pos, bp) < BTN_R
     );
   }
 
@@ -578,7 +582,7 @@ export class Engine {
   propagate_timed() {
     const w = this.world;
     const conns = Object.values(w.nodes)
-      .filter(n => n.kind === 'connector' && n.id !== w.carrying)
+      .filter(n => isRelayKind(n.kind) && n.id !== w.carrying)
       .map(n => n.id);
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
@@ -589,12 +593,12 @@ export class Engine {
       const incoming = {};
       for (const c of conns) incoming[c] = new Set();
       for (let k = 0; k < beams.length; k++) {
-        if (delivery[k] && w.nodes[beams[k].t]?.kind === 'connector')
+        if (delivery[k] && isRelayKind(w.nodes[beams[k].t]?.kind))
           incoming[beams[k].t].add(beams[k].color);
       }
       let changed = false;
       for (const c of conns) {
-        const nc = this._connector_emit(c, incoming[c]);
+        const nc = this._relay_emit(c, incoming[c]);
         if (nc !== emit[c]) { emit[c] = nc; changed = true; }
       }
       last = [beams, target, instant, eff, delivery];

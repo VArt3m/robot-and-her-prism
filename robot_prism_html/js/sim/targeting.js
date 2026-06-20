@@ -47,6 +47,12 @@
 
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { kindIsJammable } from './objects.js';
+import { RELAY_SPECS } from './relays.js';
+
+// The node kinds a light wire (or a rewirer's recolour) may attach to: sources,
+// receivers, and every relay (connector / inverter / future sister). Built from
+// the relay registry so a new sister needs no edit here.
+const WIRE_KINDS = ['source', 'receiver', ...Object.keys(RELAY_SPECS)];
 
 const HIT = 18;   // how near a click / arrow tip must fall, in world units
 
@@ -68,26 +74,24 @@ function nodesOfKinds(world, kinds, excludeId) {
     .filter(n => n.id !== excludeId && !n.spent && kinds.includes(n.kind));
 }
 
-export const TARGET_SPECS = {
-  // Connector — wires light between any number of sources, receivers and other
-  // connectors. Many intents; the golden arrow toggles links on pass-over and a
-  // character-drag does the same as a convenience.
-  connector: {
+// The targeting spec shared by every relay that wires light (connector,
+// inverter, …). A factory so each kind gets its own object (no shared identity).
+function WIRE_SPEC() {
+  return {
     maxIntents: Infinity,
     persistent: true,
     sweep: 'toggle',
     dragAutoWire: true,
     flash: null,
     targetAt(world, deviceId, x, y) {
-      const n = nearestNode(world, x, y, ['source', 'receiver', 'connector'], deviceId);
+      const n = nearestNode(world, x, y, WIRE_KINDS, deviceId);
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
     // A light link can be wired regardless of obstruction (the beam simply will
-    // not deliver through a wall) — so every source / receiver / connector is a
-    // reachable candidate.
+    // not deliver through a wall) — so every wireable node is a reachable candidate.
     candidates(world, deviceId) {
-      return nodesOfKinds(world, ['source', 'receiver', 'connector'], deviceId)
+      return nodesOfKinds(world, WIRE_KINDS, deviceId)
         .map(n => ({ id: n.id, pos: [...n.pos], reachable: true }));
     },
     intentRays(world) {
@@ -99,7 +103,16 @@ export const TARGET_SPECS = {
       }));
     },
     clear(world, deviceId) { world.clear_links_of(deviceId); },
-  },
+  };
+}
+
+export const TARGET_SPECS = {
+  // Connector & inverter — both wire light between any number of sources,
+  // receivers and relays. Identical targeting behaviour, so they share one spec.
+  // Many intents; the golden arrow toggles links on pass-over and a
+  // character-drag does the same as a convenience.
+  connector: WIRE_SPEC(),
+  inverter:  WIRE_SPEC(),
 
   // Rewirer — holds one intent (re-marking overwrites). With a clear shot (the
   // rewirer ray profile) it recolours a source, receiver, or connector after a
@@ -110,7 +123,7 @@ export const TARGET_SPECS = {
     sweep: 'set',
     flash: 'recolourMarked',
     targetAt(world, deviceId, x, y) {
-      const n = nearestNode(world, x, y, ['source', 'receiver', 'connector'], deviceId);
+      const n = nearestNode(world, x, y, WIRE_KINDS, deviceId);
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.set_recolor(deviceId, targetId); },
@@ -118,7 +131,7 @@ export const TARGET_SPECS = {
     // `origin` (the robot while carrying). The device body and the target are
     // excluded so neither self-blocks.
     candidates(world, deviceId, origin = world.nodes[deviceId]?.pos) {
-      return nodesOfKinds(world, ['source', 'receiver', 'connector'], deviceId)
+      return nodesOfKinds(world, WIRE_KINDS, deviceId)
         .map(n => ({
           id: n.id, pos: [...n.pos],
           reachable: origin ? world.ray_clear(origin, n.pos, 'rewirer',
@@ -209,9 +222,16 @@ export function targetSpec(kind) {
 // `remove()`.
 export function allIntentRays(world) {
   const out = [];
+  const seen = new Set();
   for (const kind in TARGET_SPECS) {
     const spec = TARGET_SPECS[kind];
-    if (spec.intentRays) out.push(...spec.intentRays(world));
+    if (!spec.intentRays) continue;
+    for (const ray of spec.intentRays(world)) {
+      // Wiring rays come from every relay spec over the same shared link set, so a
+      // given link surfaces once per relay kind — collapse by key to offer it once.
+      if (ray.key != null) { if (seen.has(ray.key)) continue; seen.add(ray.key); }
+      out.push(ray);
+    }
   }
   return out;
 }

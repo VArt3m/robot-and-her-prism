@@ -1,6 +1,6 @@
-// kinds: source / connector / receiver / button / and / or / mine / rewirer / jammer / forge
+// kinds: source / connector / inverter / receiver / button / and / or / mine / rewirer / jammer / forge
 export class Node {
-  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null, uses = null } = {}) {
+  constructor(nid, kind, pos, { color = null, label = null, fill_time = 0.0, fuse = null, uses = null, corrupts = true, pair = null } = {}) {
     this.id = nid;
     this.kind = kind;
     this.pos = [pos[0], pos[1]];
@@ -8,8 +8,17 @@ export class Node {
     this.label = label;
     this.fill_time = fill_time;
     this.elevated = false;   // connector: true only while placed on a box
+    // Inverter: the colour pair it swaps between (e.g. ['red','blue']); null for
+    // every non-inverter. A clean inverter re-emits in-pair light as the other
+    // half. Reprogrammable at a Forge. Order is irrelevant — it is treated as a set.
+    this.pair = pair;
     // Forge: remaining programming-menu uses; null for everything else.
     this.uses = uses;
+    // Forge: whether this station may CORRUPT (lock a colour onto a connector /
+    // inverter). A "clean-only" Forge (corrupts:false) can still strip corruption
+    // back to a clean relay, just not impose one. Hidden — read only via the
+    // chooser it offers and a subtle rim tint; ignored on every non-forge node.
+    this.corrupts = corrupts;
     // Mine state: fuse seconds (programmable), whether it is counting down
     // (begins on the first drop), and whether a jammer has frozen it.
     this.fuse = fuse;

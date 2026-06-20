@@ -1,0 +1,138 @@
+// Tests for the Inverter — the connector's "sister" relay. Covers the clean
+// emit rule (swap within a colour pair), confusion (no input / conflict /
+// off-pair), corruption parity with connectors, pair reprogramming, and that the
+// shared relay machinery (links, buttons, dead map, elevation) treats it alike.
+// Run: node test_inverter.mjs
+import { World } from '../js/sim/world.js';
+import { Node } from '../js/core/entities.js';
+import { relayEmit, isRelayKind } from '../js/sim/relays.js';
+import { isRelay } from '../js/sim/objects.js';
+
+let pass = 0, fail = 0;
+const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
+
+// A clean inverter with sources of each colour wired in, and three receivers
+// (one per colour) wired out, so we can read exactly what it emits.
+function rig({ pair = ['red', 'blue'], color = null, feed = [] } = {}) {
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('rs', 'source', [0, 100], { color: 'red' }));
+  w.add(new Node('gs', 'source', [0, 200], { color: 'green' }));
+  w.add(new Node('bs', 'source', [0, 300], { color: 'blue' }));
+  w.add(new Node('I',  'inverter', [200, 200], { pair, color }));
+  w.add(new Node('rr', 'receiver', [400, 100], { color: 'red' }));
+  w.add(new Node('gr', 'receiver', [400, 200], { color: 'green' }));
+  w.add(new Node('br', 'receiver', [400, 300], { color: 'blue' }));
+  for (const s of feed) w.toggle_link(s, 'I');
+  w.toggle_link('I', 'rr'); w.toggle_link('I', 'gr'); w.toggle_link('I', 'br');
+  w.solve(true);
+  return w;
+}
+
+// ---------------------------------------------------------------------------
+// 1. Clean emit rule: in-pair light comes out as the OTHER half of the pair.
+// ---------------------------------------------------------------------------
+{
+  const w = rig({ pair: ['red', 'blue'], feed: ['rs'] });   // red in
+  ok(w.engine.emit['I'] === 'blue', 'red in → blue out (pair red/blue)');
+  ok(!!w.engine.lit['br'], 'the blue receiver downstream lights');
+  ok(!w.engine.lit['rr'], 'the red receiver is not lit by the blue output');
+
+  const w2 = rig({ pair: ['red', 'blue'], feed: ['bs'] });  // blue in
+  ok(w2.engine.emit['I'] === 'red', 'blue in → red out (symmetry)');
+
+  const w3 = rig({ pair: ['blue', 'green'], feed: ['gs'] }); // green in, blue/green pair
+  ok(w3.engine.emit['I'] === 'blue', 'green in → blue out (pair blue/green)');
+}
+
+// Pure emit-function unit checks (no solve), pinning the rule directly.
+{
+  const inv = { kind: 'inverter', pair: ['red', 'green'], color: null };
+  ok(relayEmit(inv, new Set(['red'])) === 'green', 'relayEmit: red→green for pair red/green');
+  ok(relayEmit(inv, new Set(['green'])) === 'red', 'relayEmit: green→red for pair red/green');
+  ok(relayEmit(inv, new Set(['blue'])) === null, 'relayEmit: off-pair (blue) → null');
+  ok(relayEmit(inv, new Set()) === null, 'relayEmit: no input → null');
+  ok(relayEmit(inv, new Set(['red', 'green'])) === null, 'relayEmit: conflict → null');
+  // pair order is irrelevant.
+  ok(relayEmit({ kind: 'inverter', pair: ['green', 'red'], color: null }, new Set(['red'])) === 'green',
+     'relayEmit: pair order does not matter');
+  // a fresh inverter with no pair set falls back to red/blue.
+  ok(relayEmit({ kind: 'inverter', pair: null, color: null }, new Set(['red'])) === 'blue',
+     'relayEmit: missing pair falls back to red/blue');
+}
+
+// ---------------------------------------------------------------------------
+// 2. Confusion → dark, and counted "dead" only when it actually receives light.
+// ---------------------------------------------------------------------------
+{
+  // Off-pair single colour: green into a red/blue inverter → confused.
+  const w = rig({ pair: ['red', 'blue'], feed: ['gs'] });
+  ok(w.engine.emit['I'] === null, 'off-pair colour → no output');
+  ok(w.dead_conns.has('I'), 'off-pair input marks the inverter confused (dead)');
+
+  // Conflict: red AND blue in → confused.
+  const w2 = rig({ pair: ['red', 'blue'], feed: ['rs', 'bs'] });
+  ok(w2.engine.emit['I'] === null, 'two in-pair colours at once → no output');
+  ok(w2.dead_conns.has('I'), 'a conflict marks the inverter confused (dead)');
+
+  // No input: dark but NOT "dead" (nothing to be confused about).
+  const w3 = rig({ pair: ['red', 'blue'], feed: [] });
+  ok(w3.engine.emit['I'] === null, 'no input → no output');
+  ok(!w3.dead_conns.has('I'), 'an unlit inverter is dark, not confused');
+}
+
+// ---------------------------------------------------------------------------
+// 3. Corruption parity with connectors: a corrupted inverter emits its locked
+//    colour on ANY input and never dies on a conflict — its pair is ignored.
+// ---------------------------------------------------------------------------
+{
+  const w = rig({ pair: ['red', 'blue'], color: 'green', feed: ['rs', 'bs'] }); // conflict in
+  ok(w.engine.emit['I'] === 'green', 'a corrupted inverter emits its locked colour on any input');
+  ok(!w.dead_conns.has('I'), 'a corrupted inverter is never confused');
+  ok(!!w.engine.lit['gr'], 'its locked-green output lights the green receiver');
+
+  // Corrupted with NO input → dark (the lock needs some light to relay).
+  const w2 = rig({ pair: ['red', 'blue'], color: 'red', feed: [] });
+  ok(w2.engine.emit['I'] === null, 'a corrupted inverter with no input still emits nothing');
+
+  // Off-pair input that would confuse a clean inverter is fine once corrupted.
+  const w3 = rig({ pair: ['red', 'blue'], color: 'red', feed: ['gs'] });
+  ok(w3.engine.emit['I'] === 'red', 'off-pair input + corruption → the locked colour, no confusion');
+}
+
+// ---------------------------------------------------------------------------
+// 4. Reprogramming the pair re-runs the sim and changes the swap.
+// ---------------------------------------------------------------------------
+{
+  const w = rig({ pair: ['red', 'blue'], feed: ['gs'] });   // green in → confused under red/blue
+  ok(w.engine.emit['I'] === null, 'green in under red/blue pair → confused');
+  w.nodes['I'].pair = ['blue', 'green'];                     // reprogram to blue/green
+  w.solve(true);
+  ok(w.engine.emit['I'] === 'blue', 'after reprogramming to blue/green, green in → blue out');
+}
+
+// ---------------------------------------------------------------------------
+// 5. Shared relay machinery recognises the inverter like a connector.
+// ---------------------------------------------------------------------------
+{
+  ok(isRelay('inverter') && isRelayKind('inverter'), 'inverter is a relay kind');
+  ok(isRelay('connector'), 'connector is still a relay kind');
+  ok(!isRelay('mine') && !isRelay('rewirer') && !isRelay('jammer'), 'devices are not relays');
+
+  // A link may attach to an inverter exactly like a connector. (Note: because
+  // links are UNDIRECTED, an inverter's output flows back along the same link —
+  // so an inverter feeds a *terminal* receiver, not another relay it would then
+  // conflict with. That is a property of the link model, not the inverter.)
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('rs', 'source',   [0, 0],    { color: 'red' }));
+  w.add(new Node('I',  'inverter', [150, 0],  { pair: ['red', 'blue'] }));
+  w.add(new Node('br', 'receiver', [300, 0],  { color: 'blue' }));
+  w.add(new Node('rr', 'receiver', [300, 80], { color: 'red' }));
+  w.toggle_link('rs', 'I'); w.toggle_link('I', 'br'); w.toggle_link('I', 'rr');
+  ok(w.links.size === 3, 'links wire onto an inverter just like a connector');
+  w.solve(true);
+  ok(w.engine.emit['I'] === 'blue', 'red source through the inverter emits blue');
+  ok(!!w.engine.lit['br'] && !w.engine.lit['rr'], 'only the blue receiver lights — the inverted colour delivered');
+}
+
+console.log(`\ninverter tests: ${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);

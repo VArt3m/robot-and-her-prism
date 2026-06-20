@@ -3,69 +3,90 @@
  *
  * Every object whose type sets `programmable` shares ONE interaction core: at a
  * Forge (press F / the panel's Program button while carrying the device within a
- * Forge's radius) a chooser menu is summoned; picking a value sets one of the
+ * Forge's radius) a chooser menu is summoned; picking an option sets one of the
  * device's fields and spends one of that Forge's uses. That access pattern is
- * identical for all of them and lives in the UI. (Programming used to be summoned
- * by a long press anywhere; it is now gated behind Forges — see app._invokeForge.)
+ * identical for all of them and lives in the UI.
  *
- * What differs per object is ONLY its data, declared in one spec here — the menu
- * has different contents, and the value lands in a different field:
+ * What differs per object is ONLY its data, declared as a spec here. A spec is a
+ * list of FACETS — most devices have one, but a device may expose several (the
+ * inverter offers a corruption facet AND a colour-pair facet from the same menu).
+ * Each facet declares:
  *
- *   field     the node property the chooser writes ('fuse', 'colour', …).
+ *   field     the node property this facet writes ('color', 'fuse', 'pair', …).
  *   default   the value stamped on first pickup, so a fresh device is usable.
  *   values    the choosable values, in menu order.
  *   labelKey  STR.menu[labelKey](value) → the menu label for a value.
  *   flashKey  STR.flash[flashKey](value) → the confirmation flash.
- *   live      does applying a value re-run the sim? (false for inert fields.)
+ *   live      does applying re-run the sim? (false for inert fields.)
+ *   corrupts  (optional) this facet's non-clean values are "corruptions" — only a
+ *             corrupting Forge may apply them; `cleanValue` is the one value that
+ *             is NOT a corruption (cleaning is always allowed).
  *
  * Resolving labelKey / flashKey to text is left to the UI, so this module stays
- * free of presentation strings. A device may also be targetable (see
- * targeting.js); the two frameworks compose — that is the rewirer and, later,
- * any "programmable + targeting" object.
- *
- * To add a new programmable object (say one whose menu picks a movement axis):
- * set `programmable: true` on its type, add an entry here
- *   axis: { field:'axis', default:'horizontal', values:['horizontal','vertical'],
- *           labelKey:'axis', flashKey:'axisSet', live:true }
- * plus the matching STR.menu.axis / STR.flash.axisSet strings. The core does not
- * change.
+ * free of presentation strings. The chooser is built generically from the facets
+ * (programOptions): no-op options and — at a clean-only Forge — corruption options
+ * are filtered out, and every surviving option carries its own field/labels.
  */
 
 import { MINE_FUSE_DEFAULT } from '../core/constants.js';
 
+// The shared corruption facet for relays (connector, inverter, future sisters):
+// clean (null) or a locked colour. Identical wherever it appears.
+const COLOR_CORRUPTION_FACET = {
+  field: 'color',
+  default: null,
+  values: [null, 'red', 'green', 'blue'],
+  labelKey: 'connColor',
+  flashKey: 'connColorSet',
+  live: true,
+  corrupts: true,
+  cleanValue: null,
+};
+
 export const PROGRAM_SPECS = {
-  // Connector — its locked colour (null = "clean", a plain relay). At a Forge it
-  // can be cleaned, freshly corrupted, or corrupted to a different colour. The
-  // default is `null`, so first-pickup stamping is a harmless no-op (a connector
-  // is born clean). Re-runs the sim — the corruption changes what it emits.
-  connector: {
-    field: 'color',
-    default: null,
-    values: [null, 'red', 'green', 'blue'],
-    labelKey: 'connColor',
-    flashKey: 'connColorSet',
-    live: true,
+  // Connector — only its corruption colour (null = "clean", a plain relay).
+  connector: { facets: [COLOR_CORRUPTION_FACET] },
+
+  // Inverter — corruption (exactly as a connector) PLUS its colour pair. The two
+  // facets share one chooser: clean/corrupt, and which two colours it swaps.
+  inverter: {
+    facets: [
+      COLOR_CORRUPTION_FACET,
+      {
+        field: 'pair',
+        default: ['red', 'blue'],
+        values: [['red', 'blue'], ['red', 'green'], ['blue', 'green']],
+        labelKey: 'invPair',
+        flashKey: 'invPairSet',
+        live: true,
+      },
+    ],
   },
 
-  // Mine — a reprogrammable fuse, in seconds. Inert until the mine is deployed,
-  // so setting it does not re-run the sim.
+  // Mine — a reprogrammable fuse, in seconds. Inert until deployed, so setting it
+  // does not re-run the sim.
   mine: {
-    field: 'fuse',
-    default: MINE_FUSE_DEFAULT,
-    values: [1, 2, 3, 5, 8],
-    labelKey: 'fuse',
-    flashKey: 'fuseSet',
-    live: false,
+    facets: [{
+      field: 'fuse',
+      default: MINE_FUSE_DEFAULT,
+      values: [1, 2, 3, 5, 8],
+      labelKey: 'fuse',
+      flashKey: 'fuseSet',
+      live: false,
+    }],
   },
 
-  // Rewirer — the colour it would recolour a target to (red / green / blue).
+  // Rewirer — the colour it would recolour a target to. (Not a corruption facet:
+  // this is the device's own payload colour, never gated by a Forge.)
   rewirer: {
-    field: 'color',
-    default: 'red',
-    values: ['red', 'green', 'blue'],
-    labelKey: 'color',
-    flashKey: 'colourSet',
-    live: true,
+    facets: [{
+      field: 'color',
+      default: 'red',
+      values: ['red', 'green', 'blue'],
+      labelKey: 'color',
+      flashKey: 'colourSet',
+      live: true,
+    }],
   },
 };
 
@@ -73,25 +94,60 @@ export function programSpec(kind) {
   return PROGRAM_SPECS[kind] || null;
 }
 
-// Equality for a programmed field's value. `null` and `undefined` both mean
-// "unset / clean" (an unstamped device, a plain connector), so they compare
-// equal; every other value is compared strictly. Centralised so the notion of
+// Equality for a programmed field's value. `null`/`undefined` both mean
+// "unset / clean", so they compare equal; arrays compare as unordered SETS (a
+// colour pair is order-independent); everything else is strict. Centralised so
 // "the same programmed state" has one definition.
 export function sameProgramValue(a, b) {
   if (a == null && b == null) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    const sa = [...a].sort(), sb = [...b].sort();
+    return sa.every((v, i) => v === sb[i]);
+  }
   return a === b;
 }
 
-// The firm, kind-agnostic rule for what a Forge may offer: an option is a NO-OP
-// — and so should NOT be offered — when applying it would leave the device in a
-// state equivalent to the one it is already in. We compare the field's value
-// BEFORE against what it WOULD BECOME after the change ("set field = value"),
-// rather than hard-coding any one kind, so the rule keeps holding for every
-// present and future programmable device. A clean connector is not offered
-// "clean", a red rewirer is not offered "red", a 3 s mine is not offered "3 s".
-export function programIsNoop(spec, node, value) {
-  if (!spec || !node) return false;
-  const before = node[spec.field];      // the field as it stands now
-  const after = value;                  // apply is `node[spec.field] = value`
-  return sameProgramValue(before, after);
+// The firm, kind-agnostic rule for what a Forge may offer: an option is a NO-OP —
+// and so should NOT be offered — when applying it would leave the device in a
+// state equivalent to the one it is already in. Compares the facet's field BEFORE
+// against what it WOULD BECOME ("set field = value").
+export function programIsNoop(facet, node, value) {
+  if (!facet || !node) return false;
+  return sameProgramValue(node[facet.field], value);
+}
+
+// Is applying `value` a CORRUPTION — something only a corrupting Forge may do?
+// True only for a corruption facet (`corrupts`) and only when the value is not its
+// clean value. Cleaning (→ cleanValue) is never a corruption.
+export function isCorruptionValue(facet, value) {
+  if (!facet || !facet.corrupts) return false;
+  return !sameProgramValue(value, facet.cleanValue);
+}
+
+// Stamp every facet's default onto a freshly-picked-up device (only where the
+// field is unset), so a new device is usable without opening its chooser.
+export function stampProgramDefaults(node, spec) {
+  if (!node || !spec) return;
+  for (const f of spec.facets) {
+    if (node[f.field] == null) node[f.field] = Array.isArray(f.default) ? [...f.default] : f.default;
+  }
+}
+
+// Build the chooser options for a device at a Forge. Walks every facet, dropping
+// no-op values (would not change the device) and — when the Forge cannot corrupt
+// — every corruption value. Each surviving option is self-describing (its own
+// field / labels / liveness), so the UI core needs no per-kind branches and a
+// multi-facet device "just works".
+export function programOptions(spec, node, { canCorrupt = true } = {}) {
+  const out = [];
+  if (!spec) return out;
+  for (const facet of spec.facets) {
+    for (const v of facet.values) {
+      if (programIsNoop(facet, node, v)) continue;
+      if (!canCorrupt && isCorruptionValue(facet, v)) continue;
+      out.push({ field: facet.field, value: v, labelKey: facet.labelKey, flashKey: facet.flashKey, live: !!facet.live });
+    }
+  }
+  return out;
 }

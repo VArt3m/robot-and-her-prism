@@ -12,9 +12,9 @@ import { build_level } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { Panel } from './panel.js';
-import { objType } from '../sim/objects.js';
+import { objType, isRelay } from '../sim/objects.js';
 import { targetSpec, allIntentRays } from '../sim/targeting.js';
-import { programSpec, programIsNoop } from '../sim/programming.js';
+import { programSpec, programOptions, stampProgramDefaults, sameProgramValue } from '../sim/programming.js';
 import { carriedRayType, visibilityPolygon, rayProfile } from '../sim/occlusion.js';
 import { STR } from '../core/strings.js';
 
@@ -49,6 +49,7 @@ const PLAYER_GRAB_R = 11;
 // connector. Extend this table as new objects and rules are introduced.
 const STACK_RULES = {
   connector: { ground: true,  box: true,  'box+connector': false, connector: false },
+  inverter:  { ground: true,  box: true,  'box+connector': false, connector: false },
   box:       { ground: true,  box: false, 'box+connector': false, connector: false },
   // The programmable / targeting devices set down on the ground only (for now).
   mine:      { ground: true,  box: false, 'box+connector': false, connector: false },
@@ -167,12 +168,12 @@ export class App {
     for (const id in w.nodes) {
       const n = w.nodes[id];
       nodePos[id] = [...n.pos];
-      if (n.kind === 'connector') elevated[id] = !!n.elevated;
-      // Mutable per-node fields: a recoloured/corrupted colour, a programmed
-      // fuse, the spent flag (a fired rewirer), and a Forge's remaining uses.
-      // Capturing these makes recolour, fuse edits, connector corruption, rewirer
-      // firing, and Forge spending all undoable.
-      nodeState[id] = { color: n.color, fuse: n.fuse, spent: !!n.spent, uses: n.uses };
+      if (isRelay(n.kind)) elevated[id] = !!n.elevated;
+      // Mutable per-node fields: a recoloured/corrupted colour, an inverter pair,
+      // a programmed fuse, the spent flag (a fired rewirer), and a Forge's
+      // remaining uses. Capturing these makes recolour, fuse edits, corruption,
+      // pair reprogramming, rewirer firing, and Forge spending all undoable.
+      nodeState[id] = { color: n.color, pair: n.pair ? [...n.pair] : null, fuse: n.fuse, spent: !!n.spent, uses: n.uses };
     }
     return {
       player: w.player ? [...w.player] : null,
@@ -214,6 +215,7 @@ export class App {
       const n = w.nodes[id];
       if (n) {
         n.color = s.nodeState[id].color; n.fuse = s.nodeState[id].fuse;
+        n.pair = s.nodeState[id].pair ? [...s.nodeState[id].pair] : null;
         n.spent = !!s.nodeState[id].spent; n.uses = s.nodeState[id].uses;
       }
     }
@@ -838,7 +840,7 @@ export class App {
     };
     for (const c of w.carriable_nodes()) consider(c.pos, { kind: c.kind, id: c.id });
     for (const bx of w.boxes) {
-      const occupied = w.connectors().some(c => dist(c.pos, bx) < BOX_R);
+      const occupied = w.relays().some(c => dist(c.pos, bx) < BOX_R);
       if (!occupied) consider(bx, { kind: 'box', box: bx });
     }
     if (!pick) { if (blocked) this._setFlash(STR.flash.cantReachBlocked); return false; }
@@ -857,10 +859,9 @@ export class App {
       const nd = w.nodes[item.id];
       w.carrying = item.id;
       nd.elevated = false;                 // carried — not on a box anymore
-      // Stamp a programmable device's default value on first pickup, generically,
-      // so a fresh device is usable without opening its chooser.
-      const pspec = programSpec(item.kind);
-      if (pspec && nd[pspec.field] == null) nd[pspec.field] = pspec.default;
+      // Stamp a programmable device's default values on first pickup, generically
+      // (every facet), so a fresh device is usable without opening its chooser.
+      stampProgramDefaults(nd, programSpec(item.kind));
       if (item.kind === 'mine') nd.fuse_running = false;   // a carried mine isn't counting down
       if (item.kind === 'rewirer') nd.recolor_charge = 0;  // picking up cancels a pending recolour
       ui.sel = item.id;                    // armed (ready) by default
@@ -868,7 +869,7 @@ export class App {
       // Lift the box off the field; de-elevate any connector that rested on it.
       const idx = w.boxes.indexOf(item.box);
       if (idx !== -1) w.boxes.splice(idx, 1);
-      for (const c of w.connectors()) {
+      for (const c of w.relays()) {
         if (c.elevated && dist(c.pos, item.box) < BOX_R) c.elevated = false;
       }
       w.carry_box = item.box;      // now rides with the player
@@ -998,55 +999,69 @@ export class App {
   // `forgeId` tags the menu so a chosen value spends that Forge a use.
   _openProgramming(kind, anchor, forgeId = null) {
     const spec = programSpec(kind);
-    if (!spec) return;
-    const nd = this.world.carrying ? this.world.nodes[this.world.carrying] : null;
-    const label = STR.menu[spec.labelKey];
-    // Each value becomes a menu item, but one that would not change the device's
-    // current state is offered as DISABLED (greyed, unclickable) — see
-    // programIsNoop. It costs a Forge use to apply a value, so an option that
-    // achieves nothing must never be spendable.
-    const items = spec.values.map(v => ({
-      label: label(v),
+    if (!spec) return false;
+    const w = this.world;
+    const nd = w.carrying ? w.nodes[w.carrying] : null;
+    const forge = forgeId ? w.nodes[forgeId] : null;
+    const canCorrupt = !forge || forge.corrupts !== false;   // omitted ⇒ corrupts
+    // The framework yields the surviving options (no-ops dropped; corruptions
+    // dropped at a clean-only Forge), each self-describing: its own field, label,
+    // confirmation flash, and whether applying re-runs the sim.
+    const opts = programOptions(spec, nd, { canCorrupt });
+    const items = opts.map(o => ({
+      label: STR.menu[o.labelKey](o.value),
       act: 'program',
-      value: v,
-      disabled: programIsNoop(spec, nd, v),
+      value: o.value,
+      field: o.field,
+      flashKey: o.flashKey,
+      live: o.live,
     }));
+    if (!items.length) return false;       // this Forge can change nothing here
     this._openMenu(anchor[0], anchor[1], items);
     if (this.uiState.menu) this.uiState.menu.forgeId = forgeId;
+    return true;
   }
 
-  // Summon the programming menu (F key / the panel's Forge button). It only
-  // bites when a programmable item is carried AND the robot stands within a
-  // Forge's radius (the item rides with her, so her position suffices) AND that
-  // Forge still has uses. The menu is anchored at the player since it is keyed,
-  // not aimed, and tagged with the Forge so a chosen value spends a use.
+  // Summon the programming menu (F key / the panel's Forge button). It bites only
+  // when the robot stands in EXACTLY ONE Forge's control area. Out of every
+  // Forge's radius — or in the overlap of two or more — the press is silent (no
+  // beep, no flash): overlapping control areas cancel out, so that shared region
+  // offers no programming. In a sole Forge's area the usual feedback applies:
+  // nothing programmable in hand, or that Forge is spent, each flash + beep. The
+  // menu is anchored at the player (keyed, not aimed) and tagged with the Forge so
+  // a chosen value spends a use and is gated by that Forge's corrupt capability.
   _invokeForge() {
     const w = this.world;
     const ui = this.uiState;
     if (ui.mode !== 'play' || !w.player) return;
     if (ui.menu) ui.menu = null;            // not a toggle — a fresh press reopens
+    const inRange = w.forges().filter(f => dist(w.player, f.pos) < FORGE_REACH);
+    if (inRange.length === 0) return;        // out of every Forge's area → silent
+    // A spent Forge has no LIVE control area, so it never blocks: overlap counts
+    // only Forges that still have uses. Standing where two live areas meet is the
+    // dead zone — silent. One live area (even alongside a spent one) is fine.
+    const usable = inRange.filter(f => (f.uses ?? 0) > 0);
+    if (usable.length >= 2) return;          // overlap of live areas → silent
     const kind = this._carriedKind();
     if (!kind || !programSpec(kind)) { this._setFlash(STR.flash.notProgrammable); this._beep(); return; }
-    let anyInRange = false, usable = null, ub = FORGE_REACH;
-    for (const f of w.forges()) {
-      if (dist(w.player, f.pos) >= FORGE_REACH) continue;
-      anyInRange = true;
-      if ((f.uses ?? 0) > 0) {
-        const d = dist(w.player, f.pos);
-        if (d < ub) { usable = f; ub = d; }
-      }
+    if (usable.length === 0) { this._setFlash(STR.flash.forgeSpent); this._beep(); return; }
+    // One live Forge: open its chooser. If that Forge can change nothing about the
+    // carried item (e.g. a clean-only Forge facing an already-clean connector),
+    // the chooser is empty — knock and say so rather than open a blank menu.
+    if (!this._openProgramming(kind, [...w.player], usable[0].id)) {
+      this._setFlash(STR.flash.forgeNoChange); this._beep();
     }
-    if (!usable) { this._setFlash(anyInRange ? STR.flash.forgeSpent : STR.flash.noForge); this._beep(); return; }
-    this._openProgramming(kind, [...w.player], usable.id);
   }
 
-  // Is programming available right now (a programmable item in hand and a Forge
-  // with uses in range)? Drives the panel's otherwise-hidden Forge button.
+  // Is programming available right now? Only with a programmable item in hand and
+  // the robot in EXACTLY ONE live Forge's area (spent Forges and overlaps of live
+  // areas both make it unavailable). Drives the panel's otherwise-hidden button.
   _canForge() {
     const w = this.world;
     const kind = this._carriedKind();
     if (!w.player || !kind || !programSpec(kind)) return false;
-    return w.forges().some(f => (f.uses ?? 0) > 0 && dist(w.player, f.pos) < FORGE_REACH);
+    const usable = w.forges().filter(f => (f.uses ?? 0) > 0 && dist(w.player, f.pos) < FORGE_REACH);
+    return usable.length === 1;
   }
 
   // Resolve a menu action item. 'program' (set a value) is generic over the
@@ -1057,20 +1072,17 @@ export class App {
     const ui = this.uiState;
     const nd = w.carrying ? w.nodes[w.carrying] : null;
     if (it.act === 'program' && nd) {
-      const spec = programSpec(this._carriedKind());
-      if (!spec) return;
-      // The firm rule, enforced at the point of application too: applying a value
-      // equivalent to the current state changes nothing, so it must not run and
-      // must not spend a Forge use. (The chooser already greys these out; this is
-      // the belt-and-suspenders guard.)
-      if (programIsNoop(spec, nd, it.value)) { this._beep(); return; }
+      // Each program option is self-describing: it writes its own field. The firm
+      // no-op rule still holds at apply time (a value equal to the current state
+      // changes nothing and must not spend a Forge use).
+      if (sameProgramValue(nd[it.field], it.value)) { this._beep(); return; }
       const forge = forgeId ? w.nodes[forgeId] : null;
       if (forgeId && (!forge || (forge.uses ?? 0) <= 0)) { this._beep(); return; }
       this._pushUndo();
-      nd[spec.field] = it.value;
+      nd[it.field] = it.value;
       if (forge) forge.uses = Math.max(0, (forge.uses ?? 0) - 1);
-      this._setFlash(STR.flash[spec.flashKey](it.value));
-      if (spec.live) { ui.live = true; w.step(performance.now() / 1000); }
+      this._setFlash(STR.flash[it.flashKey](it.value));
+      if (it.live) { ui.live = true; w.step(performance.now() / 1000); }
     }
   }
 
@@ -1097,20 +1109,16 @@ export class App {
 
   _handleMenuClick(x, y) {
     const menu = this.uiState.menu;
+    this.uiState.menu = null;
     if (!menu) return;
     for (const it of menu.items) {
       const [rx, ry, rw, rh] = it.rect;
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
-        // A disabled (no-op) option is inert: keep the menu open so a real
-        // choice is still one click away, and spend nothing.
-        if (it.disabled) { this._beep(); return; }
-        this.uiState.menu = null;
         if (it.act) this._runMenuAct(it, menu.forgeId); else this._pickItem(it);
         return;
       }
     }
     // clicked outside the menu → just cancel
-    this.uiState.menu = null;
   }
 
   // Each frame: a ~half-second long-press on the left mouse button OR the E key
@@ -1162,7 +1170,7 @@ export class App {
     if (w.carrying || w.carry_box) return false;
     const items = this._stackAt(x, y);
     if (items.length < 2) return false;
-    const loc = items[0].kind === 'connector' ? w.nodes[items[0].id].pos : items[0].box;
+    const loc = isRelay(items[0].kind) ? w.nodes[items[0].id].pos : items[0].box;
     if (dist(w.player, loc) >= CONNECT_REACH) return false;
     if (w.reach_blocked(w.player, loc)) return false;
     this._openMenu(loc[0], loc[1], items);
@@ -1176,7 +1184,7 @@ export class App {
     if (w.carrying || w.carry_box) return false;
     let best = null, bd = CONNECT_REACH;
     for (const b of w.boxes) {
-      const conn = w.connectors().find(c => c.elevated && dist(c.pos, b) < BOX_R);
+      const conn = w.relays().find(c => c.elevated && dist(c.pos, b) < BOX_R);
       if (!conn) continue;
       const d = dist(w.player, b);
       if (d >= bd) continue;
@@ -1201,12 +1209,12 @@ export class App {
       if (d < bd) { box = bx; bd = d; }
     }
     if (box) {
-      const occupied = w.connectors().some(
+      const occupied = w.relays().some(
         c => c.id !== excludeId && c.elevated && dist(c.pos, box) < BOX_R);
       return { type: occupied ? 'box+connector' : 'box', point: [box[0], box[1]] };
     }
     let conn = null, cd = 16;
-    for (const c of w.connectors()) {
+    for (const c of w.relays()) {
       if (c.id === excludeId) continue;
       const d = dist([x, y], c.pos);
       if (d < cd) { conn = c; cd = d; }
@@ -1315,7 +1323,7 @@ export class App {
     // A carried connector can stack onto an empty box (elevated):
     //   • click-mode: the box directly under the cursor, if in reach + clear.
     //   • E-mode:     the empty in-reach box most aligned with the facing dir.
-    if (carried === 'connector') {
+    if (isRelay(carried)) {
       let boxPt = null;
       if (clickMode) {
         const tgt = this._targetUnder(aim[0], aim[1], w.carrying);
@@ -1354,7 +1362,7 @@ export class App {
     for (const b of w.boxes) {
       if (dist(w.player, b) >= CONNECT_REACH) continue;
       if (w.reach_blocked(w.player, b)) continue;
-      const occupied = w.connectors().some(
+      const occupied = w.relays().some(
         c => c.id !== w.carrying && c.elevated && dist(c.pos, b) < BOX_R);
       if (occupied) continue;
       const diff = Math.abs(norm(Math.atan2(b[1] - w.player[1], b[0] - w.player[0]) - base));
@@ -1380,7 +1388,7 @@ export class App {
       w.nodes[cid].pos[0] = place.spot[0];
       w.nodes[cid].pos[1] = place.spot[1];
       // Only connectors ride on boxes; other devices always rest on the ground.
-      w.nodes[cid].elevated = (carried === 'connector' && place.type === 'box');
+      w.nodes[cid].elevated = (isRelay(carried) && place.type === 'box');
       // A mine begins counting down the moment it is first set down.
       if (carried === 'mine') w.nodes[cid].fuse_running = true;
       w.carrying = null;
@@ -1465,7 +1473,7 @@ export class App {
 
     const nd = w.carrying ? w.nodes[w.carrying] : null;
     const parts = [];
-    if (kind === 'connector') {
+    if (isRelay(kind)) {
       const emit = nd ? w.emit[nd.id] : null;
       parts.push(emit ? S.emits(emit) : S.emitsNone);
       const links = nd ? w.links_pairs.filter(([a, b]) => a === nd.id || b === nd.id).length : 0;
@@ -1568,6 +1576,12 @@ export class App {
         const emit = w.emit[node.id] ?? null;
         const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
         lines = T.connector(emit, links, w._conn_elevated(node.id), node.color);
+        break;
+      }
+      case 'inverter': {
+        const emit = w.emit[node.id] ?? null;
+        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        lines = T.inverter(emit, links, w._conn_elevated(node.id), node.color, node.pair);
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;

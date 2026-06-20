@@ -36,6 +36,7 @@ const en = {
     receiver: 'Receiver',
     button: 'Button',
     connector: 'Connector',
+    inverter: 'Inverter',
     mine: 'Mine',
     rewirer: 'Rewirer',
     jammer: 'Jammer',
@@ -59,6 +60,7 @@ const en = {
     button: 'B',
     jammer: 'J',
     connector: 'c',
+    inverter: 'i',
     and: 'AND',
     or: 'OR',
     negate: '!',
@@ -106,9 +108,12 @@ const en = {
     fullReset: 'Playfield fully reset',
     fuseSet: (s) => `Fuse set to ${s}s`,
     colourSet: (c) => `Colour set to ${en.colors[c] ?? c}`,
-    connColorSet: (c) => (c ? `Connector corrupted — locked to ${en.colors[c] ?? c}` : 'Connector cleaned — plain relay again'),
-    noForge: 'No Forge in range',
+    connColorSet: (c) => (c ? `Corrupted — locked to ${en.colors[c] ?? c}` : 'Cleaned — a plain relay again'),
+    invPairSet: (p) => `Inverter set to swap ${en.colors[p[0]] ?? p[0]} ↔ ${en.colors[p[1]] ?? p[1]}`,
+    // (No "No Forge in range" message: pressing F out of any Forge's radius is a
+    // silent no-op, not a programming attempt, so there is nothing to report.)
     forgeSpent: 'This Forge is spent',
+    forgeNoChange: 'This Forge has nothing to change about it',
     notProgrammable: 'Nothing here to program',
     recolourMarked: 'Recolour target set — it charges and fires once the rewirer is down with a clear shot',
     recolourDone: 'Recolour applied — the rewirer is spent',
@@ -131,6 +136,8 @@ const en = {
     color: (c) => ({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c),
     // Connector corruption chooser: a "Clean" entry plus the corrupt-to-X colours.
     connColor: (c) => (c == null ? 'Clean' : `Corrupt → ${({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c)}`),
+    // Inverter colour-pair chooser: the two colours it swaps between.
+    invPair: (p) => `Swap ${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[0]] ?? p[0])}↔${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[1]] ?? p[1])}`,
   },
 
   // Bottom status bar.
@@ -185,6 +192,20 @@ const en = {
     connector: (emitColor, links, raised, fixedColor) => {
       const lines = [en.kinds.connector];
       if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
+      lines.push(emitColor
+        ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
+        : 'no output');
+      lines.push(`${links} link${links === 1 ? '' : 's'}`);
+      if (raised) lines.push('raised on a box');
+      return lines;
+    },
+    inverter: (emitColor, links, raised, fixedColor, pair) => {
+      const lines = [en.kinds.inverter];
+      if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
+      else if (pair) lines.push([
+        { t: 'swaps ' }, { t: en.colors[pair[0]] ?? pair[0], c: pair[0] },
+        { t: ' ↔ ' }, { t: en.colors[pair[1]] ?? pair[1], c: pair[1] },
+      ]);
       lines.push(emitColor
         ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
         : 'no output');

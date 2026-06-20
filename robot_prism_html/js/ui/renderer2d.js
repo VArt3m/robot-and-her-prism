@@ -8,6 +8,7 @@
 import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { objType } from '../sim/objects.js';
+import { isRelayKind } from '../sim/relays.js';
 import { STR } from '../core/strings.js';
 
 function diamond(cx, cy, r = 13) {
@@ -123,7 +124,7 @@ export class Renderer2D {
         if (d < best) { best = d; ePick = { id: c.id }; }
       }
       for (const bx of w.boxes) {
-        const occupied = Object.values(w.nodes).some(n => n.kind==='connector' && dist(n.pos,bx)<BOX_R);
+        const occupied = Object.values(w.nodes).some(n => isRelayKind(n.kind) && dist(n.pos,bx)<BOX_R);
         if (occupied || !canPickup(bx)) continue;
         const d = dist(w.player, bx);
         if (d < best) { best = d; ePick = { box: bx }; }
@@ -340,7 +341,7 @@ export class Renderer2D {
     for (const bx of w.boxes) {
       const [x, y] = bx;
       const on = Object.values(w.nodes).some(n => n.kind==='button' && dist(bx,n.pos)<BTN_R);
-      const occupied = Object.values(w.nodes).some(n => n.kind==='connector' && dist(n.pos,bx)<BOX_R);
+      const occupied = Object.values(w.nodes).some(n => isRelayKind(n.kind) && dist(n.pos,bx)<BOX_R);
       const near = !occupied && canPickup(bx);
       ctx.fillStyle = on ? '#caa46a' : '#b08d57';
       ctx.strokeStyle = near ? nearHue(ePick?.box === bx) : '#5b4523'; ctx.lineWidth = near ? 3 : 2;
@@ -411,7 +412,7 @@ export class Renderer2D {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(n.kind === 'and' ? STR.glyph.and : STR.glyph.or, x, y);
 
-      } else if (n.kind === 'connector') {
+      } else if (isRelayKind(n.kind)) {
         const carriedNow = w.carrying === n.id;
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const wouldElevate = carriedNow && pp && pp.elevated;
@@ -457,7 +458,7 @@ export class Renderer2D {
           ctx.moveTo(x+xr, y-xr); ctx.lineTo(x-xr, y+xr);
           ctx.stroke(); ctx.lineCap = 'butt';
         } else {
-          ctx.fillText(STR.glyph.connector, x, y);   // identical for every connector (still tracked separately)
+          ctx.fillText(STR.glyph[n.kind] ?? STR.glyph.connector, x, y);   // 'c' connector / 'i' inverter
         }
         if (carriedNow) {
           ctx.fillStyle = ring; ctx.font = '7px sans-serif';
@@ -521,15 +522,26 @@ export class Renderer2D {
       } else if (n.kind === 'forge') {
         const uses = n.uses ?? 0;
         const spent = uses <= 0;
+        // Subtle "speaking" distinction: a corrupting Forge wears warm brass; a
+        // clean-only one (corrupts:false) wears cool steel. Same shape, same count
+        // — only the accent hue differs, so it reads without a label.
+        const cool = n.corrupts === false;
+        const accent   = spent ? '#6b7280' : (cool ? '#7f93a6' : '#b8902a');
+        const accentHi = cool ? '#cfe0f0' : '#f5c518';
+        const ringRGB  = cool ? '120, 150, 180' : '214, 158, 10';
+        const glowRGB  = cool ? '127, 147, 166' : '245, 197, 24';
         // A programmable item carried within range lights the Forge up and draws
-        // its generous activation ring, so "go here to program" is legible.
+        // its generous activation ring — but only where programming is actually
+        // available: not while the robot sits in another Forge's area too (the
+        // overlap cancels out), so the ring stays dark there and never lies.
         const carriedKind = w.carrying ? w.nodes[w.carrying]?.kind : null;
-        const armed = !spent && !!carriedKind && objType(carriedKind)?.programmable
+        const sole = w.player && w.forges().filter(f => dist(w.player, f.pos) < FORGE_REACH && (f.uses ?? 0) > 0).length === 1;
+        const armed = !spent && sole && !!carriedKind && objType(carriedKind)?.programmable
           && w.player && dist(w.player, n.pos) < FORGE_REACH;
         if (armed) {
           ctx.beginPath(); ctx.arc(x, y, FORGE_REACH, 0, 2 * Math.PI);
-          ctx.fillStyle = 'rgba(245, 197, 24, 0.06)'; ctx.fill();
-          ctx.strokeStyle = 'rgba(214, 158, 10, 0.5)'; ctx.lineWidth = 1.25;
+          ctx.fillStyle = `rgba(${glowRGB}, 0.06)`; ctx.fill();
+          ctx.strokeStyle = `rgba(${ringRGB}, 0.5)`; ctx.lineWidth = 1.25;
           ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
         }
         ctx.save();
@@ -538,12 +550,12 @@ export class Renderer2D {
         ctx.fillStyle = spent ? '#3a3f47' : '#2b2f36';
         if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.fill(); }
         else ctx.fillRect(bx0, by0, bs, bs);
-        ctx.strokeStyle = spent ? '#6b7280' : (armed ? '#f5c518' : '#b8902a');
+        ctx.strokeStyle = armed ? accentHi : accent;
         ctx.lineWidth = armed ? 3 : 2;
         if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.stroke(); }
         else ctx.strokeRect(bx0, by0, bs, bs);
         // Uses left, drawn boldly so the remaining count reads at a glance.
-        ctx.fillStyle = spent ? '#9aa3b0' : '#f3e3b0';
+        ctx.fillStyle = spent ? '#9aa3b0' : (cool ? '#cbd6e2' : '#f3e3b0');
         ctx.font = 'bold 13px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(`${uses}`, x, y + 0.5);
@@ -627,14 +639,11 @@ export class Renderer2D {
       ctx.setLineDash([]);
       for (const it of uiState.menu.items) {
         const [rx, ry, rw, rh] = it.rect;
-        // A disabled item is a no-op choice (e.g. recolouring to the colour it
-        // already is): drawn dim and inert so the player reads it as "already so".
-        const off = it.disabled;
-        ctx.fillStyle = off ? 'rgba(20, 22, 28, 0.6)' : 'rgba(20, 22, 28, 0.92)';
+        ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
         ctx.fillRect(rx, ry, rw, rh);
-        ctx.strokeStyle = off ? '#5a6472' : '#f5c518'; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 1.5;
         ctx.strokeRect(rx, ry, rw, rh);
-        ctx.fillStyle = off ? '#6b7280' : '#ffffff';
+        ctx.fillStyle = '#ffffff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillText(it.label, rx + 10, ry + rh / 2);

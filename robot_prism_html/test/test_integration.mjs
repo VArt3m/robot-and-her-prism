@@ -2,7 +2,7 @@
 // place flow and the renderer's ghost drawing, catching runtime errors that a
 // syntax check can't. Run: node test_integration.mjs
 import { dist } from '../js/core/geometry.js';
-import { CONNECT_REACH } from '../js/core/constants.js';
+import { CONNECT_REACH, FORGE_REACH } from '../js/core/constants.js';
 
 // --- minimal DOM mocks ---
 const noop = () => {};
@@ -26,6 +26,7 @@ globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 
 const { App } = await import('../js/ui/app.js');
 const { objType } = await import('../js/sim/objects.js');
+const { STR } = await import('../js/core/strings.js');
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
@@ -212,7 +213,7 @@ ok(true, 'ticks ran without throwing');
   ok(app._panelConflict() === false, 'no conflict outside any targeting gesture');
 }
 
-// --- Forge chooser excludes no-op options (a use is never spent on nothing) ---
+// --- Forge chooser hides no-op options; out of radius is silent ---
 {
   const ui = app.uiState;
   // Drop anything carried, then pick up the rewirer (defaults to red) and stand
@@ -226,36 +227,174 @@ ok(true, 'ticks ran without throwing');
 
   app._invokeForge();
   ok(ui.menu && ui.menu.items, 'Forge opened the programming chooser');
-  const red = ui.menu.items.find(it => it.value === 'red');
-  const green = ui.menu.items.find(it => it.value === 'green');
-  ok(red && red.disabled === true, 'the current colour (red) is offered DISABLED');
-  ok(green && !green.disabled, 'a different colour (green) is offered enabled');
-  ok(ui.menu.items.filter(it => !it.disabled).length === ui.menu.items.length - 1,
-     'exactly the current value is excluded');
-
-  // Clicking the disabled (red) option spends nothing and leaves the menu open.
-  const usesBefore = forge.uses;
-  const [rx, ry, rw, rh] = red.rect;
-  app._handleMenuClick(rx + rw / 2, ry + rh / 2);
-  ok(forge.uses === usesBefore, 'clicking the no-op option spends no Forge use');
-  ok(w.nodes['rw_a'].color === 'red', 'rewirer colour unchanged by the no-op click');
-  ok(ui.menu !== null, 'the chooser stays open after a no-op click');
+  ok(!ui.menu.items.some(it => it.value === 'red'), 'the current colour (red) is OMITTED, not shown');
+  ok(ui.menu.items.some(it => it.value === 'green'), 'a different colour (green) is offered');
+  ok(ui.menu.items.length === 2, 'rewirer (3 colours) shows exactly the 2 that change it');
 
   // Clicking a real (green) option applies it and spends one use.
+  const usesBefore = forge.uses;
   const g = ui.menu.items.find(it => it.value === 'green');
   const [gx, gy, gw, gh] = g.rect;
   app._handleMenuClick(gx + gw / 2, gy + gh / 2);
   ok(w.nodes['rw_a'].color === 'green', 'a real choice (green) applies');
   ok(forge.uses === usesBefore - 1, 'a real choice spends exactly one Forge use');
 
-  // Re-open: now green is the no-op and red is selectable again.
+  // Re-open: now green is omitted and red is back.
   ui.menu = null;
   app._invokeForge();
   ok(ui.menu, 'chooser re-opens');
-  ok(ui.menu.items.find(it => it.value === 'green').disabled === true,
-     'after recolouring to green, "green" is now the excluded no-op');
-  ok(!ui.menu.items.find(it => it.value === 'red').disabled,
-     'and "red" is selectable again');
+  ok(!ui.menu.items.some(it => it.value === 'green'), 'after recolouring to green, "green" is now omitted');
+  ok(ui.menu.items.some(it => it.value === 'red'), 'and "red" is offered again');
+  ui.menu = null;
+
+  // Out of every Forge's radius: pressing F is a silent no-op — no menu, no flash,
+  // no beep. (The old "No Forge in range" message is gone entirely.)
+  let beeps = 0; const realBeep = app._beep; app._beep = () => { beeps++; };
+  app._flash = null;
+  w.player = [forge.pos[0] + 10000, forge.pos[1]];   // far from any Forge
+  app._invokeForge();
+  ok(ui.menu == null, 'out of radius → no chooser opens');
+  ok(beeps === 0, 'out of radius → no beep');
+  ok(app._flash == null, 'out of radius → no flash message');
+  ok(STR.flash.noForge === undefined, 'the obsolete "No Forge in range" string is removed');
+
+  // In radius but carrying nothing programmable → the "nothing to program" flash
+  // (and a beep) still fire, because she IS at the Forge.
+  w.player = [...forge.pos]; w.carrying = null; w.carry_box = null;
+  beeps = 0; app._flash = null;
+  app._invokeForge();
+  ok(beeps === 1, 'at the Forge, empty-handed → one beep');
+  ok(app._flash && app._flash.text === STR.flash.notProgrammable,
+     'at the Forge, empty-handed → "nothing to program" flash');
+  app._beep = realBeep; ui.menu = null;
+}
+
+// --- corrupting vs clean-only Forge, and the overlap dead-zone ---
+{
+  const ui = app.uiState;
+  const fa = w.nodes['forge_a'], fb = w.nodes['forge_b'];
+  ok(fa && fb, 'both Forges exist in the level');
+  ok(fa.corrupts !== false, 'forge_a is a corrupting Forge (default)');
+  ok(fb.corrupts === false, 'forge_b is clean-only (corrupts:false)');
+  const sep = dist(fa.pos, fb.pos);
+  ok(sep > FORGE_REACH && sep < 2 * FORGE_REACH,
+     `Forges are spaced so each has a solo zone AND they overlap (got ${sep.toFixed(0)}px vs reach ${FORGE_REACH})`);
+
+  // Carry the connector; start it clean.
+  w.carrying = null; w.carry_box = null; ui.menu = null;
+  ok(app._pickItem({ kind: 'connector', id: 'con_c' }), 'carrying con_c');
+  w.nodes['con_c'].color = null;
+
+  // Corrupting Forge, clean connector → offers the three corruptions, hides the
+  // no-op "clean".
+  w.player = [...fa.pos];
+  ok(app._canForge() === true, 'sole corrupting Forge → programming available');
+  app._invokeForge();
+  ok(ui.menu, 'corrupting Forge opened a chooser for a clean connector');
+  ok(['red', 'green', 'blue'].every(c => ui.menu.items.some(it => it.value === c)),
+     'corrupting Forge offers every corruption colour');
+  ok(!ui.menu.items.some(it => it.value === null), 'a clean connector is not offered "clean" (no-op)');
+  ui.menu = null;
+
+  // Clean-only Forge, CORRUPTED connector → offers ONLY cleaning, no colours.
+  w.nodes['con_c'].color = 'green';
+  w.player = [...fb.pos];
+  ok(app._canForge() === true, 'sole clean-only Forge → programming available');
+  app._invokeForge();
+  ok(ui.menu, 'clean-only Forge opened a chooser for a corrupted connector');
+  ok(ui.menu.items.length === 1 && ui.menu.items[0].value === null,
+     'clean-only Forge offers ONLY "clean" — every corruption colour is hidden');
+  // And cleaning actually works there (and spends a use).
+  const fbUses = fb.uses;
+  const [cx, cy, cw, ch] = ui.menu.items[0].rect;
+  app._handleMenuClick(cx + cw / 2, cy + ch / 2);
+  ok(w.nodes['con_c'].color == null, 'clean-only Forge cleans the connector');
+  ok(fb.uses === fbUses - 1, 'cleaning spends one clean-only-Forge use');
+  ui.menu = null;
+
+  // Clean-only Forge, ALREADY-clean connector → nothing to change: no menu, but
+  // now it knocks and says so (rather than silently doing nothing).
+  w.nodes['con_c'].color = null;
+  w.player = [...fb.pos];
+  let beeps = 0; const realBeep = app._beep; app._beep = () => { beeps++; };
+  app._flash = null;
+  app._invokeForge();
+  ok(ui.menu == null, 'clean-only Forge + already-clean connector → no chooser');
+  ok(beeps === 1, '…but it knocks');
+  ok(app._flash && app._flash.text === STR.flash.forgeNoChange, '…and says it has nothing to change');
+
+  // The overlap dead-zone: standing where BOTH LIVE control areas cover the robot,
+  // programming is unavailable — silent, no menu, button hidden.
+  w.player = [(fa.pos[0] + fb.pos[0]) / 2, (fa.pos[1] + fb.pos[1]) / 2];
+  ok(w.forges().filter(f => dist(w.player, f.pos) < FORGE_REACH).length === 2,
+     'midpoint really sits inside both control areas');
+  ok(app._canForge() === false, 'overlap of two LIVE areas → programming NOT available');
+  beeps = 0; app._flash = null;
+  app._invokeForge();
+  ok(ui.menu == null && beeps === 0 && app._flash == null, 'overlap of live areas → silent');
+
+  // The tweak: a SPENT Forge has no live area, so it never blocks. Empty forge_b,
+  // stand at the same midpoint: now only forge_a is live there → programming works.
+  const fbWas = fb.uses; fb.uses = 0;
+  w.nodes['con_c'].color = null;            // clean, so forge_a (corrupting) has work
+  ok(app._canForge() === true, 'spent Forge does not count toward overlap → still available');
+  app._invokeForge();
+  ok(ui.menu && ui.menu.items.some(it => it.value === 'red'),
+     'at the overlap with one Forge spent, the live Forge programs normally');
+  ui.menu = null; fb.uses = fbWas;          // restore
+
+  // A lone SPENT Forge still reports "spent" (the message is not lost).
+  const faWas = fa.uses; fa.uses = 0; fb.uses = 0;
+  w.player = [...fa.pos];
+  beeps = 0; app._flash = null;
+  app._invokeForge();
+  ok(beeps === 1 && app._flash && app._flash.text === STR.flash.forgeSpent,
+     'lone spent Forge → "spent" knock + message preserved');
+  fa.uses = faWas; fb.uses = fbWas;
+  app._beep = realBeep;
+
+  app._draw(); ok(true, 'render with two distinctly-tinted Forges did not throw');
+  w.carrying = null; ui.menu = null;
+}
+
+// --- inverter: the multi-facet Forge chooser (corruption + pair) end-to-end ---
+{
+  const ui = app.uiState;
+  const fa = w.nodes['forge_a'];               // a corrupting Forge
+  w.carrying = null; w.carry_box = null; ui.menu = null;
+  ok(app._pickItem({ kind: 'inverter', id: 'inv_a' }), 'carrying the inverter');
+  // Pickup stamps every facet default: clean (null) + the red/blue pair.
+  ok(w.nodes['inv_a'].color === null, 'inverter starts clean');
+  ok(JSON.stringify([...w.nodes['inv_a'].pair].sort()) === JSON.stringify(['blue', 'red']),
+     'inverter starts on the red/blue pair');
+
+  // At a corrupting Forge: 3 corruption colours + 2 other pairs = 5 options,
+  // each carrying its own field.
+  w.player = [...fa.pos];
+  app._invokeForge();
+  ok(ui.menu, 'inverter chooser opened at the Forge');
+  const colorOpts = ui.menu.items.filter(it => it.field === 'color');
+  const pairOpts  = ui.menu.items.filter(it => it.field === 'pair');
+  ok(colorOpts.length === 3 && pairOpts.length === 2, 'menu spans both facets (3 colour + 2 pair)');
+  ok(!ui.menu.items.some(it => it.field === 'color' && it.value === null), 'clean (no-op) colour is omitted');
+
+  // Pick a pair swap → the pair field changes and one Forge use is spent.
+  const usesBefore = fa.uses;
+  const toGreen = pairOpts.find(it => JSON.stringify([...it.value].sort()) === JSON.stringify(['green', 'red']));
+  ok(toGreen, 'a red/green pair option is offered');
+  const [px, py, pw, ph] = toGreen.rect;
+  app._handleMenuClick(px + pw / 2, py + ph / 2);
+  ok(JSON.stringify([...w.nodes['inv_a'].pair].sort()) === JSON.stringify(['green', 'red']),
+     'the inverter is reprogrammed to the red/green pair');
+  ok(fa.uses === usesBefore - 1, 'reprogramming the pair spends one Forge use');
+
+  // Now corrupt it → the color field changes (a separate facet, same chooser).
+  ui.menu = null;
+  app._invokeForge();
+  const blueOpt = ui.menu.items.find(it => it.field === 'color' && it.value === 'blue');
+  const [bx, by, bw, bh] = blueOpt.rect;
+  app._handleMenuClick(bx + bw / 2, by + bh / 2);
+  ok(w.nodes['inv_a'].color === 'blue', 'the inverter can also be corrupted (locked to blue)');
   ui.menu = null; w.carrying = null;
 }
 

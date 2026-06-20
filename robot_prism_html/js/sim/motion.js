@@ -1,6 +1,6 @@
 import { EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH } from '../core/constants.js';
 import { seg_inter, first_block_t, dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES } from './objects.js';
+import { OBJECT_TYPES, isRelay } from './objects.js';
 
 export class Motion {
   constructor(world, engine) {
@@ -46,7 +46,7 @@ export class Motion {
       out[n.id] = Boolean(
         (player_pos && dist(player_pos, bp) < BTN_R)
         || boxes.some(b => dist(b, bp) < BTN_R)
-        || Object.values(w.nodes).some(c => c.kind==='connector' && c.id!==w.carrying && dist(c.pos,bp)<BTN_R)
+        || Object.values(w.nodes).some(c => isRelay(c.kind) && c.id!==w.carrying && dist(c.pos,bp)<BTN_R)
       );
     }
     return out;
@@ -161,8 +161,8 @@ export class Motion {
         return;   // non-pushable: the box simply stops the player
       }
     }
-    // Ground connectors are material and not pushable, too.
-    for (const c of w.connectors()) {
+    // Ground relays (connectors / inverters) are material and not pushable, too.
+    for (const c of w.relays()) {
       if (c.id === w.carrying) continue;
       if (dist(new_, c.pos) < PLAYER_R + CONN_R - 2) return;
     }

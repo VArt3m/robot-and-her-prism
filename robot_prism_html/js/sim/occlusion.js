@@ -26,7 +26,7 @@
 
 import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
 import { seg_inter } from '../core/geometry.js';
-import { objType } from './objects.js';
+import { objType, isRelay } from './objects.js';
 
 export const RAY_OCCLUSION = {
   laser:   { wall: true, barrierTan: false, barrierPurple: false, ffActive: true, object: true,  player: true },
@@ -83,8 +83,8 @@ export function rayBlockerSegments(world, profile, { excludeFieldId = null, excl
 // ray at all (a box, a mine — the mine is programmable-only, not targeting), so
 // the "passable ray area" highlight simply shows nothing for them.
 export function carriedRayType(kind) {
+  if (isRelay(kind)) return 'laser';        // connector, inverter, future sisters
   switch (kind) {
-    case 'connector': return 'laser';
     case 'rewirer':   return 'rewirer';
     case 'jammer':    return 'jammer';
     default:          return null;
