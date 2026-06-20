@@ -221,14 +221,20 @@ export class Renderer2D {
       ctx.setLineDash([]);
     }
 
-    // Beams
+    // Beams. Occluded and delivered rays share ONE look — same thickness and
+    // colour regardless of whether the beam actually reaches its goal. The look
+    // is chosen by the beam's colour, not its delivered state: almost every
+    // colour uses the bright (formerly "delivered") variant, while white is the
+    // exception and uses the dim (formerly "occluded") colour so it stays legible
+    // against the pale background. Thickness is uniform (width 4) for all beams.
     for (const [a, b, col, delivered] of w.beams_draw) {
-      const shade = delivered ? COLORS[col] : (DIM[col] ?? '#999');
+      const isWhite = col === 'white';
+      const shade = isWhite ? (DIM[col] ?? '#999') : (COLORS[col] ?? '#999');
       ctx.beginPath();
       ctx.moveTo(a[0], a[1]);
       ctx.lineTo(b[0], b[1]);
       ctx.strokeStyle = shade;
-      ctx.lineWidth = delivered ? 4 : 3;
+      ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       ctx.setLineDash([]);
       ctx.stroke();
@@ -640,11 +646,12 @@ export class Renderer2D {
       const fx = f[0] / fl, fy = f[1] / fl;
       const perpx = -fy, perpy = fx;
       const fwd = PLAYER_R * 0.40, spread = PLAYER_R * 0.42;
+      const eyeR = PLAYER_R * 0.22;   // scales with the body so eyes stay natural
       ctx.fillStyle = '#fff';
       for (const s of [-1, 1]) {
         const ex = px + fx*fwd + perpx*spread*s;
         const ey = py + fy*fwd + perpy*spread*s;
-        ctx.beginPath(); ctx.arc(ex, ey, 1.8, 0, 2*Math.PI); ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, eyeR, 0, 2*Math.PI); ctx.fill();
       }
       if (mode === 'play') {
         ctx.beginPath(); ctx.arc(px, py, CONNECT_REACH, 0, 2*Math.PI);

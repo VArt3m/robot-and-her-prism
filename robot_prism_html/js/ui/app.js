@@ -41,21 +41,21 @@ const AIM_DECIDE_MS = 500;
 // inside the operating ring) pulls a connection wire instead of moving her.
 const PLAYER_GRAB_R = 11;
 
-// Stacking rule: may an object of kind `carried` be set down onto a target of
-// type `onto`? Target types: 'ground', 'box' (empty), 'box+connector' (a box
-// that already carries a relay), 'connector'. The rule is derived from object
-// kind — NOT enumerated per device — so every relay (connector / inverter /
-// mixer / future sisters) and every carriable device obeys it automatically:
-//   • anything carriable rests on the ground;
-//   • a relay may additionally elevate onto an empty box;
-//   • nothing stacks onto an occupied box or directly onto another relay.
-// The relation is one-way by design (a relay may rest on a box, a box may not
-// rest on a relay), and (for now) no two relays share a box.
+// Stacking rules (generalized form of the old STACK_RULES table): may an object
+// of type `carried` be set down onto a target of type `onto`? Target types:
+// 'ground', 'box' (empty), 'box+connector' (a box already carrying a connector),
+// 'connector'. The relation is one-way by design and encodes exactly the old
+// table, but keys the "rests on an empty box" case off isRelay so every relay
+// sister (connector / inverter / mixer / any future one) is covered automatically
+// — the previous explicit table silently omitted the mixer, which made dropping a
+// carried mixer fail with "My hands are full". Rules:
+//   • anything may be set on the ground;
+//   • only a relay may rest on an EMPTY box;
+//   • nothing rests on an already-occupied box, and nothing rests on a connector.
 function canPlace(carried, onto) {
-  if (!carried) return false;
   if (onto === 'ground') return true;
-  if (onto === 'box') return isRelay(carried);
-  return false;  // 'box+connector' / 'connector' — no stacking (yet)
+  if (onto === 'box')    return isRelay(carried);
+  return false;            // 'box+connector' or 'connector' — never
 }
 
 export class App {
@@ -1199,7 +1199,7 @@ export class App {
   }
 
   // Classify what sits under (x, y) for placement, ignoring `excludeId`.
-  // Returns { type, point } where type is one of the canPlace target kinds.
+  // Returns { type, point } where type is one of the STACK_RULES target kinds.
   _targetUnder(x, y, excludeId) {
     const w = this.world;
     let box = null, bd = BOX_R + 4;

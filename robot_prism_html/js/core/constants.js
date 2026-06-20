@@ -4,7 +4,7 @@ export const EPS = 1e-7;
 // and the ray-reach highlight all read these so there is one source of truth.
 export const WORLD_W = 1018;
 export const WORLD_H = 640;
-export const PLAYER_R = 8;
+export const PLAYER_R = 9;
 export const BOX_R = 12;
 export const CONN_R = 12;
 export const MINE_R = 10;

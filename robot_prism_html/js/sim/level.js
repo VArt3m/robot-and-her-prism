@@ -40,6 +40,16 @@ export function build_level() {
   w.add(new Node('inv_a', 'inverter', [660,293], { label:'I' }));
   w.add(new Node('con_2', 'connector', [915,590], { label:'2' }));
 
+  // Three more plain connectors scattered in open space — scratch parts for testing.
+  w.add(new Node('con_3', 'connector', [350,165], { label:'3' }));
+  w.add(new Node('con_4', 'connector', [560,175], { label:'4' }));
+  w.add(new Node('con_5', 'connector', [300,360], { label:'5' }));
+
+  // One more inverter and one more mixer, also for testing — same clean defaults
+  // as their originals (inverter swaps red<->blue; mixer in 'blend' mode).
+  w.add(new Node('inv_b', 'inverter', [700,180], { label:'J' }));
+  w.add(new Node('mix_b', 'mixer',    [680,440], { label:'Y', mode:'blend' }));
+
   w.boxes.push([580, 500]);   // test box in the open area near the player start
 
   // Programmable / targeting devices (phase 1: real, carriable, placeable) — a
