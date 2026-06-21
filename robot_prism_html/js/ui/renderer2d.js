@@ -15,6 +15,83 @@ function diamond(cx, cy, r = 13) {
   return [[cx, cy-r], [cx+r, cy], [cx, cy+r], [cx-r, cy]];
 }
 
+// --- Ray pulsation ("wavy flow") tunables, in world units / seconds. ---------
+// A very slow, very subtle wave travels along every lit ray in the direction the
+// engine's RANKS flow — always from a beam's origin toward its drawn end. So a
+// normal ray (low rank → high rank) shows one wave; a tug-of-war link carries
+// two opposing beams and therefore two waves flowing AT each other (meeting at
+// the midpoint on a different-colour clash, or — on a same-colour tug, drawn
+// full length — passing end to end, each kept to its own side of the centreline).
+const WAVE_WIDTH   = 2;      // stroke width — the "two pixel wide" flow
+const WAVE_AMP     = 0.7;    // transverse undulation amplitude
+const WAVE_LAMBDA  = 30;     // wavelength along the ray
+const WAVE_SPEED   = 13;     // crest travel speed (slow)
+const WAVE_LANE    = 1.0;    // side-offset for a tug's two waves (own left-normal)
+const WAVE_ALPHA   = 0.42;   // peak opacity — subtle
+const WAVE_STEP    = 4;      // sampling spacing along the ray
+const WAVE_LIGHTEN = 0.55;   // how far the wave colour is pushed toward white
+const WAVE_INSET   = 2;      // keep the wave this far inside each end of the ray
+const WAVE_RAMP    = 12;     // over this distance the wave eases onto the core at each end
+const WAVE_MIN_LEN = 2 * (WAVE_INSET + 4);   // shorter rays get no wave
+
+// Push a #rrggbb colour `amt` (0..1) of the way toward white → an "rgb()" string.
+function lightenHex(hex, amt) {
+  const h = (hex || '#999999').replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16) || 0;
+  const g = parseInt(h.slice(2, 4), 16) || 0;
+  const b = parseInt(h.slice(4, 6), 16) || 0;
+  const mix = (c) => Math.round(c + (255 - c) * amt);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
+// Draw the travelling wave for one directional ray, from O to E. This is PURELY
+// COSMETIC: it is computed only from the already-solved draw segment and never
+// feeds back into the engine, so occlusion can't see it — a ray is blocked by the
+// solver's geometry alone, never by the wave grazing an obstacle. And it stays
+// strictly inside the drawn segment (inset at both ends, amplitude eased onto the
+// core near each end), so it never visually pokes past a cut where a ray ends at
+// an obstacle either. Phase scrolls in +s (O→E) so crests flow that way; on a tug
+// ray the wave rides one side (its own left-normal) so the two opposing waves stay
+// distinct.
+function drawBeamWave(ctx, O, E, hex, isTug, t) {
+  const vx = E[0] - O[0], vy = E[1] - O[1];
+  const len = Math.hypot(vx, vy);
+  if (len < WAVE_MIN_LEN) return;
+  const ux = vx / len, uy = vy / len;       // unit along the ray (flow direction)
+  const nx = -uy, ny = ux;                   // left-normal
+  const lane = isTug ? WAVE_LANE : 0;
+  const k = (2 * Math.PI) / WAVE_LAMBDA;
+  const tint = lightenHex(hex, WAVE_LIGHTEN);
+  const s0 = WAVE_INSET, s1 = len - WAVE_INSET;   // drawn span, held off both ends
+  ctx.save();
+  ctx.lineWidth = WAVE_WIDTH;
+  ctx.lineCap = 'round';
+  ctx.setLineDash([]);
+  ctx.strokeStyle = tint;
+  // Ease the transverse offset to zero near both ends so the wave hugs the beam
+  // core there (and can't lean out past a terminating obstacle).
+  const edge = (s) => Math.max(0, Math.min(1, Math.min(s - s0, s1 - s) / WAVE_RAMP));
+  const at = (s) => {
+    const ph = k * (s - WAVE_SPEED * t);
+    const off = (lane + WAVE_AMP * Math.sin(ph)) * edge(s);
+    return [O[0] + ux * s + nx * off, O[1] + uy * s + ny * off, ph];
+  };
+  // Per-segment alpha gives the travelling brightness packet (the "pulsation").
+  let [px, py] = at(s0);
+  for (let s = s0 + WAVE_STEP; s <= s1; s += WAVE_STEP) {
+    const cs = Math.min(s, s1);
+    const [cx, cy, ph] = at(cs);
+    const env = 0.30 + 0.70 * (0.5 + 0.5 * Math.sin(ph - k * (WAVE_STEP / 2)));
+    ctx.globalAlpha = WAVE_ALPHA * env;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(cx, cy);
+    ctx.stroke();
+    px = cx; py = cy;
+  }
+  ctx.restore();
+}
+
 function starPts(cx, cy, r = 16, ri = 7, n = 5) {
   const pts = [];
   for (let i = 0; i < 2*n; i++) {
@@ -227,7 +304,11 @@ export class Renderer2D {
     // colour uses the bright (formerly "delivered") variant, while white is the
     // exception and uses the dim (formerly "occluded") colour so it stays legible
     // against the pale background. Thickness is uniform (width 4) for all beams.
-    for (const [a, b, col, delivered] of w.beams_draw) {
+    // A SAME-COLOUR TUG arrives here already drawn full length with delivered=true
+    // (the engine's draw builder does that), so it shows as one smooth, even ray
+    // even though mechanically nothing passes across it.
+    const waveT = performance.now() / 1000;
+    for (const [a, b, col, delivered, tug] of w.beams_draw) {
       const isWhite = col === 'white';
       const shade = isWhite ? (DIM[col] ?? '#999') : (COLORS[col] ?? '#999');
       ctx.beginPath();
@@ -245,6 +326,9 @@ export class Renderer2D {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+      // Slow, subtle wave flowing from O→end (the rank-flow direction). On a tug
+      // ray it rides one side so the two opposing waves read as distinct.
+      drawBeamWave(ctx, a, b, isWhite ? (COLORS.white ?? shade) : shade, !!tug, waveT);
     }
 
     // Jammer rays — "dark matter": practically invisible. A faint hair-line; a

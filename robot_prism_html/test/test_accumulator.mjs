@@ -2,7 +2,8 @@
 //   CHARGED (color set): a rank-0 source that emits ONLY its own colour. It never
 //     relays incoming light, is never confused, and is dead weight to beams that
 //     pass through it. Against a same-rank emitter (a source / another charged
-//     accumulator) a colour clash tugs at the midpoint; same colour delivers.
+//     accumulator) it is a tug-of-war that delivers to neither end — a colour
+//     clash and a colour match alike (the match is just shown as a connected ray).
 //   EMPTY  (color null): a sink that fills over ACCUM_FILL_SEC of an uninterrupted
 //     SINGLE incoming colour (more than one colour, or none, resets the charge),
 //     then becomes charged and the link that filled it drops.
@@ -64,7 +65,8 @@ const beamsBetween = (w, x, y) => {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Charged vs a same-rank source: colour clash tugs; same colour delivers.
+// 4. Charged vs a same-rank source: a tug either way — clash or match, the ray
+//    delivers to neither end (the match is merely drawn as a connected ray).
 // ---------------------------------------------------------------------------
 {
   const w = mk();
@@ -80,8 +82,8 @@ const beamsBetween = (w, x, y) => {
   w2.add(new Node('S', 'source', [200, 0], { color: 'red' }));
   w2.toggle_link('A', 'S'); w2.solve(true);
   const same = beamsBetween(w2, 'A', 'S');
-  ok(same.length === 2 && same.every(({ del }) => del === true),
-     'charged accumulator vs source, same colour → full delivery');
+  ok(same.length === 2 && same.every(({ del }) => del === false),
+     'charged accumulator vs source, same colour → also a tug (neither delivers; shown connected, passes nothing)');
 }
 
 // ---------------------------------------------------------------------------

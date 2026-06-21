@@ -121,8 +121,11 @@ function beamsBetween(w, x, y) {
   ok(r.get('A') === 1 && r.get('B') === 1, 'A and B are the same rank');
   ok(beamsBetween(w, 'A', 'B').join() === 'A->B,B->A', 'same-rank clear link → both directions radiate');
 
-  // Same rank but the SAME colour on both sides: nothing to clash over, so the
-  // ray simply connects (full length, delivers across) rather than splitting.
+  // Same rank and the SAME colour on both sides is now ALSO a tug-of-war:
+  // mechanically nothing passes (each beam is capped at the midpoint and
+  // delivers to neither end), exactly like the different-colour clash. (The
+  // renderer still SHOWS it as one smooth full-length ray, but that is a draw-
+  // only concern — the solver delivers nothing.)
   const w3 = new World(); w3.player = null; w3._uid = 1;
   w3.add(new Node('r1', 'source',    [0, 0],   { color: 'red' }));
   w3.add(new Node('r2', 'source',    [400, 0], { color: 'red' }));
@@ -133,9 +136,10 @@ function beamsBetween(w, x, y) {
   const [, [b3, l3, d3]] = w3.engine.propagate();
   const ab3 = b3.map((b, k) => ({ b, len: l3[k], del: d3[k] }))
     .filter(({ b }) => (b.o === 'A' && b.t === 'B') || (b.o === 'B' && b.t === 'A'));
-  ok(ab3.length === 2 && ab3.every(({ b, len }) => Math.abs(len - b.dl) < 1e-6),
-     'same-rank, SAME colour → beams run the FULL length (no midpoint split)');
-  ok(ab3.every(({ del }) => del === true), 'same-rank same colour → the ray connects (delivers across)');
+  ok(ab3.length === 2 && ab3.every(({ b, len }) => Math.abs(len - b.dl / 2) < 1e-6),
+     'same-rank, SAME colour → each beam is cut at the midpoint (a tug, no pass-through)');
+  ok(ab3.every(({ del }) => del === false), 'same-rank same colour → delivers to neither end (mechanically nothing passes)');
+  ok(ab3.every(({ b }) => b.tug === 'same'), 'both beams are tagged as a same-colour tug (for the renderer)');
 }
 
 // ===========================================================================

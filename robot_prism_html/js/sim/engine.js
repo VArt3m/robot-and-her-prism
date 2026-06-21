@@ -180,27 +180,37 @@ export class Engine {
         // at it (no suppression). Same-rank / unreached pairs are never suppressed.
         const clear = hard_mat >= dl - 1e-6;
         if (clear && RANK(o) > RANK(t)) continue;
-        // Same-rank head-on on a clear path: two equal-priority relays are peers.
-        // If they carry DIFFERENT colours they clash — each beam is capped at the
-        // MIDPOINT so it splits there and feeds neither end. But if BOTH ends carry
-        // the SAME colour there is nothing to clash over, so the ray simply
-        // connects (full length, delivers across). Capping per beam (rather than a
-        // mutual cut needing both ends lit) keeps the clash stable — a lit peer
-        // still only reaches halfway whether or not the other is lit — so no
-        // feedback loop can form (e.g. a mixer that consumes a same-rank relay).
-        // The cap is a clash between two opposing emitters. The TARGET counts as a
-        // clash peer when it emits a beam back (`emit[t] != null` — a source, a
-        // charged accumulator, or a lit relay) OR is a relay (which could emit, and
-        // must still cap even while dark to block feedback). A pure sink — a
-        // receiver, or an EMPTY accumulator charging up — emits nothing back and so
-        // is no peer: its beam runs full length and delivers (a source-less emitter
-        // must light a receiver; a source must fill an accumulator).
+        // Same-rank head-on on a clear path is a TUG-OF-WAR: two equal-priority
+        // emitters push at each other, so each beam is capped at the MIDPOINT —
+        // it splits there and feeds NEITHER end. This now holds whatever the
+        // colours are. It used to make an exception for two ends of the SAME
+        // colour ("nothing to clash over, so the ray connects and delivers");
+        // that exception is gone — same colour is a tug too, and mechanically
+        // nothing passes. The only trace of the colour match is the `tug` tag we
+        // attach below: it is PURELY a hint for the renderer, which still draws a
+        // same-colour tug as one smooth, even, full-length ray (a visual link
+        // only — see renderer2d.js), while a different-colour clash keeps its
+        // two-tone split. Capping per beam (rather than a mutual cut needing both
+        // ends lit) keeps the tug stable — a lit peer still only reaches halfway
+        // whether or not the other is lit — so no feedback loop can form (e.g. a
+        // mixer that consumes a same-rank relay). The cap is a clash between two
+        // opposing emitters. The TARGET counts as a clash peer when it emits a
+        // beam back (`emit[t] != null` — a source, a charged accumulator, or a lit
+        // relay) OR is a relay (which could emit, and must still cap even while
+        // dark to block feedback). A pure sink — a receiver, or an EMPTY
+        // accumulator charging up — emits nothing back and so is no peer: its beam
+        // runs full length and delivers (a source-less emitter must light a
+        // receiver; a source must fill an accumulator).
         let H = hard, HM = hard_mat;
         const sameColour = emit[o] != null && emit[o] === emit[t];
         const peer = emit[t] != null || isRelayKind(nt.kind);
-        if (clear && RANK(o) === RANK(t) && peer && !sameColour) { H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2); }
+        let tug = null;
+        if (clear && RANK(o) === RANK(t) && peer) {
+          tug = sameColour ? 'same' : 'clash';
+          H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2);
+        }
         const dx = (T[0]-O[0])/dl, dy = (T[1]-O[1])/dl;
-        beams.push({ o, t, color: emit[o], O, T, dl, hard: H, hard_mat: HM, level, dx, dy });
+        beams.push({ o, t, color: emit[o], O, T, dl, hard: H, hard_mat: HM, level, dx, dy, tug });
       }
     }
     const n = beams.length;
@@ -655,7 +665,13 @@ export class Engine {
         if (st.since === null) st.since = now;
         if (now - st.since >= CUT_LINGER) { st.len = Lnew; st.deliv = dnew; st.since = null; }
       }
-      out.push([[...b.O], [b.O[0]+b.dx*st.len, b.O[1]+b.dy*st.len], b.color, st.deliv]);
+      // A same-colour tug is mechanically capped at the midpoint (no delivery),
+      // but is SHOWN as one smooth, even, full-length ray — so draw it edge to
+      // edge with the delivered look (no stub). Every other beam draws at its
+      // real animated length and delivered state.
+      const vlen = b.tug === 'same' ? b.dl : st.len;
+      const vdeliv = b.tug === 'same' ? true : st.deliv;
+      out.push([[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug]);
     }
     for (const key of [...this.beam_anim.keys()])
       if (!seen.has(key)) this.beam_anim.delete(key);
@@ -780,7 +796,11 @@ export class Engine {
   _build_draw_timed(beams) {
     return beams.map(b => {
       const L = this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard;
-      return [[...b.O], [b.O[0]+b.dx*L, b.O[1]+b.dy*L], b.color, L >= b.dl - 1e-6];
+      // A same-colour tug is shown full length with the delivered look (see
+      // _animate_beams); everything else draws at its live effective length.
+      const vlen = b.tug === 'same' ? b.dl : L;
+      const vdeliv = b.tug === 'same' ? true : (L >= b.dl - 1e-6);
+      return [[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug];
     });
   }
 
