@@ -27,10 +27,12 @@
  *               the targetable thing under the cursor; `pos` is where its ray ends.
  *   apply(world, deviceId, targetId)
  *               record the intent, honouring maxIntents.
- *   intentRays(world) -> [{ from, to, key, remove() }]
+ *   intentRays(world) -> [{ from, to, key, owners, remove() }]
  *               every stored intent ray of THIS kind, globally, for click-delete.
- *               `key` dedupes a ray shared by two devices; `remove()` deletes
- *               that one intent. Empty for a mark-only device.
+ *               `key` dedupes a ray shared by two devices; `owners` lists the
+ *               node id(s) the ray belongs to (both endpoints for a light link),
+ *               so a click-delete can exclude the carried device's own intents;
+ *               `remove()` deletes that one intent. Empty for a mark-only device.
  *   candidates(world, deviceId, origin) -> [{ id, pos, reachable }]
  *               every thing this device could currently target, with `reachable`
  *               telling whether a ray from `origin` (default: the device's own
@@ -98,6 +100,7 @@ function WIRE_SPEC() {
       return world.links_pairs.map(([a, b]) => ({
         from: world.nodes[a].pos,
         to: world.nodes[b].pos,
+        owners: [a, b],
         key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
         remove: () => world.toggle_link(a, b),
       }));
@@ -148,6 +151,7 @@ export const TARGET_SPECS = {
         return world.links_pairs.map(([a, b]) => ({
           from: world.nodes[a].pos,
           to: world.nodes[b].pos,
+          owners: [a, b],
           key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
           remove: () => world.toggle_link(a, b),
         }));
@@ -187,6 +191,7 @@ export const TARGET_SPECS = {
         if (!rw || !tg || rw.spent) continue;
         out.push({
           from: rw.pos, to: tg.pos,
+          owners: [rid],
           key: `recolor\u0000${rid}`,         // one intent per rewirer
           remove: () => world.clear_recolor(rid),
         });
@@ -245,6 +250,7 @@ export const TARGET_SPECS = {
         out.push({
           from: jn.pos,
           to,
+          owners: [jid],
           key: `jam\u0000${jid}`,           // one intent per jammer
           remove: () => world.clear_jam(jid),
         });
