@@ -3,11 +3,12 @@
 // Panel stays inert and InputHandler's listeners are no-ops — then drives the
 // level-select methods directly and asserts the uiState / world transitions.
 //
-// Covered: opening via the 1-second hold (and that a short hold does NOT open),
+// Covered: opening via the panel's Levels action (a plain click — no hold),
 // Escape cancelling without changing the level, a click (and the modal mouse
-// intercept) loading the chosen level, the "current" mark following the loaded
-// level, a full reset rebuilding the CURRENT level, the modal freeze still
-// draining Escape, and the absence of any keyboard path.
+// intercept) loading the chosen level, a click outside the overlay cancelling
+// it like Escape, the "current" mark following the loaded level, a full reset
+// rebuilding the CURRENT level, the modal freeze still draining Escape, and the
+// absence of any keyboard path.
 // Run: node test_levelselect.mjs
 
 // --- minimal browser stubs (this suite runs in its own process) ---
@@ -46,23 +47,12 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
 }
 
 // ===========================================================================
-// 2. The 1-second hold opens the overlay; a short hold does not.
+// 2. The panel's Levels action opens the overlay directly (a plain click).
 // ===========================================================================
 {
   const a = newApp();
-  // Short hold (200 ms): charging but not yet open.
-  a._panelLevelsSince = performance.now() - 200;
-  a._levelsConsumed = false;
-  a._updateLevelsHold();
-  ok(a.uiState.levelMenu === null, 'a 200 ms hold has not opened the overlay');
-  ok(a.uiState.levelsProgress > 0 && a.uiState.levelsProgress < 1, 'the gauge is partway filled');
-
-  // Full hold (>= 1 s): opens.
-  a._panelLevelsSince = performance.now() - 1100;
-  a._levelsConsumed = false;
-  a._updateLevelsHold();
-  ok(a.uiState.levelMenu && a.uiState.levelMenu.items.length === 2, 'a 1.1 s hold opens the two-entry overlay');
-  ok(a._panelLevelsSince === null, 'opening clears the hold so a stray pointerup cannot refire it');
+  a._openLevelMenu();
+  ok(a.uiState.levelMenu && a.uiState.levelMenu.items.length === 2, 'opening shows the two-entry overlay');
   ok(a.uiState.levelMenu.items[0].current === true && a.uiState.levelMenu.items[1].current === false,
      'Test Grounds is marked current');
 }
@@ -111,16 +101,17 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
 
 // ===========================================================================
 // 6. The overlay is modal to the canvas: a click on an entry loads; a click that
-//    misses every entry is ignored (stays open); only Escape or a choice leaves.
+//    misses every entry closes the overlay (a click outside cancels, like Esc).
 // ===========================================================================
 {
   const a = newApp();
   a._openLevelMenu();
-  // A miss (top-left corner, far from the centered panel) keeps it open.
+  // A miss (top-left corner, far from the centered panel) cancels — closes it.
   a._onMouseDown([3, 3], {});
-  ok(a.uiState.levelMenu !== null, 'a click missing every entry leaves the overlay open (modal)');
+  ok(a.uiState.levelMenu === null, 'a click missing every entry closes the overlay (cancel)');
   ok(a._levelId === 'test_grounds', 'and changes nothing');
   // A hit on the Lorem entry loads it through the same down-intercept.
+  a._openLevelMenu();
   const lorem = a.uiState.levelMenu.items.find(it => it.id === 'lorem_1');
   a._onMouseDown(center(lorem.rect), {});
   ok(a.uiState.levelMenu === null && a._levelId === 'lorem_1', 'a click on an entry loads it via the mouse intercept');

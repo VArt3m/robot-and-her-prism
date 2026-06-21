@@ -97,14 +97,14 @@ const en = {
     undo: 'Undo',
     undoHint: 'Rewind one step (up to 6)',
     levels: 'Levels',
-    levelsHint: 'Hold 1s to choose a level (no keyboard shortcut)',
+    levelsHint: 'Choose a level (no keyboard shortcut)',
   },
 
-  // The centered level-select overlay (opened by holding the red Levels button).
+  // The centered level-select overlay (opened by the red Levels button).
   levelMenu: {
     title: 'Select a level',
     current: 'current',
-    escHint: 'Esc to cancel',
+    escHint: 'Esc or click outside to cancel',
   },
 
   // Receiver fill-time label shown in edit mode.

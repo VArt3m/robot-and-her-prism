@@ -75,7 +75,7 @@ export class Panel {
         <button type="button" class="ui-btn ui-discharge" data-act="discharge" hidden></button>
         <button type="button" class="ui-btn ui-hold" data-act="reset"><span class="ui-fill"></span><span class="ui-label"></span></button>
         <button type="button" class="ui-btn" data-act="undo"></button>
-        <button type="button" class="ui-btn ui-hold ui-levels" data-act="levels"><span class="ui-fill"></span><span class="ui-label"></span></button>
+        <button type="button" class="ui-btn ui-levels" data-act="levels"></button>
       </div>`;
     parent.appendChild(root);
     this.el = root;
@@ -117,6 +117,7 @@ export class Panel {
     click('forge',     () => this.actions.forge?.());
     click('discharge', () => this.actions.discharge?.());
     click('undo',      () => this.actions.undo?.());
+    click('levels',    () => this.actions.openLevels?.());
 
     // Reset is a press-and-hold (mirrors the R key). Pointer events cover mouse,
     // pen and touch uniformly; any release / leave / cancel ends the hold.
@@ -129,17 +130,6 @@ export class Panel {
     rb.addEventListener('pointercancel', end);
     // A plain click on reset should do nothing (only the hold acts); swallow it.
     rb.addEventListener('click', e => { e.preventDefault(); rb.blur(); });
-
-    // Levels is a press-and-hold too (mirrors Reset), but deliberately has NO
-    // keyboard shortcut — this red button is the only way to charge it.
-    const lb = this.btn.levels;
-    const beginL = e => { e.preventDefault(); this.actions.beginLevels?.(); };
-    const endL   = () => this.actions.endLevels?.();
-    lb.addEventListener('pointerdown', beginL);
-    lb.addEventListener('pointerup', endL);
-    lb.addEventListener('pointerleave', endL);
-    lb.addEventListener('pointercancel', endL);
-    lb.addEventListener('click', e => { e.preventDefault(); lb.blur(); });
   }
 
   // Push current game state onto the buttons. `s` carries:
@@ -168,9 +158,6 @@ export class Panel {
     const fill = this.btn.reset.querySelector('.ui-fill');
     if (fill) fill.style.width = `${Math.round((s.resetProgress ?? 0) * 100)}%`;
     this.btn.reset.classList.toggle('holding', (s.resetProgress ?? 0) > 0);
-    const lfill = this.btn.levels.querySelector('.ui-fill');
-    if (lfill) lfill.style.width = `${Math.round((s.levelsProgress ?? 0) * 100)}%`;
-    this.btn.levels.classList.toggle('holding', (s.levelsProgress ?? 0) > 0);
   }
 
   // Dim + disable the whole panel while the modal level overlay is open, so only

@@ -228,9 +228,8 @@ html, body {
 .ui-hold.holding { border-color: #e23b3b; }
 
 /* The Levels button: painted a cautioning red even at rest — a deliberate,
-   rarely-used action that swaps out the whole level. It charges like Reset (the
-   shared red ui-hold fill sweeps across as it is held), but stands apart while
-   idle so it is never pressed by reflex. It has no keyboard shortcut. */
+   rarely-used action that swaps out the whole level. It stands apart from the
+   neutral buttons so it is never pressed by reflex. It has no keyboard shortcut. */
 .ui-levels {
   background: #4a1414;
   border-color: #8a2a2a;

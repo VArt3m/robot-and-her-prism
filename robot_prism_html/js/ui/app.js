@@ -23,10 +23,6 @@ import { STR } from '../core/strings.js';
 // honoured uniformly whether triggered from the keyboard or the tool panel.
 const UNDO_MAX = 6;
 const RESET_HOLD_SEC = 2;
-// How long the red Levels button must be held continuously (seconds) before the
-// level-select overlay opens. Deliberately shorter than a full reset, and the
-// button has NO keyboard equivalent — it is panel-only.
-const LEVELS_HOLD_SEC = 1;
 
 // Long-press duration (ms) that opens the stack chooser (mouse or E key). Kept
 // equal to the tree's AIM_HOLD_MS so every "operating hold" feels the same.
@@ -82,8 +78,6 @@ export class App {
     // Corner tool panel (DOM overlay above the canvas). It reports presses
     // through these callbacks; app.js owns all the resulting game state.
     this._panelResetSince = null;   // ms the panel Reset button has been held; null = up
-    this._panelLevelsSince = null;  // ms the panel Levels button has been held; null = up
-    this._levelsConsumed = false;   // true once a hold opened the level menu, until release
     this.panel = new Panel(canvas.parentElement, {
       toggleTargets:   () => { this.uiState.panel.targets  = !this.uiState.panel.targets; },
       togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
@@ -92,8 +86,7 @@ export class App {
       discharge:       () => this._handleAction('discharge', performance.now() / 1000),
       beginReset:      () => { this._panelResetSince = performance.now(); },
       endReset:        () => { this._panelResetSince = null; },
-      beginLevels:     () => { this._panelLevelsSince = performance.now(); },
-      endLevels:       () => { this._panelLevelsSince = null; },
+      openLevels:      () => this._openLevelMenu(),
       undo:            () => this._rewind(),
     });
 
@@ -106,7 +99,6 @@ export class App {
       pending: null,     // first point of a 2-click segment tool
       mouse:   [0, 0],
       resetProgress: 0,  // 0..1 fill of the full-reset hold (R)
-      levelsProgress: 0, // 0..1 fill of the level-select hold (red panel button)
       levelMenu: null,   // modal level-select overlay { items:[{id,name,current,rect}], panel } | null
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
@@ -287,23 +279,6 @@ export class App {
     }
   }
 
-  // ---- level select (1-second hold of the red panel button; no key) ----
-  // Mirrors the reset gauge but is panel-only and opens the modal level overlay
-  // (it does not load anything itself — a choice in the overlay does that).
-  _updateLevelsHold() {
-    const ui = this.uiState;
-    const since = this._panelLevelsSince;
-    if (since === null) { ui.levelsProgress = 0; this._levelsConsumed = false; return; }
-    if (this._levelsConsumed || ui.levelMenu) { ui.levelsProgress = 0; return; }
-    const elapsed = (performance.now() - since) / 1000;
-    ui.levelsProgress = Math.max(0, Math.min(1, elapsed / LEVELS_HOLD_SEC));
-    if (elapsed >= LEVELS_HOLD_SEC) {
-      this._openLevelMenu();
-      this._levelsConsumed = true;
-      ui.levelsProgress = 0;
-    }
-  }
-
   _fullReset() {
     this.world = this._buildCurrentLevel();
     this.world.solve(true, false);
@@ -350,13 +325,10 @@ export class App {
       titleY: top,
       footY: top + TITLE_H + n * IH + (n - 1) * GAP,
     };
-    // Releasing the (now pointer-events:none) button might not deliver pointerup,
-    // so clear the hold here — the open IS the consumption.
-    this._panelLevelsSince = null;
   }
 
-  // A click while the overlay is open: load the chosen level, or ignore a click
-  // that misses every entry (only Escape or a real choice leaves — it is modal).
+  // A click while the overlay is open: load the chosen level, or close the
+  // overlay if the click misses every entry (a click outside cancels, like Esc).
   _handleLevelMenuClick(x, y) {
     const menu = this.uiState.levelMenu;
     if (!menu) return;
@@ -368,7 +340,8 @@ export class App {
         return;
       }
     }
-    // missed every entry → stay open (modal)
+    // missed every entry → close (a click outside cancels)
+    this.uiState.levelMenu = null;
   }
 
   // Load a level by id: rebuild the world and clear all transient play state
@@ -458,7 +431,6 @@ export class App {
       canDischarge: Boolean(w.carrying && w.nodes[w.carrying]?.kind === 'accumulator' && w.nodes[w.carrying]?.color),
       canUndo: this._undo.length > 0,
       resetProgress: ui.resetProgress ?? 0,
-      levelsProgress: ui.levelsProgress ?? 0,
     });
     this.panel.setInert(Boolean(ui.levelMenu));
     this.panel.setConflict(this._panelConflict(), nowMs);
@@ -520,7 +492,6 @@ export class App {
 
   _frame(ts) {
     this._updateResetHold();
-    this._updateLevelsHold();
     this._updateHoldMenu();
     this._updateGestures();
     const now = ts / 1000;
