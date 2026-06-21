@@ -8,7 +8,7 @@
 
 import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { build_level } from '../sim/level.js';
+import { build_level, LEVELS } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { Panel } from './panel.js';
@@ -23,6 +23,10 @@ import { STR } from '../core/strings.js';
 // honoured uniformly whether triggered from the keyboard or the tool panel.
 const UNDO_MAX = 6;
 const RESET_HOLD_SEC = 2;
+// How long the red Levels button must be held continuously (seconds) before the
+// level-select overlay opens. Deliberately shorter than a full reset, and the
+// button has NO keyboard equivalent — it is panel-only.
+const LEVELS_HOLD_SEC = 1;
 
 // Long-press duration (ms) that opens the stack chooser (mouse or E key). Kept
 // equal to the tree's AIM_HOLD_MS so every "operating hold" feels the same.
@@ -63,6 +67,9 @@ export class App {
     this.canvas = canvas;
     this.statusEl = statusEl;
     this.world = build_level();
+    // Which level is loaded now (drives a full reset's rebuild and the level
+    // overlay's "current" mark). Test Grounds is the default.
+    this._levelId = LEVELS[0].id;
 
     // Rendering — add more renderers here later (e.g. renderer3d)
     this.renderer2d = new Renderer2D(canvas);
@@ -75,6 +82,8 @@ export class App {
     // Corner tool panel (DOM overlay above the canvas). It reports presses
     // through these callbacks; app.js owns all the resulting game state.
     this._panelResetSince = null;   // ms the panel Reset button has been held; null = up
+    this._panelLevelsSince = null;  // ms the panel Levels button has been held; null = up
+    this._levelsConsumed = false;   // true once a hold opened the level menu, until release
     this.panel = new Panel(canvas.parentElement, {
       toggleTargets:   () => { this.uiState.panel.targets  = !this.uiState.panel.targets; },
       togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
@@ -83,6 +92,8 @@ export class App {
       discharge:       () => this._handleAction('discharge', performance.now() / 1000),
       beginReset:      () => { this._panelResetSince = performance.now(); },
       endReset:        () => { this._panelResetSince = null; },
+      beginLevels:     () => { this._panelLevelsSince = performance.now(); },
+      endLevels:       () => { this._panelLevelsSince = null; },
       undo:            () => this._rewind(),
     });
 
@@ -95,6 +106,8 @@ export class App {
       pending: null,     // first point of a 2-click segment tool
       mouse:   [0, 0],
       resetProgress: 0,  // 0..1 fill of the full-reset hold (R)
+      levelsProgress: 0, // 0..1 fill of the level-select hold (red panel button)
+      levelMenu: null,   // modal level-select overlay { items:[{id,name,current,rect}], panel } | null
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
       placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
@@ -256,6 +269,8 @@ export class App {
   // ---- full reset (2-second hold of R, or of the panel's Reset button) ----
   _updateResetHold() {
     const ui = this.uiState;
+    // The modal level overlay blocks the reset hold (and everything else).
+    if (ui.levelMenu) { ui.resetProgress = 0; this._resetConsumed = false; return; }
     // Whichever source began holding first drives the gauge; releasing both
     // clears the consumed flag so a later hold can fire again.
     const a = this.input.resetHeldSince;
@@ -272,8 +287,25 @@ export class App {
     }
   }
 
+  // ---- level select (1-second hold of the red panel button; no key) ----
+  // Mirrors the reset gauge but is panel-only and opens the modal level overlay
+  // (it does not load anything itself — a choice in the overlay does that).
+  _updateLevelsHold() {
+    const ui = this.uiState;
+    const since = this._panelLevelsSince;
+    if (since === null) { ui.levelsProgress = 0; this._levelsConsumed = false; return; }
+    if (this._levelsConsumed || ui.levelMenu) { ui.levelsProgress = 0; return; }
+    const elapsed = (performance.now() - since) / 1000;
+    ui.levelsProgress = Math.max(0, Math.min(1, elapsed / LEVELS_HOLD_SEC));
+    if (elapsed >= LEVELS_HOLD_SEC) {
+      this._openLevelMenu();
+      this._levelsConsumed = true;
+      ui.levelsProgress = 0;
+    }
+  }
+
   _fullReset() {
-    this.world = build_level();
+    this.world = this._buildCurrentLevel();
     this.world.solve(true, false);
     const ui = this.uiState;
     ui.sel = null;
@@ -289,6 +321,79 @@ export class App {
     ui.placePreview = null;
     ui.wireDrag = null;
     this._setFlash(STR.flash.fullReset);
+  }
+
+  // Build a fresh world for whichever level is currently selected.
+  _buildCurrentLevel() {
+    const lvl = LEVELS.find(l => l.id === this._levelId) || LEVELS[0];
+    return lvl.build();
+  }
+
+  // ---- level-select overlay ----
+  // Lay the level entries as a centered vertical stack. The rects are stored on
+  // uiState so the renderer draws and app.js hit-tests against the SAME geometry.
+  _openLevelMenu() {
+    const IW = 320, IH = 42, GAP = 12, TITLE_H = 52, FOOT_H = 34, PAD = 22;
+    const n = LEVELS.length;
+    const blockH = TITLE_H + n * IH + (n - 1) * GAP + FOOT_H;
+    const top = (WORLD_H - blockH) / 2;
+    const left = (WORLD_W - IW) / 2;
+    const items = LEVELS.map((l, i) => ({
+      id: l.id,
+      name: l.name,
+      current: l.id === this._levelId,
+      rect: [left, top + TITLE_H + i * (IH + GAP), IW, IH],
+    }));
+    this.uiState.levelMenu = {
+      items,
+      panel: [left - PAD, top - PAD, IW + 2 * PAD, blockH + 2 * PAD],
+      titleY: top,
+      footY: top + TITLE_H + n * IH + (n - 1) * GAP,
+    };
+    // Releasing the (now pointer-events:none) button might not deliver pointerup,
+    // so clear the hold here — the open IS the consumption.
+    this._panelLevelsSince = null;
+  }
+
+  // A click while the overlay is open: load the chosen level, or ignore a click
+  // that misses every entry (only Escape or a real choice leaves — it is modal).
+  _handleLevelMenuClick(x, y) {
+    const menu = this.uiState.levelMenu;
+    if (!menu) return;
+    for (const it of menu.items) {
+      const [rx, ry, rw, rh] = it.rect;
+      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+        this.uiState.levelMenu = null;
+        this._loadLevel(it.id);
+        return;
+      }
+    }
+    // missed every entry → stay open (modal)
+  }
+
+  // Load a level by id: rebuild the world and clear all transient play state
+  // (mirrors a full reset, plus it remembers the new level for later resets).
+  _loadLevel(id) {
+    const lvl = LEVELS.find(l => l.id === id);
+    if (!lvl) return;
+    this._levelId = id;
+    this.world = lvl.build();
+    this.world.solve(true, false);
+    const ui = this.uiState;
+    ui.sel = null;
+    ui.live = true;
+    ui.dirty = false;
+    ui.dwell = 0;
+    this._undo = [];
+    this._pushRun = false;
+    this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+    this._aim = null;
+    ui.targeting = null;
+    ui.menu = null;
+    ui.levelMenu = null;
+    ui.placePreview = null;
+    ui.wireDrag = null;
+    this._setFlash(STR.flash.levelLoaded(lvl.name));
   }
 
   _setFlash(text, dur = 1.6) {
@@ -353,7 +458,9 @@ export class App {
       canDischarge: Boolean(w.carrying && w.nodes[w.carrying]?.kind === 'accumulator' && w.nodes[w.carrying]?.color),
       canUndo: this._undo.length > 0,
       resetProgress: ui.resetProgress ?? 0,
+      levelsProgress: ui.levelsProgress ?? 0,
     });
+    this.panel.setInert(Boolean(ui.levelMenu));
     this.panel.setConflict(this._panelConflict(), nowMs);
   }
 
@@ -413,6 +520,7 @@ export class App {
 
   _frame(ts) {
     this._updateResetHold();
+    this._updateLevelsHold();
     this._updateHoldMenu();
     this._updateGestures();
     const now = ts / 1000;
@@ -443,6 +551,16 @@ export class App {
     const w = this.world;
     const ui = this.uiState;
     if (ui.mode !== 'play' || !w.player) return;
+
+    // Modal level-select overlay: freeze the world (no movement, no sim step).
+    // Still drain key actions so Escape can close it — every other queued action
+    // is dropped, and held movement keys are simply ignored by returning here.
+    if (ui.levelMenu) {
+      for (const action of this.input.drainActions()) {
+        if (action === 'escape') this._handleAction(action, now);
+      }
+      return;
+    }
 
     const { held, hasFocus } = this.input;
     const vx = (held.has('right') ? 1 : 0) - (held.has('left') ? 1 : 0);
@@ -540,9 +658,10 @@ export class App {
         this._setFlash(STR.flash.accumDischarged);
       }
     } else if (action === 'escape') {
-      // Escape closes an open menu without acting (so a Forge menu can be
-      // dismissed for free); otherwise it leaves click-by-click targeting.
-      if (ui.menu) ui.menu = null;
+      // Escape closes the modal level overlay first; else an open chooser menu;
+      // else it leaves click-by-click targeting.
+      if (ui.levelMenu) ui.levelMenu = null;
+      else if (ui.menu) ui.menu = null;
       else if (ui.targeting) this._exitTargeting();
     }
     // Note: 'reset' is no longer a one-shot action — a full reset is driven by
@@ -558,6 +677,14 @@ export class App {
   // ---- mouse ----
   _onMouseDown([x, y], e) {
     const w = this.world;
+    // Modal level overlay swallows all canvas interaction: a click on a level
+    // entry loads it; a click elsewhere is ignored (only Escape leaves).
+    if (this.uiState.levelMenu) {
+      this._handleLevelMenuClick(x, y);
+      this._press = null;
+      this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
+      return;
+    }
     // Track the press for the long-hold chooser / aim-hold (resolved later).
     this._press = { active: true, t: performance.now(), x, y, moved: false, consumed: false };
     this._drag.moved = false;
@@ -683,6 +810,13 @@ export class App {
   _onMouseUp([x, y], e) {
     const w = this.world;
     const ui = this.uiState;
+    // While the modal overlay is open, any release is inert (the down already
+    // resolved or was swallowed).
+    if (ui.levelMenu) {
+      this._press = null; this._aim = null; ui.wireDrag = null;
+      this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
+      return;
+    }
     const consumed = this._press && this._press.consumed;   // hold opened a menu / branch
     this._press = null;
     this._aim = null;                                       // any pending aim-hold ends
@@ -1531,7 +1665,7 @@ export class App {
     ui.hover = null;
     if (ui.mode !== 'play') return;
     if (w.carrying || w.carry_box) return;
-    if (this._drag.active || ui.targeting || ui.menu) return;
+    if (this._drag.active || ui.targeting || ui.menu || ui.levelMenu) return;
     if (ui.resetProgress > 0 || !ui.mouse) return;
 
     const hit = this._hoverTarget(ui.mouse[0], ui.mouse[1]);

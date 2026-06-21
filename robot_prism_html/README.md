@@ -27,7 +27,7 @@ robot_prism_html/
     │   ├── programming.js # per-kind programming specs behind one generic core
     │   ├── occlusion.js # what each emitted ray passes through (one table)
     │   ├── world.js     # scene state + facade over Engine / Motion
-    │   └── level.js     # hand-built sample level
+    │   └── level.js     # the two built-in levels (Test Grounds + Lorem's Puzzle #1) and the registry
     └── ui/              # presentation + input (depends on core, sim)
         ├── renderer2d.js  # Canvas 2D renderer (DPR-aware, letterboxed)
         ├── input.js       # keyboard / mouse input handler
@@ -100,11 +100,11 @@ Beyond the connector and the box, several devices live on the field:
   - **Blend** (default) — sums everything it receives and succeeds only when the result is a **secondary** (exactly two of the three primaries present). So two distinct primaries make their secondary (red+green→**yellow**, red+blue→**magenta**, green+blue→**cyan**); a lone secondary is **retranslated** unchanged; and a secondary plus a primary already inside it stays that secondary. It is confused by a single primary, by white, and by anything that sums all the way to white (the missing primary, a complementary primary+secondary, two secondaries, …).
   - **Make white** — tries to build **white** from whatever arrives, primary or secondary. It succeeds exactly when the inputs together cover all three primaries (e.g. red+green+blue, or red+cyan, or yellow+blue, or incoming white) and then radiates white like a source; otherwise it is confused. This form does nothing but white.
 
-  Wiring, boxes, buttons, recolour and corruption work as for any relay. Because a mixer must *consume* its feeders, place it **downstream** of them (a higher rank); a mixer that is the same rank as a relay it is wired to are peers that split rather than feed (see directionality below).
+  Wiring, boxes, buttons, recolour and corruption work as for any relay. A mixer automatically ranks **downstream** of whatever feeds it — you no longer place it at a manually higher rank. While it still has too few colours to combine it is *confused*, and a confused tool looks for food before it pushes back: it accepts incoming light from any direction until it can complete its mix, then settles above its feeders (see directionality below).
 
   This expands the palette to seven colours — the three primaries, the three secondaries, and white.
 
-Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection (each node is ranked by its link-distance from a source, and a higher-rank node won't send light to a lower-rank one it is already fed by). Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. Two relays of the **same rank** are peers: on a clear link each beam stops at the **midpoint** and feeds neither end (the ray splits), *unless* both ends carry the **same colour**, in which case there is nothing to clash over and the ray simply connects. This lets an inverter feed another relay without confusing itself, and keeps mixer chains stable.
+Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection. A node's **rank** is set by what feeds it — a source is rank 0, and a relay sits one step below the weakest colour it consumes — and a higher-rank node won't send light back to a lower-rank one that already feeds it. Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. Two relays of the **same rank** are peers: on a clear link each beam stops at the **midpoint** and feeds neither end. If they carry **different colours** the ray splits there into a two-tone clash; if they carry the **same colour** it is instead drawn as one smooth connected ray — but it still delivers nothing across (each peer is already lit by its own feed). The exception is a **confused** tool — one that has taken light but cannot yet make a valid output: it looks for food before it pushes back, so it accepts light from *any* direction (even a longer, weaker chain) until it completes, then re-ranks above its feeders. This lets an inverter or mixer pull in everything it needs without confusing itself or starving, and keeps combiner chains stable.
 
 The **connector**, **inverter** and **mixer** are *programmable* too: at a Forge a relay can be **cleaned** (back to a plain relay) or **corrupted** to a fixed colour — the same locked-colour state a fired rewirer leaves (it then emits that colour regardless of what comes in, never dying on a conflict).
 
@@ -134,6 +134,12 @@ header chevron collapses it vertically. The controls are:
 - **Reset** — press and hold for 2 s to rebuild the whole playfield (same as
   holding **R**).
 - **Undo** — rewind one step (up to 6; same as **Z**).
+- **Levels** — a deliberately understated, cautioning-red button with **no
+  keyboard shortcut**. Press and hold it for **1 s** (it charges as you hold) to
+  open the level-select overlay; it lists the built-in levels with the current
+  one marked. Click a level to load it, or press **Escape** to back out and stay
+  where you are. Switching levels (and a full reset afterwards) starts the chosen
+  level fresh.
 
 If the panel happens to cover an item you are trying to target — while sweeping
 the golden link arrow or in click-by-click — and you move the cursor onto the

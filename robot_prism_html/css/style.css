@@ -227,3 +227,18 @@ html, body {
 .ui-hold .ui-label { position: relative; z-index: 1; }
 .ui-hold.holding { border-color: #e23b3b; }
 
+/* The Levels button: painted a cautioning red even at rest — a deliberate,
+   rarely-used action that swaps out the whole level. It charges like Reset (the
+   shared red ui-hold fill sweeps across as it is held), but stands apart while
+   idle so it is never pressed by reflex. It has no keyboard shortcut. */
+.ui-levels {
+  background: #4a1414;
+  border-color: #8a2a2a;
+  color: #f3b0b0;
+}
+.ui-levels:hover:not(:disabled) { background: #5d1818; border-color: #b83a3a; }
+
+/* While the modal level-select overlay is open, the tool panel is dimmed and
+   stops taking input, so only the overlay (and Escape) respond. */
+.ui-panel.inert { opacity: 0.4; pointer-events: none; }
+

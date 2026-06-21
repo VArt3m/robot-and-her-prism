@@ -96,6 +96,15 @@ const en = {
     resetHint: 'Hold 2s to rebuild the whole playfield',
     undo: 'Undo',
     undoHint: 'Rewind one step (up to 6)',
+    levels: 'Levels',
+    levelsHint: 'Hold 1s to choose a level (no keyboard shortcut)',
+  },
+
+  // The centered level-select overlay (opened by holding the red Levels button).
+  levelMenu: {
+    title: 'Select a level',
+    current: 'current',
+    escHint: 'Esc to cancel',
   },
 
   // Receiver fill-time label shown in edit mode.
@@ -112,6 +121,7 @@ const en = {
     nothingToRewind: 'Nothing to rewind',
     rewound: (left) => `Rewound — ${left} step${left === 1 ? '' : 's'} left`,
     fullReset: 'Playfield fully reset',
+    levelLoaded: (name) => `Loaded ${name}`,
     fuseSet: (s) => `Fuse set to ${s}s`,
     colourSet: (c) => `Colour set to ${en.colors[c] ?? c}`,
     connColorSet: (c) => (c ? `Corrupted — locked to ${en.colors[c] ?? c}` : 'Cleaned — a plain relay again'),

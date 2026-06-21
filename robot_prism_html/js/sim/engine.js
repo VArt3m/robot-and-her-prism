@@ -8,6 +8,7 @@ import { isRelayKind, relayEmit, relayConfused } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
+const EMPTY_SET = new Set();
 
 // A node that emits as a rank-0 SOURCE of its own colour: a real source, or a
 // CHARGED accumulator (a portable source). An empty accumulator emits nothing.
@@ -101,34 +102,100 @@ export class Engine {
     return this._leveled_blockers().map(([p1,p2]) => [p1,p2]);
   }
 
-  // Source-distance RANK of every emitting node, by breadth-first search over the
-  // LINK graph (purely topological — walls are irrelevant here). Sources are 0,
-  // relays linked to a source are 1, relays linked to those are 2, and so on; the
-  // shortest link-path wins. Receivers are sinks (never forward), and a carried
-  // relay is inert, so neither propagates rank. Unreached relays are absent from
-  // the map (treated as +Infinity). Used to make light directional: it flows from
-  // lower rank to higher, never back upstream along a connection that is complete.
-  _linkRanks() {
-    const w = this.world;
-    const adj = new Map();
-    for (const [a, b] of w.links_pairs) {
-      if (!adj.has(a)) adj.set(a, []);
-      if (!adj.has(b)) adj.set(b, []);
-      adj.get(a).push(b); adj.get(b).push(a);
-    }
+  // RANK makes light directional: it flows from lower rank to higher, never back
+  // upstream along a complete connection. Sources (and charged accumulators) are
+  // rank 0. A relay's rank is NOT a topological link-distance — it is computed from
+  // what actually ARRIVES at it, so a tool always sits strictly downstream of every
+  // colour it consumes and never pushes back on a feeder:
+  //
+  //   1. Find everything delivered to the relay. For each incoming COLOUR keep the
+  //      strongest (lowest-rank) feeder of it — between blue@1 and blue@2 keep
+  //      blue@1; between green@0 and green@2 keep green@0. Those are its feeders.
+  //   2. Feed it those per-colour feeders by TIER, strongest first: take all rank-0
+  //      feeders at once and ask whether it can emit yet; if not, add all rank-1
+  //      feeders; and so on. STOP at the first tier that lets it emit a valid output
+  //      — it consumes exactly that prefix and ranks at 1 + that tier, one step below
+  //      the feed that satisfied it and above every feeder it actually used. Weaker
+  //      feeders past that tier are left out (and, once it is settled, the directional
+  //      / same-rank laws suppress them anyway) — so a blend mixer fed red@0, green@0
+  //      and a distant blue@2 makes YELLOW from the near pair at rank 1 and never
+  //      consumes the blue, instead of summing all three into a confusing white.
+  //      If NO tier ever lets it emit, it is genuinely confused: unranked and dark.
+  //   3. As feeders appear or vanish across the solve, the intake is recomputed and
+  //      the feeder set re-derived (the fixpoint lives in `propagate`).
+  //
+  // This generalises across every relay kind — a connector (one colour) and a mixer
+  // (several) use the identical rule; a combiner is simply a relay with more than
+  // one feeder. Because rank reads off DELIVERED beams, it co-evolves with `emit`
+  // inside the propagate loop rather than being precomputed. Unranked relays (no
+  // feed yet) are absent from the map (treated as +Infinity).
+
+  // Rank-0 seeds: the real sources and any charged accumulators. Relays are added
+  // by the propagate fixpoint as feed reaches them.
+  _sourceRanks() {
     const rank = new Map();
-    const queue = [];
-    for (const n of Object.values(w.nodes))
-      if (emitsAsSource(n)) { rank.set(n.id, 0); queue.push(n.id); }
-    for (let head = 0; head < queue.length; head++) {
-      const u = queue[head], ru = rank.get(u);
-      for (const v of (adj.get(u) || [])) {
-        if (rank.has(v) || v === w.carrying) continue;
-        const nv = w.nodes[v];
-        if (nv && isRelayKind(nv.kind)) { rank.set(v, ru + 1); queue.push(v); }
-      }
-    }
+    for (const n of Object.values(this.world.nodes))
+      if (emitsAsSource(n)) rank.set(n.id, 0);
     return rank;
+  }
+
+  // From a solved beam list + its per-beam delivery flags, collect for every relay
+  // (a) the set of distinct colours delivered to it, and (b) per colour the
+  // strongest (minimum) feeder rank seen for that colour. `rank` supplies each
+  // feeder's own rank (a beam's origin `.o`); an unranked origin counts as +Inf.
+  _gatherIncoming(beams, delivery, rank) {
+    const w = this.world;
+    const incoming = {}, inRank = {};
+    for (const n of Object.values(w.nodes))
+      if (isRelayKind(n.kind)) { incoming[n.id] = new Set(); inRank[n.id] = new Map(); }
+    for (let k = 0; k < beams.length; k++) {
+      if (!delivery[k]) continue;
+      const b = beams[k];
+      const nt = w.nodes[b.t];
+      if (!nt || !isRelayKind(nt.kind)) continue;
+      incoming[b.t].add(b.color);
+      const fr = rank.has(b.o) ? rank.get(b.o) : Infinity;
+      const prev = inRank[b.t].get(b.color);
+      if (prev === undefined || fr < prev) inRank[b.t].set(b.color, fr);
+    }
+    return [incoming, inRank];
+  }
+
+  // Decide a relay's intake by FEEDER TIER, strongest first (the "hungry relay"
+  // rule). Walk the per-colour strongest feeders in ascending rank; at each tier
+  // add ALL feeders of that rank at once, then ask whether the relay can now emit a
+  // valid output (relayEmit !== null). Stop at the FIRST satisfying tier: the relay
+  // consumes exactly that prefix and ranks at 1 + that tier. Weaker feeders past it
+  // are left unconsumed — once the relay is settled the directional / same-rank laws
+  // suppress them — so its output is fixed by the strongest feeders that suffice.
+  // If it can never emit, even after every feeder, it is genuinely confused
+  // (unranked, dark). A relay with no feed at all is merely idle — also unranked and
+  // dark, but NOT confused (an idle node radiates nothing yet has no error).
+  //   inRank: Map(colour -> strongest feeder rank)
+  //   → { consumed:Set<colour>, rank:number (Infinity if none), confused, emit }
+  _relayIntake(node, inRank) {
+    const consumed = new Set();
+    if (inRank.size === 0) return { consumed, rank: Infinity, confused: false, emit: null };
+    const tiers = [...new Set(inRank.values())].sort((a, b) => a - b);  // ascending; Infinity last
+    for (const T of tiers) {
+      for (const [c, r] of inRank) if (r === T) consumed.add(c);
+      const e = relayEmit(node, consumed);
+      if (e !== null) return { consumed, rank: Number.isFinite(T) ? T + 1 : Infinity, confused: false, emit: e };
+    }
+    return { consumed, rank: Infinity, confused: true, emit: null };   // lit but cannot emit → confused
+  }
+
+  // Two rank maps equal? (same keys, same values) — used to detect the fixpoint.
+  _sameRank(a, b) {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) if (b.get(k) !== v) return false;
+    return true;
+  }
+
+  // Back-compat shim: the converged delivery-based ranks. Recomputes a full solve of
+  // the light field and returns its rank map (used by tests/inspection).
+  _linkRanks() {
+    return this.propagate()[2];
   }
 
   beam_level(o, t) {
@@ -136,21 +203,10 @@ export class Engine {
     return (w._conn_elevated(o) || w._conn_elevated(t)) ? 1 : 0;
   }
 
-  // What a relay (connector / inverter / sister) emits given the set of distinct
-  // delivered incoming colours. A *corrupted* relay always emits its own locked
-  // colour whenever it receives any light at all — conflicts never kill it ("blue
-  // in, red out"). A clean relay defers to its kind's rule (relays.js): a clean
-  // connector relays a single colour and goes dark on a conflict; a clean inverter
-  // swaps within its pair. One generic call, no per-kind branching here.
-  _relay_emit(cid, incoming) {
-    return relayEmit(this.world.nodes[cid], incoming);
-  }
-
   // ---- light: beams + crossings ----
-  _beams_and_cross(emit) {
+  _beams_and_cross(emit, rank, confused) {
     const w = this.world;
     const blockers = this._leveled_blockers();
-    const rank = this._linkRanks();
     const RANK = id => (rank.has(id) ? rank.get(id) : Infinity);
     const beams = [];
     for (const [a, b] of w.links_pairs) {
@@ -178,36 +234,62 @@ export class Engine {
         // complete — i.e. nothing material stands between them (hard_mat reaches).
         // With a wall between, the connection is incomplete and BOTH ends radiate
         // at it (no suppression). Same-rank / unreached pairs are never suppressed.
+        //
+        // EXCEPTION — a CONFUSED target is still "looking for food": it took light
+        // but cannot yet make a valid output, so the rank it currently holds is only
+        // PROVISIONAL (computed from the colours that have reached it so far). It must
+        // not use that provisional rank to suppress a feeder, or a colour that only
+        // arrives via a longer (higher-rank) chain would be rejected and the tool
+        // would starve forever — e.g. red reaches a mixer directly (so it provisionally
+        // ranks at 1) while its green arrives through a 2-hop chain at rank 2; without
+        // this exception the green@2 beam is suppressed and the mixer never completes.
+        // So while t is confused we let EVERY incoming beam reach it, whatever the rank
+        // direction. Once it has enough food to emit a valid colour it is no longer
+        // confused, re-ranks to 1 + its weakest feeder (strictly above all feeders),
+        // and from then on correctly suppresses the back-direction toward those feeders
+        // — it never pushes back on what feeds it. A confused relay emits null, so it
+        // pushes nothing back in the meantime; this only opens the inbound direction.
         const clear = hard_mat >= dl - 1e-6;
-        if (clear && RANK(o) > RANK(t)) continue;
+        if (clear && RANK(o) > RANK(t) && !confused.has(t)) continue;
         // Same-rank head-on on a clear path is a TUG-OF-WAR: two equal-priority
         // emitters push at each other, so each beam is capped at the MIDPOINT —
-        // it splits there and feeds NEITHER end. This now holds whatever the
-        // colours are. It used to make an exception for two ends of the SAME
-        // colour ("nothing to clash over, so the ray connects and delivers");
-        // that exception is gone — same colour is a tug too, and mechanically
-        // nothing passes. The only trace of the colour match is the `tug` tag we
-        // attach below: it is PURELY a hint for the renderer, which still draws a
-        // same-colour tug as one smooth, even, full-length ray (a visual link
-        // only — see renderer2d.js), while a different-colour clash keeps its
-        // two-tone split. Capping per beam (rather than a mutual cut needing both
-        // ends lit) keeps the tug stable — a lit peer still only reaches halfway
-        // whether or not the other is lit — so no feedback loop can form (e.g. a
-        // mixer that consumes a same-rank relay). The cap is a clash between two
-        // opposing emitters. The TARGET counts as a clash peer when it emits a
-        // beam back (`emit[t] != null` — a source, a charged accumulator, or a lit
-        // relay) OR is a relay (which could emit, and must still cap even while
-        // dark to block feedback). A pure sink — a receiver, or an EMPTY
-        // accumulator charging up — emits nothing back and so is no peer: its beam
-        // runs full length and delivers (a source-less emitter must light a
-        // receiver; a source must fill an accumulator).
+        // it splits there and feeds NEITHER end (same-rank peers never feed). This
+        // holds whatever the colours are, same or different — the `tug` tag we set
+        // below only tells the renderer whether to draw a same-colour tug as one
+        // smooth full-length ray (a visual link; nothing passes) or a different-
+        // colour clash as a two-tone split. Capping per beam (not a mutual cut that
+        // needs both ends lit) keeps it stable — a lit peer only reaches halfway
+        // whether or not the other is lit — so no feedback loop can form.
+        //
+        // What counts as a clash peer: an opposing end that actually emits a RAY —
+        // a source, a charged accumulator, or a lit relay, INCLUDING one emitting a
+        // real BLACK ray (`'black'`, mask 0 but a real colour). A relay emitting
+        // NULL is the special case: null is "no light" — a relay that took in light
+        // but cannot yet make a valid output is CONFUSED, and a confused relay DOES
+        // NOT PUSH BACK. It is "looking for food first": a same-rank feeder's beam is
+        // let through in FULL so the relay can complete itself, after which its rank
+        // lifts above that feeder (delivery-based rank) and the same-rank coincidence
+        // resolves on the next pass — no oscillation, since a fed relay never drops
+        // back below its feeder. The only same-rank end that still soft-caps is a
+        // dark relay NOT seeking food (no delivered input); it shows the connection
+        // full length yet feeds neither way. A pure SINK (a receiver, or an EMPTY
+        // accumulator charging up) is not a relay and not a peer, so it falls through
+        // with no cap to a real full-length delivery.
         let H = hard, HM = hard_mat;
         const sameColour = emit[o] != null && emit[o] === emit[t];
-        const peer = emit[t] != null || isRelayKind(nt.kind);
+        const peer = emit[t] != null;            // a real ray (black included); null is not
         let tug = null;
-        if (clear && RANK(o) === RANK(t) && peer) {
-          tug = sameColour ? 'same' : 'clash';
-          H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2);
+        if (clear && RANK(o) === RANK(t)) {
+          if (peer) {
+            tug = sameColour ? 'same' : 'clash';
+            H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2);
+          } else if (isRelayKind(nt.kind) && !confused.has(t)) {
+            // Same-rank dark relay that is NOT seeking food: soft cap (shown full
+            // length, feeds neither way). A CONFUSED relay falls through instead —
+            // its beam is delivered so it can find its food.
+            tug = 'soft';
+            H = Math.min(H, dl / 2); HM = Math.min(HM, dl / 2);
+          }
         }
         const dx = (T[0]-O[0])/dl, dy = (T[1]-O[1])/dl;
         beams.push({ o, t, color: emit[o], O, T, dl, hard: H, hard_mat: HM, level, dx, dy, tug });
@@ -233,8 +315,10 @@ export class Engine {
     return [beams, cross];
   }
 
-  resolve(emit) {
-    const [beams, cross] = this._beams_and_cross(emit);
+  resolve(emit, rank = null, confused = null) {
+    if (rank === null) rank = this._sourceRanks();
+    if (confused === null) confused = EMPTY_SET;
+    const [beams, cross] = this._beams_and_cross(emit, rank, confused);
     const n = beams.length;
     let length = beams.map(b => b.hard);
     for (let iter = 0; iter < 4*n+10; iter++) {
@@ -250,6 +334,13 @@ export class Engine {
     return [beams, length, delivery];
   }
 
+  // The light fixpoint. Each pass solves the beam field for the current emit/rank,
+  // then re-derives from what was DELIVERED: every relay's emitted colour, its new
+  // rank (1 + weakest of its per-colour strongest feeders), and whether it is
+  // confused (took light but no valid output → "looking for food", won't push back
+  // next pass). Rank and emit co-evolve; the loop ends when BOTH are stable. Rank
+  // and confused are threaded into the next pass so a tool can climb above a feeder
+  // it shares a rank with, and so a confused tool stops capping its own food.
   propagate() {
     const w = this.world;
     const conns = Object.values(w.nodes)
@@ -258,25 +349,31 @@ export class Engine {
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
       emit[nid] = emitsAsSource(nd) ? nd.color : null;   // sources + charged accumulators
+    let rank = this._sourceRanks();
+    let confused = EMPTY_SET;
     let last = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
-      const [beams, length, delivery] = this.resolve(emit);
-      const incoming = {};
-      for (const c of conns) incoming[c] = new Set();
-      for (let k = 0; k < beams.length; k++) {
-        if (delivery[k] && isRelayKind(w.nodes[beams[k].t]?.kind))
-          incoming[beams[k].t].add(beams[k].color);
-      }
+      const [beams, length, delivery] = this.resolve(emit, rank, confused);
+      const [, inRank] = this._gatherIncoming(beams, delivery, rank);
+      const newRank = this._sourceRanks();
+      const newConfused = new Set();
       let changed = false;
       for (const c of conns) {
-        const nc = this._relay_emit(c, incoming[c]);
-        if (nc !== emit[c]) { emit[c] = nc; changed = true; }
+        const intake = this._relayIntake(w.nodes[c], inRank[c]);
+        if (Number.isFinite(intake.rank)) newRank.set(c, intake.rank);
+        if (intake.confused) newConfused.add(c);
+        if (intake.emit !== emit[c]) { emit[c] = intake.emit; changed = true; }
       }
+      if (!this._sameRank(rank, newRank)) changed = true;
+      rank = newRank;
+      confused = newConfused;
       last = [beams, length, delivery];
       if (!changed) break;
     }
-    if (last === null) last = this.resolve(emit);
-    return [emit, last];
+    if (last === null) last = this.resolve(emit, rank, confused);
+    this._rank = rank;
+    this._confused = confused;
+    return [emit, last, rank, confused];
   }
 
   _lit_map(beams, delivery) {
@@ -665,12 +762,13 @@ export class Engine {
         if (st.since === null) st.since = now;
         if (now - st.since >= CUT_LINGER) { st.len = Lnew; st.deliv = dnew; st.since = null; }
       }
-      // A same-colour tug is mechanically capped at the midpoint (no delivery),
-      // but is SHOWN as one smooth, even, full-length ray — so draw it edge to
-      // edge with the delivered look (no stub). Every other beam draws at its
-      // real animated length and delivered state.
-      const vlen = b.tug === 'same' ? b.dl : st.len;
-      const vdeliv = b.tug === 'same' ? true : st.deliv;
+      // A same-colour tug ('same') and a soft connect to a confused relay ('soft')
+      // are both mechanically capped at the midpoint (they neither deliver nor
+      // feed), but are SHOWN edge to edge with the delivered look (no stub). Every
+      // other beam draws at its real animated length and delivered state.
+      const full = b.tug === 'same' || b.tug === 'soft';
+      const vlen = full ? b.dl : st.len;
+      const vdeliv = full ? true : st.deliv;
       out.push([[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug]);
     }
     for (const key of [...this.beam_anim.keys()])
@@ -689,8 +787,10 @@ export class Engine {
   }
 
   // ---- time-stepped solve ----
-  resolve_timed(emit) {
-    const [beams, cross] = this._beams_and_cross(emit);
+  resolve_timed(emit, rank = null, confused = null) {
+    if (rank === null) rank = this._sourceRanks();
+    if (confused === null) confused = EMPTY_SET;
+    const [beams, cross] = this._beams_and_cross(emit, rank, confused);
     const n = beams.length;
     const is_new = beams.map(b => !this.beam_eff.has(`${b.o}\x00${b.t}`));
     const eff = beams.map((b,k) =>
@@ -727,25 +827,31 @@ export class Engine {
     const emit = {};
     for (const [nid, nd] of Object.entries(w.nodes))
       emit[nid] = emitsAsSource(nd) ? nd.color : null;   // sources + charged accumulators
+    let rank = this._sourceRanks();
+    let confused = EMPTY_SET;
     let last = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
-      const [beams, target, instant, eff, delivery] = this.resolve_timed(emit);
-      const incoming = {};
-      for (const c of conns) incoming[c] = new Set();
-      for (let k = 0; k < beams.length; k++) {
-        if (delivery[k] && isRelayKind(w.nodes[beams[k].t]?.kind))
-          incoming[beams[k].t].add(beams[k].color);
-      }
+      const [beams, target, instant, eff, delivery] = this.resolve_timed(emit, rank, confused);
+      const [, inRank] = this._gatherIncoming(beams, delivery, rank);
+      const newRank = this._sourceRanks();
+      const newConfused = new Set();
       let changed = false;
       for (const c of conns) {
-        const nc = this._relay_emit(c, incoming[c]);
-        if (nc !== emit[c]) { emit[c] = nc; changed = true; }
+        const intake = this._relayIntake(w.nodes[c], inRank[c]);
+        if (Number.isFinite(intake.rank)) newRank.set(c, intake.rank);
+        if (intake.confused) newConfused.add(c);
+        if (intake.emit !== emit[c]) { emit[c] = intake.emit; changed = true; }
       }
+      if (!this._sameRank(rank, newRank)) changed = true;
+      rank = newRank;
+      confused = newConfused;
       last = [beams, target, instant, eff, delivery];
       if (!changed) break;
     }
-    if (last === null) last = this.resolve_timed(emit);
-    return [emit, last];
+    if (last === null) last = this.resolve_timed(emit, rank, confused);
+    this._rank = rank;
+    this._confused = confused;
+    return [emit, last, rank, confused];
   }
 
   _advance_eff(beams, target, instant, now) {
@@ -796,10 +902,12 @@ export class Engine {
   _build_draw_timed(beams) {
     return beams.map(b => {
       const L = this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard;
-      // A same-colour tug is shown full length with the delivered look (see
-      // _animate_beams); everything else draws at its live effective length.
-      const vlen = b.tug === 'same' ? b.dl : L;
-      const vdeliv = b.tug === 'same' ? true : (L >= b.dl - 1e-6);
+      // A same-colour tug and a soft connect to a confused relay are both shown
+      // full length with the delivered look (see _animate_beams); everything else
+      // draws at its live effective length.
+      const full = b.tug === 'same' || b.tug === 'soft';
+      const vlen = full ? b.dl : L;
+      const vdeliv = full ? true : (L >= b.dl - 1e-6);
       return [[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug];
     });
   }

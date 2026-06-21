@@ -20,7 +20,11 @@ function beamsBetween(w, x, y) {
 }
 
 // ===========================================================================
-// 1. Ranks are shortest link-path distance from a source (walls irrelevant).
+// 1. Rank is feeder-based: a relay sits one step below the weakest of its per-
+//    colour strongest feeders. Down a clean single-colour chain that is just the
+//    link distance (1, 2, 3, …); a stronger direct feed re-ranks via the shorter
+//    path. Unlike the old topological rule, rank follows what actually ARRIVES, so
+//    a "shortcut" only counts if its beam has a clear line to the relay.
 // ===========================================================================
 {
   const w = new World(); w.player = null; w._uid = 1;
@@ -37,10 +41,16 @@ function beamsBetween(w, x, y) {
   ok(r.get('C') === 3, 'and the next is rank 3');
   ok(!r.has('rcv'), 'a receiver is a sink — it gets no rank (never forwards)');
 
-  // A shortcut link to the source re-ranks via the shorter path.
-  w.toggle_link('rs', 'C');
-  const r2 = w.engine._linkRanks();
-  ok(r2.get('C') === 1, 'a direct link to the source makes C rank 1 (shortest path wins)');
+  // A direct feed from the source with a CLEAR line re-ranks C via the stronger
+  // (lower-rank) red feeder: rs@0 beats the chain's B@2, so C becomes rank 1.
+  const w2 = new World(); w2.player = null; w2._uid = 1;
+  w2.add(new Node('rs', 'source',    [0, 0],     { color: 'red' }));
+  w2.add(new Node('A',  'connector', [100, 80]));   // chain detours off the rs–C line
+  w2.add(new Node('B',  'connector', [200, 80]));
+  w2.add(new Node('C',  'connector', [300, 0]));
+  w2.toggle_link('rs', 'A'); w2.toggle_link('A', 'B'); w2.toggle_link('B', 'C'); w2.toggle_link('rs', 'C');
+  const r2 = w2.engine._linkRanks();
+  ok(r2.get('C') === 1, 'a clear direct feed from the source makes C rank 1 (strongest red feeder wins)');
 }
 
 // ===========================================================================
@@ -204,9 +214,11 @@ function beamsBetween(w, x, y) {
 
 // ===========================================================================
 // 8. Different ranks ⇒ NO clash; the lower rank is "stronger" and overruns. A is
-//    rank 1 (direct from a blue source); B is rank 2 (chained via M from a red
-//    source). A pushes all the way through to B (no midpoint break) and, arriving
-//    alongside B's own red feed, confuses B.
+//    rank 1 (direct from a blue source). B is fed two SAME-rank colours it cannot
+//    relay — blue via A@1 and red via M@1 — so it can never emit: it exhausts its
+//    feeders, stays confused, and therefore takes NO rank (a confused node that has
+//    run out of feeders radiates nothing). A, being stronger, still pushes all the
+//    way through to the confused B with no midpoint break (B never pushes back).
 // ===========================================================================
 {
   const w = new World(); w.player = null; w._uid = 1;
@@ -218,7 +230,8 @@ function beamsBetween(w, x, y) {
   w.toggle_link('bs', 'A'); w.toggle_link('rs', 'M'); w.toggle_link('M', 'B'); w.toggle_link('A', 'B');
   w.solve(true);
   const r = w.engine._linkRanks();
-  ok(r.get('A') === 1 && r.get('B') === 2, 'A is rank 1, B is rank 2 (B is chained through M)');
+  ok(r.get('A') === 1 && r.get('B') === undefined,
+     'A is rank 1; B is confused on two same-rank colours it cannot relay and, out of feeders, takes no rank (unranked)');
   ok(w.engine.emit['A'] === 'blue', 'A keeps its blue (it is upstream / stronger)');
   ok(w.engine.emit['B'] === null && w.dead_conns.has('B'),
      'B is confused: A pushed blue through AND M feeds red');
@@ -283,6 +296,83 @@ function beamsBetween(w, x, y) {
   const k2 = b2.findIndex(b => b.o === 'I' && b.t === 'J');
   ok(k2 >= 0 && del2[k2] === false && Math.abs(len2[k2] - b2[k2].dl / 2) < 1e-6,
      'but the same emitter aimed at a same-rank RELAY of a different colour is still capped at the midpoint');
+}
+
+// ===========================================================================
+// 10. NULL does not take part in the tug, and a CONFUSED relay does not push back.
+//     A relay emitting null is no clash peer. With no food context (a crafted
+//     same-rank probe) a lit end's ray is SHOWN full length (tug:'soft') yet
+//     neither feeds nor delivers. But in a real solve a confused relay is "looking
+//     for food first": it lets a same-rank feeder's beam DELIVER in full so it can
+//     try to complete itself — which lifts its rank above that feeder and resolves
+//     the coincidence. A real BLACK ray, by contrast, DOES tug.
+// ===========================================================================
+{
+  // Mechanical tug tags on two same-rank (unranked) connectors, via crafted emit.
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('I', 'connector', [100, 0]));
+  w.add(new Node('J', 'connector', [300, 0]));
+  w.toggle_link('I', 'J');
+  const probe = (emit) => {
+    const [b, l, d] = w.engine.resolve(emit);
+    const k = b.findIndex(x => x.o === 'I' && x.t === 'J');
+    return k < 0 ? null : { tug: b[k].tug, mid: Math.abs(l[k] - b[k].dl / 2) < 1e-6, del: d[k] };
+  };
+  const pn = probe({ I: 'red', J: null });
+  ok(pn && pn.tug === 'soft' && pn.mid && pn.del === false,
+     'lit end vs a null (confused) relay → soft connect: capped, no feed/delivery');
+  const pb = probe({ I: 'red', J: 'black' });
+  ok(pb && pb.tug === 'clash' && pb.mid && pb.del === false,
+     'a real BLACK ray is a peer → it still tugs (clash at the midpoint), not soft');
+  // The null end emits nothing, so there is no beam back from it.
+  const [bb] = w.engine.resolve({ I: 'red', J: null });
+  ok(!bb.some(x => x.o === 'J' && x.t === 'I'), 'a null relay emits no beam of its own');
+
+  // Real solve: a lit connector A next to a CONFUSED connector B. B is fed blue@0 and
+  // green@0 directly (a conflict on its own) plus red via A@1. B is "looking for food"
+  // so it does NOT push back: A→B DELIVERS in full. But B can relay no combination of
+  // those colours, so it exhausts every feeder tier and stays confused — and a confused
+  // node out of feeders takes NO rank. So B is dead AND unranked, while A→B is still a
+  // real full-length delivery (not a soft cap).
+  const w2 = new World(); w2.player = null; w2._uid = 1;
+  w2.add(new Node('S1', 'source', [0, -100], { color: 'red' }));
+  w2.add(new Node('A',  'connector', [120, 0]));
+  w2.add(new Node('S2', 'source', [400, -100], { color: 'blue' }));
+  w2.add(new Node('S3', 'source', [400, 100],  { color: 'green' }));
+  w2.add(new Node('B',  'connector', [280, 0]));
+  w2.toggle_link('S1', 'A'); w2.toggle_link('S2', 'B'); w2.toggle_link('S3', 'B'); w2.toggle_link('A', 'B');
+  w2.solve(true);
+  const r2 = w2.engine._linkRanks();
+  ok(r2.get('A') === 1 && r2.get('B') === undefined,
+     'the confused B accepts A as food (A→B delivers full) but can relay no combination, so it exhausts its feeders and stays unranked');
+  ok(w2.engine.emit['A'] === 'red' && w2.engine.emit['B'] === null && w2.dead_conns.has('B'),
+     'A is lit red; B still cannot relay three colours, so it is confused (null) and dead');
+  const drawAB = w2.beams_draw.find(t => Math.round(t[0][0]) === 120 && Math.round(t[0][1]) === 0);
+  const fullLen = drawAB && Math.abs(Math.hypot(drawAB[1][0]-drawAB[0][0], drawAB[1][1]-drawAB[0][1]) - 160) < 1e-6;
+  ok(drawAB && drawAB[4] === null && fullLen && drawAB[3] === true,
+     'A→B is a real full-length delivery (no soft cap) — the confused B does not push back');
+  const [, [pb2, pl2, pd2]] = w2.engine.propagate();
+  const ki = pb2.findIndex(x => x.o === 'A' && x.t === 'B');
+  ok(ki >= 0 && pd2[ki] === true && Math.abs(pl2[ki] - pb2[ki].dl) < 1e-6,
+     'mechanically A→B reaches B in full (lower rank → higher rank feeds normally)');
+
+  // The pay-off: a COMBINING relay (complement inverter) that one feed away from a
+  // valid output now COMPLETES, because the confused relay takes its food instead of
+  // soft-capping it. Lone red → confused; once Ac's green is allowed through, red+green
+  // complements to BLUE, and it settles there deterministically (no oscillation).
+  const w3 = new World(); w3.player = null; w3._uid = 1;
+  w3.add(new Node('Sg', 'source', [0, 0], { color: 'green' }));
+  w3.add(new Node('Ac', 'connector', [150, 0]));                  // rank 1, green
+  w3.add(new Node('Sr', 'source', [300, 150], { color: 'red' }));
+  w3.add(new Node('Ic', 'inverter', [300, 0], { mode: 'complement' })); // lone red → confused, then fed green
+  w3.toggle_link('Sg', 'Ac'); w3.toggle_link('Sr', 'Ic'); w3.toggle_link('Ac', 'Ic');
+  const settle = () => { w3.solve(true); return w3.engine.emit['Ic']; };
+  const e1 = settle(), e2 = settle(), e3 = settle();
+  ok(e1 === 'blue' && e2 === 'blue' && e3 === 'blue',
+     'the confused inverter takes its missing colour and completes to blue, deterministically (no oscillation)');
+  const r3 = w3.engine._linkRanks();
+  ok(r3.get('Ac') === 1 && r3.get('Ic') === 2 && !w3.dead_conns.has('Ic'),
+     'and it is lifted to rank 2 above its feeder Ac, no longer dead');
 }
 
 console.log(`\ndirectional light tests: ${pass} passed, ${fail} failed`);

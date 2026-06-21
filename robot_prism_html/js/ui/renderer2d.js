@@ -50,16 +50,17 @@ function lightenHex(hex, amt) {
 // solver's geometry alone, never by the wave grazing an obstacle. And it stays
 // strictly inside the drawn segment (inset at both ends, amplitude eased onto the
 // core near each end), so it never visually pokes past a cut where a ray ends at
-// an obstacle either. Phase scrolls in +s (O→E) so crests flow that way; on a tug
-// ray the wave rides one side (its own left-normal) so the two opposing waves stay
-// distinct.
-function drawBeamWave(ctx, O, E, hex, isTug, t) {
+// an obstacle either. Phase scrolls in +s (O→E) so crests flow that way. On a
+// TWO-SIDED tug (a 'clash' or a same-colour 'same') the wave rides one side (its
+// own left-normal) so the two opposing waves stay distinct; a 'soft' connect to a
+// confused relay is a single ray, so it stays centred like a normal flow.
+function drawBeamWave(ctx, O, E, hex, tug, t) {
   const vx = E[0] - O[0], vy = E[1] - O[1];
   const len = Math.hypot(vx, vy);
   if (len < WAVE_MIN_LEN) return;
   const ux = vx / len, uy = vy / len;       // unit along the ray (flow direction)
   const nx = -uy, ny = ux;                   // left-normal
-  const lane = isTug ? WAVE_LANE : 0;
+  const lane = (tug === 'same' || tug === 'clash') ? WAVE_LANE : 0;
   const k = (2 * Math.PI) / WAVE_LAMBDA;
   const tint = lightenHex(hex, WAVE_LIGHTEN);
   const s0 = WAVE_INSET, s1 = len - WAVE_INSET;   // drawn span, held off both ends
@@ -326,9 +327,10 @@ export class Renderer2D {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
-      // Slow, subtle wave flowing from O→end (the rank-flow direction). On a tug
-      // ray it rides one side so the two opposing waves read as distinct.
-      drawBeamWave(ctx, a, b, isWhite ? (COLORS.white ?? shade) : shade, !!tug, waveT);
+      // Slow, subtle wave flowing from O→end (the rank-flow direction). A two-
+      // sided tug rides one side so its opposing waves read as distinct; a soft
+      // connect or a normal ray stays centred.
+      drawBeamWave(ctx, a, b, isWhite ? (COLORS.white ?? shade) : shade, tug, waveT);
     }
 
     // Jammer rays — "dark matter": practically invisible. A faint hair-line; a
@@ -842,6 +844,52 @@ export class Renderer2D {
       ctx.fillRect(tx, ty, tw, th);
       ctx.fillStyle = '#e23b3b';
       ctx.fillRect(tx, ty, tw * Math.min(1, rp), th);
+    }
+
+    // Modal level-select overlay (opened by holding the red Levels button).
+    // Drawn last so it sits above everything; app.js freezes the world behind it
+    // and routes all input to it (a click loads an entry; Escape cancels).
+    const lm = uiState.levelMenu;
+    if (lm && lm.items) {
+      ctx.setLineDash([]);
+      // Dim the whole playfield.
+      ctx.fillStyle = 'rgba(8, 9, 12, 0.72)';
+      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+      // The overlay panel — a cautioning red rim, matching the Levels button.
+      const [px, py, pw, ph] = lm.panel;
+      ctx.fillStyle = 'rgba(24, 16, 18, 0.97)';
+      ctx.fillRect(px, py, pw, ph);
+      ctx.strokeStyle = '#b83a3a'; ctx.lineWidth = 2;
+      ctx.strokeRect(px, py, pw, ph);
+      // Title.
+      ctx.fillStyle = '#f3b0b0';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(STR.levelMenu.title, WORLD_W / 2, lm.titleY + 24);
+      // Entries: the current level wears a red rim + an italic tag.
+      for (const it of lm.items) {
+        const [rx, ry, rw, rh] = it.rect;
+        ctx.fillStyle = it.current ? 'rgba(74, 20, 20, 0.92)' : 'rgba(20, 22, 28, 0.92)';
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeStyle = it.current ? '#e23b3b' : '#5a6172';
+        ctx.lineWidth = it.current ? 2 : 1;
+        ctx.strokeRect(rx, ry, rw, rh);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(it.name, rx + 14, ry + rh / 2);
+        if (it.current) {
+          ctx.fillStyle = '#e6a0a0';
+          ctx.font = 'italic 11px sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillText(STR.levelMenu.current, rx + rw - 12, ry + rh / 2);
+        }
+      }
+      // Footer hint.
+      ctx.fillStyle = '#9aa0ac';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(STR.levelMenu.escHint, WORLD_W / 2, lm.footY + 18);
     }
 
     // Reset transform so nothing leaks between frames.
