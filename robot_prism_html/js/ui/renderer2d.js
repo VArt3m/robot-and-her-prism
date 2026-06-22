@@ -15,24 +15,28 @@ function diamond(cx, cy, r = 13) {
   return [[cx, cy-r], [cx+r, cy], [cx, cy+r], [cx-r, cy]];
 }
 
-// --- Ray pulsation ("wavy flow") tunables, in world units / seconds. ---------
-// A very slow, very subtle wave travels along every lit ray in the direction the
-// engine's RANKS flow — always from a beam's origin toward its drawn end. So a
-// normal ray (low rank → high rank) shows one wave; a tug-of-war link carries
-// two opposing beams and therefore two waves flowing AT each other (meeting at
-// the midpoint on a different-colour clash, or — on a same-colour tug, drawn
-// full length — passing end to end, each kept to its own side of the centreline).
-const WAVE_WIDTH   = 2;      // stroke width — the "two pixel wide" flow
-const WAVE_AMP     = 0.7;    // transverse undulation amplitude
-const WAVE_LAMBDA  = 30;     // wavelength along the ray
-const WAVE_SPEED   = 13;     // crest travel speed (slow)
-const WAVE_LANE    = 1.0;    // side-offset for a tug's two waves (own left-normal)
-const WAVE_ALPHA   = 0.42;   // peak opacity — subtle
-const WAVE_STEP    = 4;      // sampling spacing along the ray
-const WAVE_LIGHTEN = 0.55;   // how far the wave colour is pushed toward white
-const WAVE_INSET   = 2;      // keep the wave this far inside each end of the ray
-const WAVE_RAMP    = 12;     // over this distance the wave eases onto the core at each end
-const WAVE_MIN_LEN = 2 * (WAVE_INSET + 4);   // shorter rays get no wave
+// --- Ray "flow bulge" tunables, in world units / seconds. --------------------
+// Instead of wiggling, every lit ray carries a travelling local WIDENING: the
+// beam swells a couple of pixels wider where a swell-crest is passing, and that
+// fatter spot glides along the ray in the direction the engine's RANKS flow —
+// always from the beam's origin (the stronger, lower-rank source) toward its
+// drawn end (the weaker side). So a normal ray (low rank → high rank) shows one
+// stream of swells running outward; a tug-of-war link carries two opposing beams
+// and therefore two streams of swells running AT each other along the shared
+// centreline (meeting at the midpoint on a different-colour 'clash', or — on a
+// same-colour 'same', drawn full length — crossing end to end). A 'soft' connect
+// to a dark same-rank relay, and an ordinary ray, are single beams.
+const FLOW_BASE_HALF = 2;     // resting half-width — matches the core stroke (lineWidth 4)
+const FLOW_BULGE     = 1.0;   // EXTRA half-width at a swell crest (kept thin)
+const FLOW_LAMBDA    = 54;    // spacing between travelling swells along the ray
+const FLOW_SIGMA     = 6.5;   // half-spread of each swell — small ⇒ a localized bump
+const FLOW_SPEED     = 11;    // crest travel speed O→E (slowed to half)
+const FLOW_STEP      = 3;     // ribbon sampling spacing along the ray
+const FLOW_INSET     = 2;     // hold the ribbon this far inside each end of the ray
+const FLOW_RAMP      = 12;    // over this distance the BULGE eases back to the core at each end
+const FLOW_GLOW      = 0.45;  // how far the crest glow is pushed toward white (0 ⇒ pure widening)
+const FLOW_GLOW_A    = 0.30;  // peak opacity of that crest glow — subtle
+const FLOW_MIN_LEN   = 2 * (FLOW_INSET + 6);   // shorter rays get no bulge
 
 // Push a #rrggbb colour `amt` (0..1) of the way toward white → an "rgb()" string.
 function lightenHex(hex, amt) {
@@ -44,51 +48,91 @@ function lightenHex(hex, amt) {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 
-// Draw the travelling wave for one directional ray, from O to E. This is PURELY
-// COSMETIC: it is computed only from the already-solved draw segment and never
-// feeds back into the engine, so occlusion can't see it — a ray is blocked by the
-// solver's geometry alone, never by the wave grazing an obstacle. And it stays
-// strictly inside the drawn segment (inset at both ends, amplitude eased onto the
-// core near each end), so it never visually pokes past a cut where a ray ends at
-// an obstacle either. Phase scrolls in +s (O→E) so crests flow that way. On a
-// TWO-SIDED tug (a 'clash' or a same-colour 'same') the wave rides one side (its
-// own left-normal) so the two opposing waves stay distinct; a 'soft' connect to a
-// confused relay is a single ray, so it stays centred like a normal flow.
+// Draw the travelling local widening for one directional ray, from O (the
+// stronger source) to E (the weaker end). This is PURELY COSMETIC: it is computed
+// only from the already-solved draw segment and never feeds back into the engine,
+// so occlusion can't see it — a ray is cut by the solver's geometry alone, never
+// by this bulge grazing or reaching anything. Two properties keep it from ever
+// reading as a leak across a "very liminal" occlusion:
+//   • Along the ray it never grows the beam's LENGTH — the swell rides between the
+//     insets and eases to the bare core half-width at both ends (the FLOW_RAMP),
+//     so where the solver cut the ray at an obstacle the edge is exactly the core,
+//     never poking past the cut.
+//   • The extra width is bounded (FLOW_BULGE) and symmetric about the centreline,
+//     so a crest mid-span only ever swells by that fixed, small amount.
+// The swell is a periodic Gaussian in arc-length whose crest centres slide with
+// +t in +s, i.e. O→E. `tug` is accepted for call-site symmetry; the two opposing
+// beams of a tug each draw their own O→E stream, so on a same-colour 'same' the
+// two swell-streams simply cross along the shared centreline (their union shows
+// both bumps), and on a 'clash' each colour's stream runs in to the midpoint.
 function drawBeamWave(ctx, O, E, hex, tug, t) {
   const vx = E[0] - O[0], vy = E[1] - O[1];
   const len = Math.hypot(vx, vy);
-  if (len < WAVE_MIN_LEN) return;
+  if (len < FLOW_MIN_LEN) return;
   const ux = vx / len, uy = vy / len;       // unit along the ray (flow direction)
   const nx = -uy, ny = ux;                   // left-normal
-  const lane = (tug === 'same' || tug === 'clash') ? WAVE_LANE : 0;
-  const k = (2 * Math.PI) / WAVE_LAMBDA;
-  const tint = lightenHex(hex, WAVE_LIGHTEN);
-  const s0 = WAVE_INSET, s1 = len - WAVE_INSET;   // drawn span, held off both ends
-  ctx.save();
-  ctx.lineWidth = WAVE_WIDTH;
-  ctx.lineCap = 'round';
-  ctx.setLineDash([]);
-  ctx.strokeStyle = tint;
-  // Ease the transverse offset to zero near both ends so the wave hugs the beam
-  // core there (and can't lean out past a terminating obstacle).
-  const edge = (s) => Math.max(0, Math.min(1, Math.min(s - s0, s1 - s) / WAVE_RAMP));
-  const at = (s) => {
-    const ph = k * (s - WAVE_SPEED * t);
-    const off = (lane + WAVE_AMP * Math.sin(ph)) * edge(s);
-    return [O[0] + ux * s + nx * off, O[1] + uy * s + ny * off, ph];
+  const s0 = FLOW_INSET, s1 = len - FLOW_INSET;   // drawn span, held off both ends
+  const twoSigma2 = 2 * FLOW_SIGMA * FLOW_SIGMA;
+
+  // edge(s): 1 across the middle, easing to 0 within FLOW_RAMP of either end, so
+  // the BULGE fades to the bare core there (and can't lean out past a cut end).
+  const edge = (s) => Math.max(0, Math.min(1, Math.min(s - s0, s1 - s) / FLOW_RAMP));
+  // swell(s): 0..1 periodic Gaussian; crest centres at s = m·λ + SPEED·t glide O→E.
+  const swell = (s) => {
+    const phase = s - FLOW_SPEED * t;
+    const d = phase - Math.round(phase / FLOW_LAMBDA) * FLOW_LAMBDA;  // dist to nearest crest
+    return Math.exp(-(d * d) / twoSigma2);
   };
-  // Per-segment alpha gives the travelling brightness packet (the "pulsation").
-  let [px, py] = at(s0);
-  for (let s = s0 + WAVE_STEP; s <= s1; s += WAVE_STEP) {
+  // half(s): resting core half-width plus the eased swell.
+  const half = (s) => FLOW_BASE_HALF + FLOW_BULGE * swell(s) * edge(s);
+
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.lineJoin = 'round';
+
+  // 1) The widening itself: a variable-width ribbon in the beam's OWN colour, so
+  //    the resting beam looks identical and only the travelling swell shows. Build
+  //    one edge out and the other back, then fill the closed strip.
+  ctx.beginPath();
+  let first = true;
+  for (let s = s0; s <= s1 + 1e-6; s += FLOW_STEP) {
     const cs = Math.min(s, s1);
-    const [cx, cy, ph] = at(cs);
-    const env = 0.30 + 0.70 * (0.5 + 0.5 * Math.sin(ph - k * (WAVE_STEP / 2)));
-    ctx.globalAlpha = WAVE_ALPHA * env;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(cx, cy);
-    ctx.stroke();
-    px = cx; py = cy;
+    const h = half(cs);
+    const x = O[0] + ux * cs, y = O[1] + uy * cs;
+    const px = x + nx * h, py = y + ny * h;
+    if (first) { ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
+  }
+  for (let s = s1; s >= s0 - 1e-6; s -= FLOW_STEP) {
+    const cs = Math.max(s, s0);
+    const h = half(cs);
+    const x = O[0] + ux * cs, y = O[1] + uy * cs;
+    ctx.lineTo(x - nx * h, y - ny * h);
+  }
+  ctx.closePath();
+  ctx.fillStyle = hex;
+  ctx.fill();
+
+  // 2) A faint, subtle glow riding each crest — a touch of life inside the swell,
+  //    drawn as a thin centreline stroke whose opacity tracks the swell height.
+  if (FLOW_GLOW > 0 && FLOW_GLOW_A > 0) {
+    const tint = lightenHex(hex, FLOW_GLOW);
+    ctx.strokeStyle = tint;
+    ctx.lineWidth = FLOW_BASE_HALF;
+    ctx.lineCap = 'round';
+    let prev = null;
+    for (let s = s0; s <= s1 + 1e-6; s += FLOW_STEP) {
+      const cs = Math.min(s, s1);
+      const a = swell(cs) * edge(cs);
+      const cx = O[0] + ux * cs, cy = O[1] + uy * cs;
+      if (prev) {
+        ctx.globalAlpha = FLOW_GLOW_A * a;
+        ctx.beginPath();
+        ctx.moveTo(prev[0], prev[1]);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+      }
+      prev = [cx, cy];
+    }
   }
   ctx.restore();
 }
@@ -327,10 +371,12 @@ export class Renderer2D {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
-      // Slow, subtle wave flowing from O→end (the rank-flow direction). A two-
-      // sided tug rides one side so its opposing waves read as distinct; a soft
-      // connect or a normal ray stays centred.
-      drawBeamWave(ctx, a, b, isWhite ? (COLORS.white ?? shade) : shade, tug, waveT);
+      // Travelling local widening flowing from O→end (the rank-flow direction:
+      // stronger source → weaker end). Drawn in the beam's own colour so the
+      // resting ray is unchanged and only the swell shows; the two opposing beams
+      // of a tug each run their own O→end stream (crossing on a same-colour tug,
+      // meeting at the midpoint on a clash).
+      drawBeamWave(ctx, a, b, shade, tug, waveT);
     }
 
     // Jammer rays — "dark matter": practically invisible. A faint hair-line; a

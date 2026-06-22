@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flow-bulge preview</title>
+<!--
+  PREVIEW ONLY. The source of truth is js/ui/renderer2d.js (drawBeamWave + the
+  FLOW_* tunables). This page copies that routine verbatim so you can eyeball the
+  travelling local widening — its speed, width, and the tug-of-war reading — and
+  taste-tune the constants before copying values back into the renderer.
+-->
+<style>
+  body{margin:0;background:#eef1f4;color:#2b323a;font:14px/1.5 system-ui,sans-serif}
+  header{padding:14px 18px}
+  h1{font-size:16px;margin:0 0 4px}
+  p{margin:0;color:#5b636c}
+  canvas{display:block;margin:8px auto;background:#f6f8fa;border:1px solid #d7dde3;border-radius:8px}
+  .legend{max-width:880px;margin:0 auto;padding:0 18px 18px;color:#5b636c}
+  code{background:#e4e9ee;padding:1px 5px;border-radius:4px}
+</style>
+<header>
+  <h1>Ray flow-bulge — preview</h1>
+  <p>The ray swells a couple of pixels wider where a crest passes; the swell glides from the stronger source toward the weaker end.</p>
+</header>
+<canvas id="c" width="880" height="420"></canvas>
+<div class="legend">
+  <p><strong>Top:</strong> a normal ray — one stream of swells running source → end.
+  <strong>Middle:</strong> a same-colour tug — two beams full length, swells crossing along the centreline.
+  <strong>Bottom:</strong> a different-colour clash — each colour's swells run in to the midpoint.</p>
+  <p>Tunables live in <code>renderer2d.js</code>: <code>FLOW_BULGE</code> (extra width), <code>FLOW_SPEED</code>, <code>FLOW_LAMBDA</code>, <code>FLOW_SIGMA</code>, <code>FLOW_GLOW</code>.</p>
+</div>
+<script>
+// ---- verbatim copy of the renderer's tunables + draw routine ----------------
+const FLOW_BASE_HALF = 2;
+const FLOW_BULGE     = 1.0;
+const FLOW_LAMBDA    = 54;
+const FLOW_SIGMA     = 6.5;
+const FLOW_SPEED     = 11;
+const FLOW_STEP      = 3;
+const FLOW_INSET     = 2;
+const FLOW_RAMP      = 12;
+const FLOW_GLOW      = 0.45;
+const FLOW_GLOW_A    = 0.30;
+const FLOW_MIN_LEN   = 2 * (FLOW_INSET + 6);
+
+function lightenHex(hex, amt){
+  const h=(hex||'#999999').replace('#','');
+  const r=parseInt(h.slice(0,2),16)||0,g=parseInt(h.slice(2,4),16)||0,b=parseInt(h.slice(4,6),16)||0;
+  const mix=c=>Math.round(c+(255-c)*amt);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+function drawBeamWave(ctx,O,E,hex,tug,t){
+  const vx=E[0]-O[0],vy=E[1]-O[1];
+  const len=Math.hypot(vx,vy);
+  if(len<FLOW_MIN_LEN)return;
+  const ux=vx/len,uy=vy/len, nx=-uy,ny=ux;
+  const s0=FLOW_INSET,s1=len-FLOW_INSET, twoSigma2=2*FLOW_SIGMA*FLOW_SIGMA;
+  const edge=s=>Math.max(0,Math.min(1,Math.min(s-s0,s1-s)/FLOW_RAMP));
+  const swell=s=>{const p=s-FLOW_SPEED*t;const d=p-Math.round(p/FLOW_LAMBDA)*FLOW_LAMBDA;return Math.exp(-(d*d)/twoSigma2);};
+  const half=s=>FLOW_BASE_HALF+FLOW_BULGE*swell(s)*edge(s);
+  ctx.save();ctx.setLineDash([]);ctx.lineJoin='round';
+  ctx.beginPath();let first=true;
+  for(let s=s0;s<=s1+1e-6;s+=FLOW_STEP){const cs=Math.min(s,s1),h=half(cs);const x=O[0]+ux*cs,y=O[1]+uy*cs;const px=x+nx*h,py=y+ny*h;if(first){ctx.moveTo(px,py);first=false;}else ctx.lineTo(px,py);}
+  for(let s=s1;s>=s0-1e-6;s-=FLOW_STEP){const cs=Math.max(s,s0),h=half(cs);const x=O[0]+ux*cs,y=O[1]+uy*cs;ctx.lineTo(x-nx*h,y-ny*h);}
+  ctx.closePath();ctx.fillStyle=hex;ctx.fill();
+  if(FLOW_GLOW>0&&FLOW_GLOW_A>0){
+    const tint=lightenHex(hex,FLOW_GLOW);ctx.strokeStyle=tint;ctx.lineWidth=FLOW_BASE_HALF;ctx.lineCap='round';
+    let prev=null;
+    for(let s=s0;s<=s1+1e-6;s+=FLOW_STEP){const cs=Math.min(s,s1);const a=swell(cs)*edge(cs);const cx=O[0]+ux*cs,cy=O[1]+uy*cs;if(prev){ctx.globalAlpha=FLOW_GLOW_A*a;ctx.beginPath();ctx.moveTo(prev[0],prev[1]);ctx.lineTo(cx,cy);ctx.stroke();}prev=[cx,cy];}
+  }
+  ctx.restore();
+}
+// ---- preview scene -----------------------------------------------------------
+const ctx=document.getElementById('c').getContext('2d');
+function coreBeam(O,E,hex){ctx.beginPath();ctx.moveTo(O[0],O[1]);ctx.lineTo(E[0],E[1]);ctx.strokeStyle=hex;ctx.lineWidth=4;ctx.lineCap='round';ctx.setLineDash([]);ctx.globalAlpha=1;ctx.stroke();}
+function node(x,y){ctx.beginPath();ctx.arc(x,y,9,0,7);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#9aa3ad';ctx.stroke();}
+
+const RED='#e2484d', GREEN='#46b96a';
+function frame(now){
+  const t=now/1000;
+  ctx.clearRect(0,0,880,420);
+  // normal ray: source(left) -> end(right)
+  let O=[120,90],E=[760,90];
+  coreBeam(O,E,RED); drawBeamWave(ctx,O,E,RED,null,t); node(...O); node(...E);
+  // same-colour tug: two full-length beams, opposite directions
+  O=[120,210];E=[760,210];
+  coreBeam(O,E,GREEN);
+  drawBeamWave(ctx,O,E,GREEN,'same',t);          // left source -> right
+  drawBeamWave(ctx,E,O,GREEN,'same',t);          // right source -> left
+  node(...O); node(...E);
+  // clash: two colours meeting at the midpoint
+  O=[120,330];E=[760,330];const M=[(O[0]+E[0])/2,330];
+  coreBeam(O,M,RED); coreBeam(E,M,GREEN);
+  drawBeamWave(ctx,O,M,RED,'clash',t);
+  drawBeamWave(ctx,E,M,GREEN,'clash',t);
+  node(...O); node(...E);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
