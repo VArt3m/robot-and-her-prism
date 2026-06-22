@@ -25,7 +25,7 @@
  */
 
 import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
-import { seg_inter } from '../core/geometry.js';
+import { seg_inter, squareSegs } from '../core/geometry.js';
 import { objType, isRelay } from './objects.js';
 
 export const RAY_OCCLUSION = {
@@ -36,12 +36,6 @@ export const RAY_OCCLUSION = {
 
 export function rayProfile(type) {
   return RAY_OCCLUSION[type] || null;
-}
-
-function squareSegs(c, r) {
-  const [x, y] = c;
-  const p = [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]];
-  return [[p[0], p[1]], [p[1], p[2]], [p[2], p[3]], [p[3], p[0]]];
 }
 
 // The segments a SIMPLE line-of-sight ray of `profile` is blocked by. Used by

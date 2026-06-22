@@ -11,6 +11,22 @@
  *     never need to change.
  */
 
+// Capitalised primary-colour labels for the programming chooser menus.
+const CAP_COLOR = { red: 'Red', green: 'Green', blue: 'Blue' };
+const capColor = (c) => CAP_COLOR[c] ?? c;
+
+// The shared tail of the relay tooltips (connector / inverter / mixer): the
+// emitted-colour line, the link count, and the optional "raised on a box" note.
+function relayTail(emitColor, links, raised) {
+  const lines = [];
+  lines.push(emitColor
+    ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
+    : 'no output');
+  lines.push(`${links} link${links === 1 ? '' : 's'}`);
+  if (raised) lines.push('raised on a box');
+  return lines;
+}
+
 const en = {
   // Toolbar / static chrome (mirrors index.html so it can be driven from JS).
   toolbar: {
@@ -153,13 +169,13 @@ const en = {
   // Stack-chooser / programming menu labels.
   menu: {
     fuse: (s) => `${s}s fuse`,
-    color: (c) => ({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c),
+    color: (c) => capColor(c),
     // Connector corruption chooser: a "Clean" entry plus the corrupt-to-X colours.
-    connColor: (c) => (c == null ? 'Clean' : `Corrupt → ${({ red: 'Red', green: 'Green', blue: 'Blue' }[c] ?? c)}`),
+    connColor: (c) => (c == null ? 'Clean' : `Corrupt → ${capColor(c)}`),
     // Inverter form chooser: swap a colour pair, or output the complement.
     invMode: (m) => (m === 'complement' ? 'Complement (fill to white)' : 'Swap a pair'),
     // Inverter colour-pair chooser: the two colours it swaps between.
-    invPair: (p) => `Swap ${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[0]] ?? p[0])}↔${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[1]] ?? p[1])}`,
+    invPair: (p) => `Swap ${capColor(p[0])}↔${capColor(p[1])}`,
   },
 
   // Bottom status bar.
@@ -214,11 +230,7 @@ const en = {
     connector: (emitColor, links, raised, fixedColor) => {
       const lines = [en.kinds.connector];
       if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
-      lines.push(emitColor
-        ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
-        : 'no output');
-      lines.push(`${links} link${links === 1 ? '' : 's'}`);
-      if (raised) lines.push('raised on a box');
+      lines.push(...relayTail(emitColor, links, raised));
       return lines;
     },
     inverter: (emitColor, links, raised, fixedColor, pair, mode) => {
@@ -229,21 +241,13 @@ const en = {
         { t: 'swaps ' }, { t: en.colors[pair[0]] ?? pair[0], c: pair[0] },
         { t: ' ↔ ' }, { t: en.colors[pair[1]] ?? pair[1], c: pair[1] },
       ]);
-      lines.push(emitColor
-        ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
-        : 'no output');
-      lines.push(`${links} link${links === 1 ? '' : 's'}`);
-      if (raised) lines.push('raised on a box');
+      lines.push(...relayTail(emitColor, links, raised));
       return lines;
     },
     mixer: (emitColor, links, raised) => {
       const lines = [en.kinds.mixer];
       lines.push('mixes its inputs');
-      lines.push(emitColor
-        ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
-        : 'no output');
-      lines.push(`${links} link${links === 1 ? '' : 's'}`);
-      if (raised) lines.push('raised on a box');
+      lines.push(...relayTail(emitColor, links, raised));
       return lines;
     },
     mine: (fuse, running, disabled) => {

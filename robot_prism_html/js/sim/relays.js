@@ -20,7 +20,7 @@
  * kind emits (or null for "dark / confused").
  */
 
-import { colorMask, maskColor, WHITE_MASK } from './colormix.js';
+import { colorMask, maskColor, combineMask, bitCount, WHITE_MASK } from './colormix.js';
 
 export const RELAY_SPECS = {
   // Connector — a plain relay: pass a single incoming colour straight through;
@@ -50,13 +50,12 @@ export const RELAY_SPECS = {
     cleanEmit: (node, incoming) => {
       if (node.mode === 'complement') {
         if (incoming.size === 0) return null;     // truly nothing in → dark (no black from nothing)
-        let m = 0;
-        for (const c of incoming) m |= colorMask(c);
+        const m = combineMask(incoming);
         // m is the combined base-colour content. Black contributes no bits, so a
         // black ray (and nothing else) leaves m === 0 even though something DID
         // arrive — the complement of black is white. (No input was handled above.)
         if (m === 0) return 'white';              // received black → white
-        const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+        const bits = bitCount(m);
         if (bits === 1) return null;              // one base colour: needs more than one → confused
         const comp = WHITE_MASK & ~m;
         return comp === 0 ? 'black' : maskColor(comp);   // full white collected → BLACK ray; duo → missing primary
@@ -75,9 +74,8 @@ export const RELAY_SPECS = {
     // so the device must not show the confused mark when it makes black from white.
     isConfused: (node, incoming) => {
       if (node.mode === 'complement') {
-        let m = 0;
-        for (const c of incoming) m |= colorMask(c);
-        const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+        const m = combineMask(incoming);
+        const bits = bitCount(m);
         return bits === 1;   // lone primary only; white(3 bits)→black is deliberate
       }
       // swap form: dark while lit = confused (the default rule).
@@ -105,7 +103,7 @@ export const RELAY_SPECS = {
         if (c === 'white') return null;              // white received → confused (emit-only)
         m |= colorMask(c);
       }
-      const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+      const bits = bitCount(m);
       if (bits <= 1) return null;                    // a single base colour (or only black) → confused
       return maskColor(m);                           // 2 bits → the secondary; 3 bits → white
     },

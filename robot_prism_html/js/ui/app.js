@@ -7,7 +7,7 @@
  */
 
 import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
-import { dist, pt_seg_dist } from '../core/geometry.js';
+import { dist, pt_seg_dist, pointInRect, facingUnit } from '../core/geometry.js';
 import { LEVELS } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
@@ -280,9 +280,10 @@ export class App {
     }
   }
 
-  _fullReset() {
-    this.world = this._buildCurrentLevel();
-    this.world.solve(true, false);
+  // Reset all transient play state — selection, undo history, drag/aim gestures,
+  // and any open menus / previews. Shared by a full reset and a level load; each
+  // caller does its own world build + flash around this.
+  _clearTransientPlayState() {
     const ui = this.uiState;
     ui.sel = null;
     ui.live = true;
@@ -294,8 +295,15 @@ export class App {
     this._aim = null;
     ui.targeting = null;
     ui.menu = null;
+    ui.levelMenu = null;
     ui.placePreview = null;
     ui.wireDrag = null;
+  }
+
+  _fullReset() {
+    this.world = this._buildCurrentLevel();
+    this.world.solve(true, false);
+    this._clearTransientPlayState();
     this._setFlash(STR.flash.fullReset);
   }
 
@@ -334,8 +342,7 @@ export class App {
     const menu = this.uiState.levelMenu;
     if (!menu) return;
     for (const it of menu.items) {
-      const [rx, ry, rw, rh] = it.rect;
-      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+      if (pointInRect(x, y, it.rect)) {
         this.uiState.levelMenu = null;
         this._loadLevel(it.id);
         return;
@@ -353,20 +360,7 @@ export class App {
     this._levelId = id;
     this.world = lvl.build();
     this.world.solve(true, false);
-    const ui = this.uiState;
-    ui.sel = null;
-    ui.live = true;
-    ui.dirty = false;
-    ui.dwell = 0;
-    this._undo = [];
-    this._pushRun = false;
-    this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
-    this._aim = null;
-    ui.targeting = null;
-    ui.menu = null;
-    ui.levelMenu = null;
-    ui.placePreview = null;
-    ui.wireDrag = null;
+    this._clearTransientPlayState();
     this._setFlash(STR.flash.levelLoaded(lvl.name));
   }
 
@@ -881,28 +875,32 @@ export class App {
   // becomes a portable source) and drop the link(s) that filled it. One pre-fill
   // undo snapshot covers the batch, so undo reverts the colour and restores the
   // link, and its charge restarts from zero (cold-solve clears it).
-  _commitFills(now) {
-    const w = this.world;
-    const ready = w.ready_accumulators();
+  // Shared "fire everything that just finished charging" scaffold: if anything is
+  // ready, take ONE pre-action undo snapshot, apply `applyItem` to each, re-run
+  // the sim, and flash. The early-out before the snapshot means an empty batch is
+  // never an undo point.
+  _commitReady(ready, applyItem, flash, now) {
     if (!ready.length) return;
     this._pushUndo();
-    for (const { id, color } of ready) {
+    for (const item of ready) applyItem(item);
+    this.uiState.live = true;
+    this.world.step(now);
+    this._setFlash(flash);
+  }
+
+  _commitFills(now) {
+    const w = this.world;
+    this._commitReady(w.ready_accumulators(), ({ id, color }) => {
       const nd = w.nodes[id];
-      if (!nd || nd.kind !== 'accumulator') continue;
+      if (!nd || nd.kind !== 'accumulator') return;
       nd.color = color;          // empty → charged: now a rank-0 portable source
       w.clear_links_of(id);      // the connection that got it filled drops
-    }
-    this.uiState.live = true;
-    w.step(now);
-    this._setFlash(STR.flash.accumFilled);
+    }, STR.flash.accumFilled, now);
   }
 
   _commitRecolors(now) {
     const w = this.world;
-    const ready = w.ready_rewirers();
-    if (!ready.length) return;
-    this._pushUndo();
-    for (const rid of ready) {
+    this._commitReady(w.ready_rewirers(), (rid) => {
       const rw = w.nodes[rid];
       const tid = w.recolor_links.get(rid);
       const tgt = tid ? w.nodes[tid] : null;
@@ -911,10 +909,7 @@ export class App {
       rw.recolor_charge = 0;
       w.clear_recolor(rid);
       if (this.uiState.sel === rid) this.uiState.sel = null;
-    }
-    this.uiState.live = true;
-    w.step(now);
-    this._setFlash(STR.flash.recolourDone);
+    }, STR.flash.recolourDone, now);
   }
 
   // Delete the intent ray(s) under a click that belong to `ownerId` — the device
@@ -1266,8 +1261,7 @@ export class App {
     this.uiState.menu = null;
     if (!menu) return;
     for (const it of menu.items) {
-      const [rx, ry, rw, rh] = it.rect;
-      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+      if (pointInRect(x, y, it.rect)) {
         if (it.act) this._runMenuAct(it, menu.forgeId); else this._pickItem(it);
         return;
       }
@@ -1354,7 +1348,8 @@ export class App {
   }
 
   // Classify what sits under (x, y) for placement, ignoring `excludeId`.
-  // Returns { type, point } where type is one of the STACK_RULES target kinds.
+  // Returns { type, point } where type is one of the placement target kinds
+  // canPlace understands ('ground' | 'box' | 'box+connector' | 'connector').
   _targetUnder(x, y, excludeId) {
     const w = this.world;
     let box = null, bd = BOX_R + 4;
@@ -1468,9 +1463,7 @@ export class App {
       }
       ux = dx / d; uy = dy / d;
     } else {
-      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
-      const fl = Math.hypot(f[0], f[1]) || 1;
-      ux = f[0] / fl; uy = f[1] / fl;
+      [ux, uy] = facingUnit(w.facing);
       d = 0;                                // unused in E-mode (wantDist = gap)
     }
 
@@ -1509,7 +1502,7 @@ export class App {
   // connector onto a box it is pointed at.
   _boxAheadForStack() {
     const w = this.world;
-    const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
+    const f = facingUnit(w.facing);
     const base = Math.atan2(f[1], f[0]);
     const norm = a => Math.atan2(Math.sin(a), Math.cos(a));
     let best = null, bestDiff = Math.PI / 4;   // 45° cone
@@ -1581,7 +1574,7 @@ export class App {
       osc.connect(gain); gain.connect(ctx.destination);
       osc.start(t);
       osc.stop(t + 0.13);
-    } catch (e) { /* audio unavailable — fail silently */ }
+    } catch { /* audio unavailable — fail silently */ }
   }
 
   _nodeAt(x, y, kinds = null) {
@@ -1630,7 +1623,7 @@ export class App {
     if (isRelay(kind)) {
       const emit = nd ? w.emit[nd.id] : null;
       parts.push(emit ? S.emits(emit) : S.emitsNone);
-      const links = nd ? w.links_pairs.filter(([a, b]) => a === nd.id || b === nd.id).length : 0;
+      const links = nd ? w.linkCount(nd.id) : 0;
       parts.push(S.links(links));
       parts.push(this.uiState.sel === w.carrying ? S.armed : S.idle);
     } else if (kind === 'mine') {
@@ -1728,25 +1721,25 @@ export class App {
       case 'button':   lines = T.button(w.pressed[node.id] ?? false); break;
       case 'connector': {
         const emit = w.emit[node.id] ?? null;
-        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        const links = w.linkCount(node.id);
         lines = T.connector(emit, links, w._conn_elevated(node.id), node.color);
         break;
       }
       case 'inverter': {
         const emit = w.emit[node.id] ?? null;
-        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        const links = w.linkCount(node.id);
         lines = T.inverter(emit, links, w._conn_elevated(node.id), node.color, node.pair, node.mode);
         break;
       }
       case 'mixer': {
         const emit = w.emit[node.id] ?? null;
-        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        const links = w.linkCount(node.id);
         lines = T.mixer(emit, links, w._conn_elevated(node.id));
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;
       case 'accumulator': {
-        const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
+        const links = w.linkCount(node.id);
         const ch = node.color ? 1 : (w.engine.accum_charge[node.id] ?? 0) / ACCUM_FILL_SEC;
         lines = T.accumulator(node.color, links, Math.max(0, Math.min(1, ch)));
         break;

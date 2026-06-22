@@ -51,6 +51,7 @@
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { kindIsJammable } from './objects.js';
 import { RELAY_SPECS, isCorruptibleKind } from './relays.js';
+import { linkKey } from './world.js';
 
 // The node kinds a light wire may attach to: sources, receivers, and every relay
 // (connector / inverter / mixer / future sister). Built from the relay registry so
@@ -82,24 +83,27 @@ function nodesOfKinds(world, kinds, excludeId) {
     .filter(n => n.id !== excludeId && !n.spent && kinds.includes(n.kind));
 }
 
-// The targeting spec shared by every relay that wires light (connector,
-// inverter, …). A factory so each kind gets its own object (no shared identity).
-function WIRE_SPEC() {
+// The targeting spec shared by every device that wires light (connector,
+// inverter, mixer, accumulator). A factory so each kind gets its own object (no
+// shared identity). `kindsFor(world, deviceId)` yields the wireable kinds — a
+// constant for the relays, state-dependent for the accumulator; `dragAutoWire`
+// gates the character-drag convenience (on for relays, off for the accumulator).
+function WIRE_SPEC({ kindsFor = () => WIRE_KINDS, dragAutoWire = true } = {}) {
   return {
     maxIntents: Infinity,
     persistent: true,
     sweep: 'toggle',
-    dragAutoWire: true,
+    dragAutoWire,
     flash: null,
     targetAt(world, deviceId, x, y) {
-      const n = nearestNode(world, x, y, WIRE_KINDS, deviceId);
+      const n = nearestNode(world, x, y, kindsFor(world, deviceId), deviceId);
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
     // A light link can be wired regardless of obstruction (the beam simply will
     // not deliver through a wall) — so every wireable node is a reachable candidate.
     candidates(world, deviceId) {
-      return nodesOfKinds(world, WIRE_KINDS, deviceId)
+      return nodesOfKinds(world, kindsFor(world, deviceId), deviceId)
         .map(n => ({ id: n.id, pos: [...n.pos], reachable: true }));
     },
     intentRays(world) {
@@ -107,7 +111,7 @@ function WIRE_SPEC() {
         from: world.nodes[a].pos,
         to: world.nodes[b].pos,
         owners: [a, b],
-        key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
+        key: linkKey(a, b),
         remove: () => world.toggle_link(a, b),
       }));
     },
@@ -116,7 +120,7 @@ function WIRE_SPEC() {
 }
 
 export const TARGET_SPECS = {
-  // Connector & inverter — both wire light between any number of sources,
+  // Connector & inverter & mixer — all wire light between any number of sources,
   // receivers and relays. Identical targeting behaviour, so they share one spec.
   // Many intents; the golden arrow toggles links on pass-over and a
   // character-drag does the same as a convenience.
@@ -129,42 +133,15 @@ export const TARGET_SPECS = {
   // may feed receivers, relays and (to clash) sources. An EMPTY one is only being
   // filled, so it wires to sources and relays (a receiver cannot fill it). Many
   // intents, toggled on pass-over; no character-drag convenience.
-  accumulator: (() => {
-    const kindsFor = (world, deviceId) => {
+  accumulator: WIRE_SPEC({
+    dragAutoWire: false,
+    kindsFor: (world, deviceId) => {
       const relays = Object.keys(RELAY_SPECS);
       return world.nodes[deviceId]?.color
         ? ['source', 'receiver', ...relays]      // charged: a source, may feed receivers
         : ['source', ...relays];                 // empty: wires to sources/relays to be filled
-    };
-    return {
-      maxIntents: Infinity,
-      persistent: true,
-      sweep: 'toggle',
-      dragAutoWire: false,
-      flash: null,
-      targetAt(world, deviceId, x, y) {
-        const n = nearestNode(world, x, y, kindsFor(world, deviceId), deviceId);
-        return n ? { id: n.id, pos: n.pos } : null;
-      },
-      apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
-      candidates(world, deviceId) {
-        return nodesOfKinds(world, kindsFor(world, deviceId), deviceId)
-          .map(n => ({ id: n.id, pos: [...n.pos], reachable: true }));
-      },
-      // Light links share one set; surfacing every link here (deduped by key with
-      // the relay specs) keeps click-delete working for accumulator links too.
-      intentRays(world) {
-        return world.links_pairs.map(([a, b]) => ({
-          from: world.nodes[a].pos,
-          to: world.nodes[b].pos,
-          owners: [a, b],
-          key: (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`),
-          remove: () => world.toggle_link(a, b),
-        }));
-      },
-      clear(world, deviceId) { world.clear_links_of(deviceId); },
-    };
-  })(),
+    },
+  }),
 
   // Rewirer — holds one intent (re-marking overwrites). With a clear shot (the
   // rewirer ray profile) it recolours a source, receiver, or connector after a

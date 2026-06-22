@@ -2,13 +2,17 @@ import {
   EPS, PLAYER_R, BOX_R, CONN_R, BTN_R,
   CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY, ACCUM_FILL_SEC,
 } from '../core/constants.js';
-import { seg_inter, first_block_t, dist } from '../core/geometry.js';
+import { seg_inter, first_block_t, dist, squareSegs } from '../core/geometry.js';
 import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
 import { isRelayKind, relayEmit, relayConfused } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
 const EMPTY_SET = new Set();
+
+// The stable per-beam key (origin → target). One source of truth for every map
+// the timed/animated beam stores key by.
+const beamKey = (o, t) => `${o}\x00${t}`;
 
 // A node that emits as a rank-0 SOURCE of its own colour: a real source, or a
 // CHARGED accumulator (a portable source). An empty accumulator emits nothing.
@@ -52,12 +56,6 @@ export class Engine {
   }
 
   // ---- blockers ----
-  _square(c, r) {
-    const [x, y] = c;
-    const p = [[x-r,y-r],[x+r,y-r],[x+r,y+r],[x-r,y+r]];
-    return [[p[0],p[1]],[p[1],p[2]],[p[2],p[3]],[p[3],p[0]]];
-  }
-
   _leveled_blockers() {
     const w = this.world;
     const segs = [];
@@ -66,7 +64,7 @@ export class Engine {
       if (!ff.is_passable()) segs.push([ff.p1, ff.p2, null, null]);
     }
     for (const bx of w.boxes) {
-      for (const [s1,s2] of this._square(bx, BOX_R)) segs.push([s1,s2,0,null]);
+      for (const [s1,s2] of squareSegs(bx, BOX_R)) segs.push([s1,s2,0,null]);
     }
     // Every material object interrupts a laser beam (RAY_OCCLUSION.laser.object).
     // A connector carries its own id as owner AND its elevation level, so a beam
@@ -78,21 +76,21 @@ export class Engine {
       if (isRelayKind(n.kind)) {
         if (n.id === w.carrying) continue;
         const lvl = w._conn_elevated(n.id) ? 1 : 0;
-        for (const [s1,s2] of this._square(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
+        for (const [s1,s2] of squareSegs(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
       } else {
         if (n.id === w.carrying) continue;
         const r = objType(n.kind)?.radius ?? CONN_R;
-        for (const [s1,s2] of this._square(n.pos, r)) segs.push([s1,s2,0,n.id]);
+        for (const [s1,s2] of squareSegs(n.pos, r)) segs.push([s1,s2,0,n.id]);
       }
     }
     // Forges are material fixtures: they occlude beams at every level and are
     // never a beam endpoint, so they always block.
     for (const f of w.forges()) {
       const r = objType(f.kind)?.radius ?? CONN_R;
-      for (const [s1,s2] of this._square(f.pos, r)) segs.push([s1,s2,null,f.id]);
+      for (const [s1,s2] of squareSegs(f.pos, r)) segs.push([s1,s2,null,f.id]);
     }
     if (w.player_block && w.player) {
-      for (const [s1,s2] of this._square(w.player, PLAYER_R))
+      for (const [s1,s2] of squareSegs(w.player, PLAYER_R))
         segs.push([s1,s2,0,PLAYER_OWNER]);
     }
     return segs;
@@ -141,6 +139,17 @@ export class Engine {
     return rank;
   }
 
+  // Invoke cb(beam, targetNode) for every DELIVERED beam — the shared delivery
+  // guard the incoming-colour collectors below all start from.
+  _forEachDelivered(beams, delivery, cb) {
+    const w = this.world;
+    for (let k = 0; k < beams.length; k++) {
+      if (!delivery[k]) continue;
+      const b = beams[k];
+      cb(b, w.nodes[b.t]);
+    }
+  }
+
   // From a solved beam list + its per-beam delivery flags, collect for every relay
   // (a) the set of distinct colours delivered to it, and (b) per colour the
   // strongest (minimum) feeder rank seen for that colour. `rank` supplies each
@@ -150,16 +159,13 @@ export class Engine {
     const incoming = {}, inRank = {};
     for (const n of Object.values(w.nodes))
       if (isRelayKind(n.kind)) { incoming[n.id] = new Set(); inRank[n.id] = new Map(); }
-    for (let k = 0; k < beams.length; k++) {
-      if (!delivery[k]) continue;
-      const b = beams[k];
-      const nt = w.nodes[b.t];
-      if (!nt || !isRelayKind(nt.kind)) continue;
+    this._forEachDelivered(beams, delivery, (b, nt) => {
+      if (!nt || !isRelayKind(nt.kind)) return;
       incoming[b.t].add(b.color);
       const fr = rank.has(b.o) ? rank.get(b.o) : Infinity;
       const prev = inRank[b.t].get(b.color);
       if (prev === undefined || fr < prev) inRank[b.t].set(b.color, fr);
-    }
+    });
     return [incoming, inRank];
   }
 
@@ -336,14 +342,17 @@ export class Engine {
     return [beams, length, delivery];
   }
 
-  // The light fixpoint. Each pass solves the beam field for the current emit/rank,
-  // then re-derives from what was DELIVERED: every relay's emitted colour, its new
-  // rank (1 + weakest of its per-colour strongest feeders), and whether it is
-  // confused (took light but no valid output → "looking for food", won't push back
-  // next pass). Rank and emit co-evolve; the loop ends when BOTH are stable. Rank
-  // and confused are threaded into the next pass so a tool can climb above a feeder
-  // it shares a rank with, and so a confused tool stops capping its own food.
-  propagate() {
+  // The shared light fixpoint, parameterised by the beam resolver. Each pass
+  // solves the beam field for the current emit/rank, then re-derives from what was
+  // DELIVERED: every relay's emitted colour, its new rank (1 + weakest of its
+  // per-colour strongest feeders), and whether it is confused (took light but no
+  // valid output → "looking for food", won't push back next pass). Rank and emit
+  // co-evolve; the loop ends when BOTH are stable. Rank and confused are threaded
+  // into the next pass so a tool can climb above a feeder it shares a rank with,
+  // and so a confused tool stops capping its own food. `resolve` returns a tuple
+  // whose first element is `beams` and whose LAST element is `delivery`, so the
+  // cold and timed resolvers (different middle fields) both drive this unchanged.
+  _propagateWith(resolve) {
     const w = this.world;
     const conns = Object.values(w.nodes)
       .filter(n => isRelayKind(n.kind) && n.id !== w.carrying)
@@ -355,7 +364,8 @@ export class Engine {
     let confused = EMPTY_SET;
     let last = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
-      const [beams, length, delivery] = this.resolve(emit, rank, confused);
+      const result = resolve(emit, rank, confused);
+      const beams = result[0], delivery = result[result.length - 1];
       const [, inRank] = this._gatherIncoming(beams, delivery, rank);
       const newRank = this._sourceRanks();
       const newConfused = new Set();
@@ -369,13 +379,18 @@ export class Engine {
       if (!this._sameRank(rank, newRank)) changed = true;
       rank = newRank;
       confused = newConfused;
-      last = [beams, length, delivery];
+      last = result;
       if (!changed) break;
     }
-    if (last === null) last = this.resolve(emit, rank, confused);
+    if (last === null) last = resolve(emit, rank, confused);
     this._rank = rank;
     this._confused = confused;
     return [emit, last, rank, confused];
+  }
+
+  // Cold (full-recompute) light fixpoint. `last` = [beams, length, delivery].
+  propagate() {
+    return this._propagateWith((e, r, c) => this.resolve(e, r, c));
   }
 
   _lit_map(beams, delivery) {
@@ -402,11 +417,9 @@ export class Engine {
     const inc = {};
     for (const n of Object.values(w.nodes))
       if (isRelayKind(n.kind)) inc[n.id] = new Set();
-    for (let k = 0; k < beams.length; k++) {
-      if (!delivery[k]) continue;
-      const t = beams[k].t;
-      if (isRelayKind(w.nodes[t]?.kind)) inc[t].add(beams[k].color);
-    }
+    this._forEachDelivered(beams, delivery, (b, nt) => {
+      if (isRelayKind(nt?.kind)) inc[b.t].add(b.color);
+    });
     const dead = new Set();
     for (const id in inc) {
       if (relayConfused(w.nodes[id], inc[id])) dead.add(id);
@@ -414,14 +427,21 @@ export class Engine {
     return dead;
   }
 
+  // Is a button at `bp` pressed by the given player position and box set? The
+  // shared rule (player, any box, or any non-carried relay within BTN_R), used
+  // both for the live world and for motion's hypothetical press sets.
+  _buttonAt(bp, player, boxes) {
+    return Boolean(
+      (player && dist(player, bp) < BTN_R)
+      || boxes.some(bx => dist(bx, bp) < BTN_R)
+      || Object.values(this.world.nodes).some(
+        n => isRelayKind(n.kind) && n.id !== this.world.carrying && dist(n.pos, bp) < BTN_R)
+    );
+  }
+
   button_pressed(bid) {
     const w = this.world;
-    const bp = w.nodes[bid].pos;
-    if (w.player && dist(w.player, bp) < BTN_R) return true;
-    if (w.boxes.some(bx => dist(bx, bp) < BTN_R)) return true;
-    return Object.values(w.nodes).some(
-      n => isRelayKind(n.kind) && n.id !== w.carrying && dist(n.pos, bp) < BTN_R
-    );
+    return this._buttonAt(w.nodes[bid].pos, w.player, w.boxes);
   }
 
   // ---- receiver charging ----
@@ -456,6 +476,15 @@ export class Engine {
     return out;
   }
 
+  // The boolean inputs feeding `dstId` (a gate or a force field): each logic
+  // link into it, with its source's current value and the link's negate flag
+  // applied. One definition for gate evaluation and field opening.
+  _logicInputs(dstId, val) {
+    return this.world.logic_links
+      .filter(([,dst]) => dst === dstId)
+      .map(([src,,neg]) => neg !== Boolean(val[src] ?? false));
+  }
+
   // ---- boolean logic ----
   evaluate_logic(lit, pressed) {
     const w = this.world;
@@ -469,9 +498,7 @@ export class Engine {
     for (let iter = 0; iter < gates.length+2; iter++) {
       let changed = false;
       for (const g of gates) {
-        const ins = w.logic_links
-          .filter(([,dst]) => dst === g.id)
-          .map(([src,,neg]) => neg !== Boolean(val[src] ?? false));
+        const ins = this._logicInputs(g.id, val);
         const nv = ins.length === 0 ? false
           : (g.kind === 'and' ? ins.every(Boolean) : ins.some(Boolean));
         if (nv !== val[g.id]) { val[g.id] = nv; changed = true; }
@@ -482,9 +509,7 @@ export class Engine {
   }
 
   field_open(ff, val) {
-    const ins = this.world.logic_links
-      .filter(([,dst]) => dst === ff.id)
-      .map(([src,,neg]) => neg !== Boolean(val[src] ?? false));
+    const ins = this._logicInputs(ff.id, val);
     return ins.length > 0 && ins.some(Boolean);
   }
 
@@ -645,11 +670,9 @@ export class Engine {
     const inc = {};
     for (const n of Object.values(w.nodes))
       if (isAccumulatorKind(n.kind) && !n.color && n.id !== w.carrying) inc[n.id] = new Set();
-    for (let k = 0; k < beams.length; k++) {
-      if (!delivery[k]) continue;
-      const t = beams[k].t;
-      if (inc[t]) inc[t].add(beams[k].color);
-    }
+    this._forEachDelivered(beams, delivery, (b) => {
+      if (inc[b.t]) inc[b.t].add(b.color);
+    });
     return inc;
   }
 
@@ -689,12 +712,35 @@ export class Engine {
     return out;
   }
 
-  solve(cold = false, fill_instant = true) {
+  // Settle jammers, the light field, and gate open/shut to a mutual fixpoint
+  // using `propagateFn` (cold `propagate` or timed `propagate_timed`), then run
+  // one final jam-apply + propagate and return its [emit, last]. `last[0]` is the
+  // beam list and `last[last.length-1]` is the delivery flags, so both resolver
+  // tuple shapes read out the same way. Recomputes `w.pressed` first.
+  _settle(propagateFn) {
     const w = this.world;
-    this._fill_instant = fill_instant;
     w.pressed = {};
     for (const n of Object.values(w.nodes))
       if (n.kind === 'button') w.pressed[n.id] = this.button_pressed(n.id);
+    for (let iter = 0; iter < 30; iter++) {
+      let changed = this._apply_jam_disabled(this._compute_jam_disabled());
+      const [, last] = propagateFn();
+      const beams = last[0], delivery = last[last.length - 1];
+      const lit = this._lit_map(beams, delivery);
+      const val = this.evaluate_logic(lit, w.pressed);
+      for (const ff of w.ffs) {
+        const nw = this.field_open(ff, val);
+        if (nw !== ff.is_open) { ff.is_open = nw; changed = true; }
+      }
+      if (!changed) break;
+    }
+    this._apply_jam_disabled(this._compute_jam_disabled());
+    return propagateFn();
+  }
+
+  solve(cold = false, fill_instant = true) {
+    const w = this.world;
+    this._fill_instant = fill_instant;
     if (cold) {
       for (const ff of w.ffs) { ff.is_open = false; ff.disabled = false; }
       for (const n of Object.values(w.nodes)) if (kindIsJammable(n.kind)) n.disabled = false;
@@ -709,19 +755,8 @@ export class Engine {
       this.accum_in = {};
       this._accum_t = null;
     }
-    for (let iter = 0; iter < 30; iter++) {
-      let changed = this._apply_jam_disabled(this._compute_jam_disabled());
-      const [emit, [beams, length, delivery]] = this.propagate();
-      const lit = this._lit_map(beams, delivery);
-      const val = this.evaluate_logic(lit, w.pressed);
-      for (const ff of w.ffs) {
-        const nw = this.field_open(ff, val);
-        if (nw !== ff.is_open) { ff.is_open = nw; changed = true; }
-      }
-      if (!changed) break;
-    }
-    this._apply_jam_disabled(this._compute_jam_disabled());
-    const [emit, [beams, length, delivery]] = this.propagate();
+    const [emit, last] = this._settle(() => this.propagate());
+    const [beams, length, delivery] = last;
     this.emit = emit;
     this.lit = this._lit_map(beams, delivery);
     this.active = this._active_map(this.lit);
@@ -738,7 +773,7 @@ export class Engine {
     this._beam_instant = new Map();
     for (let k = 0; k < beams.length; k++) {
       const b = beams[k];
-      const key = `${b.o}\x00${b.t}`;
+      const key = beamKey(b.o, b.t);
       this.beam_eff.set(key, { len: length[k], since: null });
       this._beam_targets.set(key, length[k]);
       this._beam_instant.set(key, length[k]);
@@ -753,7 +788,7 @@ export class Engine {
     const seen = new Set();
     for (let k = 0; k < beams.length; k++) {
       const b = beams[k];
-      const key = `${b.o}\x00${b.t}`;
+      const key = beamKey(b.o, b.t);
       seen.add(key);
       const Lnew = length[k], dnew = delivery[k];
       let st = this.beam_anim.get(key);
@@ -794,9 +829,9 @@ export class Engine {
     if (confused === null) confused = EMPTY_SET;
     const [beams, cross] = this._beams_and_cross(emit, rank, confused);
     const n = beams.length;
-    const is_new = beams.map(b => !this.beam_eff.has(`${b.o}\x00${b.t}`));
+    const is_new = beams.map(b => !this.beam_eff.has(beamKey(b.o, b.t)));
     const eff = beams.map((b,k) =>
-      is_new[k] ? b.hard : (this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard)
+      is_new[k] ? b.hard : (this.beam_eff.get(beamKey(b.o, b.t))?.len ?? b.hard)
     );
     for (let iter = 0; iter < 4*n+10; iter++) {
       let changed = false;
@@ -821,39 +856,9 @@ export class Engine {
     return [beams, target, instant, eff, delivery];
   }
 
+  // Time-stepped light fixpoint. `last` = [beams, target, instant, eff, delivery].
   propagate_timed() {
-    const w = this.world;
-    const conns = Object.values(w.nodes)
-      .filter(n => isRelayKind(n.kind) && n.id !== w.carrying)
-      .map(n => n.id);
-    const emit = {};
-    for (const [nid, nd] of Object.entries(w.nodes))
-      emit[nid] = emitsAsSource(nd) ? nd.color : null;   // sources + charged accumulators
-    let rank = this._sourceRanks();
-    let confused = EMPTY_SET;
-    let last = null;
-    for (let iter = 0; iter < 2*conns.length+6; iter++) {
-      const [beams, target, instant, eff, delivery] = this.resolve_timed(emit, rank, confused);
-      const [, inRank] = this._gatherIncoming(beams, delivery, rank);
-      const newRank = this._sourceRanks();
-      const newConfused = new Set();
-      let changed = false;
-      for (const c of conns) {
-        const intake = this._relayIntake(w.nodes[c], inRank[c]);
-        if (Number.isFinite(intake.rank)) newRank.set(c, intake.rank);
-        if (intake.confused) newConfused.add(c);
-        if (intake.emit !== emit[c]) { emit[c] = intake.emit; changed = true; }
-      }
-      if (!this._sameRank(rank, newRank)) changed = true;
-      rank = newRank;
-      confused = newConfused;
-      last = [beams, target, instant, eff, delivery];
-      if (!changed) break;
-    }
-    if (last === null) last = this.resolve_timed(emit, rank, confused);
-    this._rank = rank;
-    this._confused = confused;
-    return [emit, last, rank, confused];
+    return this._propagateWith((e, r, c) => this.resolve_timed(e, r, c));
   }
 
   _advance_eff(beams, target, instant, now) {
@@ -861,7 +866,7 @@ export class Engine {
     const seen = new Set();
     for (let k = 0; k < beams.length; k++) {
       const b = beams[k];
-      const key = `${b.o}\x00${b.t}`;
+      const key = beamKey(b.o, b.t);
       seen.add(key);
       const tgt = target[k], inst = instant[k];
       let st = this.beam_eff.get(key);
@@ -895,15 +900,15 @@ export class Engine {
     for (const key of [...this.beam_eff.keys()]) {
       if (!seen.has(key)) { this.beam_eff.delete(key); changed = true; }
     }
-    this._beam_targets = new Map(beams.map((b,k) => [`${b.o}\x00${b.t}`, target[k]]));
-    this._beam_instant = new Map(beams.map((b,k) => [`${b.o}\x00${b.t}`, instant[k]]));
+    this._beam_targets = new Map(beams.map((b,k) => [beamKey(b.o, b.t), target[k]]));
+    this._beam_instant = new Map(beams.map((b,k) => [beamKey(b.o, b.t), instant[k]]));
     this._last_beams_t = beams;
     return changed;
   }
 
   _build_draw_timed(beams) {
     return beams.map(b => {
-      const L = this.beam_eff.get(`${b.o}\x00${b.t}`)?.len ?? b.hard;
+      const L = this.beam_eff.get(beamKey(b.o, b.t))?.len ?? b.hard;
       // A same-colour tug and a soft connect to a confused relay are both shown
       // full length with the delivered look (see _animate_beams); everything else
       // draws at its live effective length.
@@ -926,22 +931,8 @@ export class Engine {
     const old_emit = { ...this.emit };
     const old_open = w.ffs.map(ff => ff.is_open);
     const old_disabled = w.ffs.map(ff => ff.disabled);
-    w.pressed = {};
-    for (const n of Object.values(w.nodes))
-      if (n.kind === 'button') w.pressed[n.id] = this.button_pressed(n.id);
-    for (let iter = 0; iter < 30; iter++) {
-      let changed = this._apply_jam_disabled(this._compute_jam_disabled());
-      const [emit, [beams, target, instant, eff, delivery]] = this.propagate_timed();
-      const lit = this._lit_map(beams, delivery);
-      const val = this.evaluate_logic(lit, w.pressed);
-      for (const ff of w.ffs) {
-        const nw = this.field_open(ff, val);
-        if (nw !== ff.is_open) { ff.is_open = nw; changed = true; }
-      }
-      if (!changed) break;
-    }
-    this._apply_jam_disabled(this._compute_jam_disabled());
-    const [emit, [beams, target, instant, eff, delivery]] = this.propagate_timed();
+    const [emit, last] = this._settle(() => this.propagate_timed());
+    const [beams, target, instant, eff, delivery] = last;
     this.emit = emit;
     this.lit = this._lit_map(beams, delivery);
     const charge_changed = this._update_charge(this.lit, now);
@@ -965,8 +956,8 @@ export class Engine {
     if (!this._last_beams_t.length) return false;
     if (now === null) now = performance.now() / 1000;
     const beams = this._last_beams_t;
-    const target = beams.map(b => this._beam_targets.get(`${b.o}\x00${b.t}`) ?? b.hard);
-    const instant = beams.map(b => this._beam_instant.get(`${b.o}\x00${b.t}`) ?? b.hard_mat);
+    const target = beams.map(b => this._beam_targets.get(beamKey(b.o, b.t)) ?? b.hard);
+    const instant = beams.map(b => this._beam_instant.get(beamKey(b.o, b.t)) ?? b.hard_mat);
     const changed = this._advance_eff(beams, target, instant, now);
     this.beams_draw = this._build_draw_timed(beams);
     return changed;

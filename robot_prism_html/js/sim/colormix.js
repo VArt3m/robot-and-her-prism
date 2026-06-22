@@ -41,7 +41,18 @@ export function isBaseColor(c) {
 // The additive sum (bitwise OR) of a collection of colours → a colour name, or
 // null if the collection is empty.
 export function addColors(colors) {
+  return NAME[combineMask(colors)] ?? null;
+}
+
+// The combined RGB bitmask (bitwise OR) of a collection of colour names. Black
+// and unknown colours contribute 0, so an empty collection yields 0.
+export function combineMask(colors) {
   let m = 0;
   for (const c of colors) m |= (MASK[c] ?? 0);
-  return NAME[m] ?? null;
+  return m;
+}
+
+// Number of set RGB bits in a 3-bit mask (how many primaries it contains).
+export function bitCount(m) {
+  return (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
 }

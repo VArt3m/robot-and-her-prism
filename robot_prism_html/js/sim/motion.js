@@ -1,6 +1,6 @@
-import { EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH } from '../core/constants.js';
-import { seg_inter, first_block_t, dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES, isRelay } from './objects.js';
+import { PLAYER_R, BOX_R, CONN_R, BEAM_TOUCH } from '../core/constants.js';
+import { first_block_t, dist, pt_seg_dist, segments_cross } from '../core/geometry.js';
+import { OBJECT_TYPES } from './objects.js';
 
 export class Motion {
   constructor(world, engine) {
@@ -9,28 +9,14 @@ export class Motion {
   }
 
   _static_blocked(old, new_, carry) {
-    const w = this.world;
-    const segs = w.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of w.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
-    for (const bar of w.barriers) {
-      if (bar.kind === 'tan' || (bar.kind === 'purple' && carry)) segs.push([bar.p1, bar.p2]);
-    }
-    for (const [s1, s2] of segs) {
-      const r = seg_inter(old, new_, s1, s2);
-      if (r) { const [,t,u] = r; if (-EPS<=t&&t<=1+EPS&&-EPS<=u&&u<=1+EPS) return true; }
-    }
-    return false;
+    const segs = this.world.staticBlockerSegs({ barriers: 'carry', carry });
+    return segments_cross(old, new_, segs);
   }
 
   _box_blocked(idx, old, new_) {
     const w = this.world;
-    const segs = w.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of w.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
-    for (const bar of w.barriers) segs.push([bar.p1, bar.p2]);
-    for (const [s1, s2] of segs) {
-      const r = seg_inter(old, new_, s1, s2);
-      if (r) { const [,t,u] = r; if (-EPS<=t&&t<=1+EPS&&-EPS<=u&&u<=1+EPS) return true; }
-    }
+    const segs = w.staticBlockerSegs({ barriers: 'all' });
+    if (segments_cross(old, new_, segs)) return true;
     for (let j = 0; j < w.boxes.length; j++) {
       if (j !== idx && dist(new_, w.boxes[j]) < 2*BOX_R - 2) return true;
     }
@@ -38,16 +24,11 @@ export class Motion {
   }
 
   _press_set(player_pos, boxes) {
-    const w = this.world;
+    const w = this.world, eng = this.engine;
     const out = {};
     for (const n of Object.values(w.nodes)) {
       if (n.kind !== 'button') continue;
-      const bp = n.pos;
-      out[n.id] = Boolean(
-        (player_pos && dist(player_pos, bp) < BTN_R)
-        || boxes.some(b => dist(b, bp) < BTN_R)
-        || Object.values(w.nodes).some(c => isRelay(c.kind) && c.id!==w.carrying && dist(c.pos,bp)<BTN_R)
-      );
+      out[n.id] = eng._buttonAt(n.pos, player_pos, boxes);
     }
     return out;
   }
@@ -102,13 +83,7 @@ export class Motion {
 
   _theft_blocked(old, new_, reach_to, boxes_after, push_idx = null, box_new = null) {
     const w = this.world;
-    function crosses(a, b, segs) {
-      for (const [s1,s2] of segs) {
-        const r = seg_inter(a, b, s1, s2);
-        if (r) { const [,t,u] = r; if (-EPS<=t&&t<=1+EPS&&-EPS<=u&&u<=1+EPS) return true; }
-      }
-      return false;
-    }
+    const crosses = segments_cross;
     const closed_now = w.ffs.filter(ff => !ff.is_passable()).map(ff => [ff.p1, ff.p2]);
     const need_dry = Boolean(w.ffs.length) && (
       reach_to !== null
@@ -182,11 +157,7 @@ export class Motion {
     // (by logic) or down (jammed) is passable to the player, light, and rays,
     // but you still cannot toss an object across its line: walk through and
     // place it on the far side instead.
-    const segs = [
-      ...w.walls.map(wl => [wl.p1, wl.p2]),
-      ...w.ffs.map(ff => [ff.p1, ff.p2]),
-      ...w.barriers.map(bar => [bar.p1, bar.p2]),
-    ];
+    const segs = w.staticBlockerSegs({ barriers: 'all', includePassableFields: true });
     return first_block_t(a, b, segs) !== null;
   }
 

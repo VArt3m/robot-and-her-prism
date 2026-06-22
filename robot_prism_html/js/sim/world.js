@@ -4,6 +4,12 @@ import { OBJECT_TYPES, kindIsJammable, isRelay, isAccumulatorKind } from './obje
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
+// Light links are stored as a sorted "a\x00b" key so each unordered pair is
+// unique. One source of truth for the format, shared with the targeting specs.
+export function linkKey(a, b) {
+  return a < b ? `${a}\x00${b}` : `${b}\x00${a}`;
+}
+
 export class World {
   constructor() {
     this.nodes = {};
@@ -81,7 +87,7 @@ export class World {
 
   // ---- light links ----
   // Links are stored as sorted "a\x00b" keys so each pair is unique.
-  _link_key(a, b) { return a < b ? `${a}\x00${b}` : `${b}\x00${a}`; }
+  _link_key(a, b) { return linkKey(a, b); }
 
   toggle_link(a, b) {
     if (a === b || !this.nodes[a] || !this.nodes[b]) return;
@@ -101,6 +107,12 @@ export class World {
   // Iterate links as [a, b] pairs
   get links_pairs() {
     return [...this.links].map(k => k.split('\x00'));
+  }
+
+  // How many light links touch node `nid`. One definition for the status bar
+  // and every node tooltip.
+  linkCount(nid) {
+    return this.links_pairs.filter(([a, b]) => a === nid || b === nid).length;
   }
 
   // ---- logic links ----
@@ -185,14 +197,36 @@ export class World {
     return nd.elevated === true;
   }
 
+  // The wall / force-field / barrier segments that solid geometry is built from,
+  // shared by movement collision, object placement, and reach tests. The two
+  // axes that actually vary between callers are options:
+  //   barriers: 'all'   — every barrier (box pushes, placement, reach)
+  //             'tan'   — tan barriers only
+  //             'carry' — tan always, purple only while carrying (player walk)
+  //   includePassableFields: also include OPEN / jammed fields. Off by default
+  //             (only currently-solid fields block); reach_blocked turns it on
+  //             because you may never toss an object across a field's frame in
+  //             ANY state — walk through and place it on the far side instead.
+  staticBlockerSegs({ barriers = 'all', includePassableFields = false, carry = false } = {}) {
+    const segs = this.walls.map(wl => [wl.p1, wl.p2]);
+    for (const ff of this.ffs) {
+      if (includePassableFields || !ff.is_passable()) segs.push([ff.p1, ff.p2]);
+    }
+    for (const bar of this.barriers) {
+      const on = barriers === 'all'
+        || (barriers === 'tan' && bar.kind === 'tan')
+        || (barriers === 'carry' && (bar.kind === 'tan' || (bar.kind === 'purple' && carry)));
+      if (on) segs.push([bar.p1, bar.p2]);
+    }
+    return segs;
+  }
+
   // Would a material object of radius r placed at `pos` overlap anything solid
   // (walls / barriers / closed force fields), another material object, or the
   // player? Validates where dropped or placed objects may legally rest.
   object_pos_blocked(pos, r, opts = {}) {
     const { ignoreConn = null, ignoreBox = null } = opts;
-    const segs = this.walls.map(wl => [wl.p1, wl.p2]);
-    for (const ff of this.ffs) if (!ff.is_passable()) segs.push([ff.p1, ff.p2]);
-    for (const bar of this.barriers) segs.push([bar.p1, bar.p2]);
+    const segs = this.staticBlockerSegs({ barriers: 'all' });
     for (const [s1, s2] of segs) if (pt_seg_dist(pos, s1, s2) < r) return true;
     const boxR = OBJECT_TYPES.box.radius;
     for (const b of this.boxes) { if (b === ignoreBox) continue; if (dist(pos, b) < r + boxR) return true; }

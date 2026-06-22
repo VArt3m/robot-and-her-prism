@@ -6,7 +6,7 @@
  * interface so both can be driven from app.js simultaneously.
  */
 import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
-import { dist, pt_seg_dist } from '../core/geometry.js';
+import { dist, facingUnit } from '../core/geometry.js';
 import { objType } from '../sim/objects.js';
 import { isRelayKind } from '../sim/relays.js';
 import { STR } from '../core/strings.js';
@@ -168,12 +168,8 @@ function drawMouseIcon(ctx, x, y, button, W, H) {
   const midX   = x + W / 2;
   ctx.fillStyle = '#2d3547';
   ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75;
-  if (ctx.roundRect) {
-    ctx.beginPath(); ctx.roundRect(x, y, W, H, 3); ctx.fill();
-    ctx.beginPath(); ctx.roundRect(x, y, W, H, 3); ctx.stroke();
-  } else {
-    ctx.fillRect(x, y, W, H); ctx.strokeRect(x, y, W, H);
-  }
+  fillRoundRect(ctx, x, y, W, H, 3);
+  strokeRoundRect(ctx, x, y, W, H, 3);
   // Highlighted button half
   const btnH = splitY - y - 1;
   ctx.fillStyle = '#5d8ad0';
@@ -191,6 +187,31 @@ function polygon(ctx, pts) {
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
   ctx.closePath();
+}
+
+// Stroke a single segment a→b. Always resets the dash to solid afterward so a
+// caller never leaks a dash pattern into the next draw.
+function strokeSeg(ctx, a, b, { stroke, width = 1, dash = [], cap = 'butt' }) {
+  ctx.beginPath();
+  ctx.moveTo(a[0], a[1]);
+  ctx.lineTo(b[0], b[1]);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.lineCap = cap;
+  ctx.setLineDash(dash);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// Rounded-rect fill / stroke, falling back to a sharp rect where the canvas API
+// lacks roundRect. One place that owns the feature test.
+function fillRoundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); }
+  else ctx.fillRect(x, y, w, h);
+}
+function strokeRoundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.stroke(); }
+  else ctx.strokeRect(x, y, w, h);
 }
 
 export class Renderer2D {
@@ -287,60 +308,34 @@ export class Renderer2D {
 
     // Barriers
     for (const bar of w.barriers) {
-      ctx.beginPath();
-      ctx.moveTo(bar.p1[0], bar.p1[1]);
-      ctx.lineTo(bar.p2[0], bar.p2[1]);
-      ctx.strokeStyle = COLORS[bar.kind];
-      ctx.lineWidth = 6;
-      ctx.lineCap = 'round';
-      ctx.stroke();
+      strokeSeg(ctx, bar.p1, bar.p2, { stroke: COLORS[bar.kind], width: 6, cap: 'round' });
     }
 
     // Walls
     for (const wl of w.walls) {
-      ctx.beginPath();
-      ctx.moveTo(wl.p1[0], wl.p1[1]);
-      ctx.lineTo(wl.p2[0], wl.p2[1]);
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 5;
-      ctx.lineCap = 'round';
-      ctx.setLineDash([]);
-      ctx.stroke();
+      strokeSeg(ctx, wl.p1, wl.p2, { stroke: '#111', width: 5, cap: 'round' });
     }
 
     // Force fields
     for (const ff of w.ffs) {
-      ctx.beginPath();
-      ctx.moveTo(ff.p1[0], ff.p1[1]);
-      ctx.lineTo(ff.p2[0], ff.p2[1]);
+      let stroke, width, dash;
       if (ff.disabled) {
         // Jammed: down and inert — passable to everything. Drawn as a barely
         // there ghost so it reads as "not a barrier right now".
-        ctx.strokeStyle = '#c4ccd6'; ctx.lineWidth = 2;
-        ctx.setLineDash([1, 6]);
+        stroke = '#c4ccd6'; width = 2; dash = [1, 6];
       } else if (ff.is_open) {
-        ctx.strokeStyle = '#bfe3ec'; ctx.lineWidth = 3;
-        ctx.setLineDash([3, 7]);
+        stroke = '#bfe3ec'; width = 3; dash = [3, 7];
       } else {
-        ctx.strokeStyle = '#8fd3e8'; ctx.lineWidth = 6;
-        ctx.setLineDash([]);
+        stroke = '#8fd3e8'; width = 6; dash = [];
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
+      strokeSeg(ctx, ff.p1, ff.p2, { stroke, width, dash, cap: 'round' });
     }
 
     // Light link wires (dashed gray)
     for (const [a, b] of w.links_pairs) {
       const na = w.nodes[a], nb = w.nodes[b];
       if (!na || !nb) continue;
-      ctx.beginPath();
-      ctx.moveTo(na.pos[0], na.pos[1]);
-      ctx.lineTo(nb.pos[0], nb.pos[1]);
-      ctx.strokeStyle = '#a7adb3';
-      ctx.lineWidth = 1.4;
-      ctx.setLineDash([3, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      strokeSeg(ctx, na.pos, nb.pos, { stroke: '#a7adb3', width: 1.4, dash: [3, 4], cap: 'round' });
     }
 
     // Beams. Occluded and delivered rays share ONE look — same thickness and
@@ -434,14 +429,7 @@ export class Renderer2D {
       const dp = w.consumer_pos(dst);
       if (!sp || !dp) continue;
       const active = neg !== Boolean(w.logic_val[src] ?? false);
-      ctx.beginPath();
-      ctx.moveTo(sp[0], sp[1]);
-      ctx.lineTo(dp[0], dp[1]);
-      ctx.strokeStyle = active ? '#5aa0e0' : '#cbd3da';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      strokeSeg(ctx, sp, dp, { stroke: active ? '#5aa0e0' : '#cbd3da', width: 2, dash: [4, 3], cap: 'round' });
       // Arrow head
       const angle = Math.atan2(dp[1]-sp[1], dp[0]-sp[0]);
       const ax = dp[0] - 10*Math.cos(angle), ay = dp[1] - 10*Math.sin(angle);
@@ -468,11 +456,7 @@ export class Renderer2D {
     // by the box / connector code below.
     const pp = uiState.placePreview;
     if (pp && w.player) {
-      ctx.beginPath();
-      ctx.moveTo(w.player[0], w.player[1]);
-      ctx.lineTo(pp.spot[0], pp.spot[1]);
-      ctx.strokeStyle = pp.elevated ? '#8e44ad' : '#2e8b57';
-      ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+      strokeSeg(ctx, w.player, pp.spot, { stroke: pp.elevated ? '#8e44ad' : '#2e8b57', width: 1.5, dash: [3, 4], cap: 'round' });
     }
 
     // Boxes
@@ -716,8 +700,7 @@ export class Renderer2D {
         // A rounded square (battery-like) marks it apart from the diamond source
         // and round jammer. Filled with its colour when charged; white when empty.
         ctx.fillStyle = charged ? c : '#fff';
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x0, y0, s, s, 4); ctx.fill(); }
-        else ctx.fillRect(x0, y0, s, s);
+        fillRoundRect(ctx, x0, y0, s, s, 4);
         // Empty accumulators show a charge arc (fraction of ACCUM_FILL_SEC).
         if (!charged) {
           const frac = Math.max(0, Math.min(1, (w.engine.accum_charge[n.id] ?? 0) / ACCUM_FILL_SEC));
@@ -731,8 +714,7 @@ export class Renderer2D {
         ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : (charged ? '#222' : '#90a4ae'));
         ctx.lineWidth = charged ? 2 : 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2, 3]);
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x0, y0, s, s, 4); ctx.stroke(); }
-        else ctx.strokeRect(x0, y0, s, s);
+        strokeRoundRect(ctx, x0, y0, s, s, 4);
         ctx.setLineDash([]);
         ctx.fillStyle = charged ? (n.color === 'white' || n.color === 'yellow' ? '#333' : '#fff') : '#607d8b';
         ctx.font = 'bold 10px sans-serif';
@@ -764,12 +746,10 @@ export class Renderer2D {
         ctx.globalAlpha = spent ? 0.45 : 1;
         const bx0 = x - FORGE_R, by0 = y - FORGE_R, bs = 2 * FORGE_R;
         ctx.fillStyle = spent ? '#3a3f47' : '#2b2f36';
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.fill(); }
-        else ctx.fillRect(bx0, by0, bs, bs);
+        fillRoundRect(ctx, bx0, by0, bs, bs, 4);
         ctx.strokeStyle = armed ? accentHi : accent;
         ctx.lineWidth = armed ? 3 : 2;
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx0, by0, bs, bs, 4); ctx.stroke(); }
-        else ctx.strokeRect(bx0, by0, bs, bs);
+        strokeRoundRect(ctx, bx0, by0, bs, bs, 4);
         // Uses left, drawn boldly so the remaining count reads at a glance.
         ctx.fillStyle = spent ? '#9aa3b0' : (cool ? '#cbd6e2' : '#f3e3b0');
         ctx.font = 'bold 13px sans-serif';
@@ -812,9 +792,7 @@ export class Renderer2D {
       ctx.fillStyle = w.player_block ? '#c0392b' : '#222'; ctx.fill();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
       // Little face: two eyes toward the direction she last moved.
-      const f = (w.facing && (w.facing[0] || w.facing[1])) ? w.facing : [0, 1];
-      const fl = Math.hypot(f[0], f[1]) || 1;
-      const fx = f[0] / fl, fy = f[1] / fl;
+      const [fx, fy] = facingUnit(w.facing);
       const perpx = -fy, perpy = fx;
       const fwd = PLAYER_R * 0.40, spread = PLAYER_R * 0.42;
       const eyeR = PLAYER_R * 0.22;   // scales with the body so eyes stay natural
@@ -834,21 +812,12 @@ export class Renderer2D {
     // Wire-drag preview: a connection being pulled from the carried connector.
     if (uiState.wireDrag && w.carrying && w.player) {
       const from = w.nodes[w.carrying].pos;
-      ctx.beginPath();
-      ctx.moveTo(from[0], from[1]);
-      ctx.lineTo(uiState.wireDrag[0], uiState.wireDrag[1]);
-      ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
+      strokeSeg(ctx, from, uiState.wireDrag, { stroke: '#f5c518', width: 2, dash: [4, 4], cap: 'round' });
     }
 
     // Pending wall/field preview line
     if (uiState.pending && uiState.mouse) {
-      const [px, py] = uiState.pending;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(uiState.mouse[0], uiState.mouse[1]);
-      ctx.strokeStyle = '#888'; ctx.lineWidth = 1;
-      ctx.setLineDash([2,2]); ctx.stroke(); ctx.setLineDash([]);
+      strokeSeg(ctx, uiState.pending, uiState.mouse, { stroke: '#888', width: 1, dash: [2, 2], cap: 'round' });
     }
 
     // Stack chooser menu (opened by holding the mouse over a stack).
@@ -977,14 +946,9 @@ export class Renderer2D {
 
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
-    if (ctx.roundRect) {
-      ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 5); ctx.fill();
-      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1; ctx.stroke();
-    } else {
-      ctx.fillRect(cardX, cardY, cardW, cardH);
-      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1;
-      ctx.strokeRect(cardX, cardY, cardW, cardH);
-    }
+    fillRoundRect(ctx, cardX, cardY, cardW, cardH, 5);
+    ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1;
+    strokeRoundRect(ctx, cardX, cardY, cardW, cardH, 5);
 
     ctx.textAlign = 'left';
     for (let i = 0; i < lines.length; i++) {
@@ -1020,15 +984,9 @@ export class Renderer2D {
         const chipW = kw + KEY_PAD_X * 2;
         const chipY = ty + Math.max(0, (lineH - KEY_H) / 2);
         ctx.fillStyle = '#2d3547';
-        if (ctx.roundRect) {
-          ctx.beginPath(); ctx.roundRect(cx, chipY, chipW, KEY_H, 3);
-          ctx.fill();
-          ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75; ctx.stroke();
-        } else {
-          ctx.fillRect(cx, chipY, chipW, KEY_H);
-          ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75;
-          ctx.strokeRect(cx, chipY, chipW, KEY_H);
-        }
+        ctx.strokeStyle = '#5a6890'; ctx.lineWidth = 0.75;
+        fillRoundRect(ctx, cx, chipY, chipW, KEY_H, 3);
+        strokeRoundRect(ctx, cx, chipY, chipW, KEY_H, 3);
         ctx.fillStyle = '#dde8ff';
         ctx.textBaseline = 'middle';
         ctx.fillText(seg.t, cx + KEY_PAD_X, chipY + KEY_H / 2);
