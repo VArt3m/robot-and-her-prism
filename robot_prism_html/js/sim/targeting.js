@@ -31,7 +31,8 @@
  *               every stored intent ray of THIS kind, globally, for click-delete.
  *               `key` dedupes a ray shared by two devices; `owners` lists the
  *               node id(s) the ray belongs to (both endpoints for a light link),
- *               so a click-delete can exclude the carried device's own intents;
+ *               for inspection (the click-delete decides drop-vs-erase by the
+ *               carried item's footprint, not by ownership);
  *               `remove()` deletes that one intent. Empty for a mark-only device.
  *   candidates(world, deviceId, origin) -> [{ id, pos, reachable }]
  *               every thing this device could currently target, with `reachable`

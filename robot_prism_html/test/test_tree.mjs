@@ -216,6 +216,28 @@ app._playClick(RAY_MID[0], RAY_MID[1]);
 ok(w.links.size === 0, 'ray-delete: carrying a connector, a ray click erases the intent');
 ok(w.carrying === 'con_c', 'ray-delete: erasing a ray does not drop the carried device');
 
+// RESTORED: a click on the carried device's OWN wire (away from its body) erases
+// that wire too — wire-deletion is no longer retired for the carried device.
+clearHands();
+w.links.clear();
+w.nodes.con_c.pos = [445, 293]; w.player = [445, 293]; w.carrying = 'con_c';
+w.toggle_link('con_c', 'con_1');                         // the carried device's OWN wire
+ok(w.links.size === 1, 'ray-delete: setup own wire con_c–con_1');
+const ownMid = [(445 + w.nodes.con_1.pos[0]) / 2, (293 + w.nodes.con_1.pos[1]) / 2];
+app._playClick(ownMid[0], ownMid[1]);                   // on the wire, away from con_c's body
+ok(w.links.size === 0, "ray-delete: a click on the carried device's OWN wire erases it");
+ok(w.carrying === 'con_c', 'ray-delete: erasing an own wire does not drop the device');
+
+// PRESERVED: a click ON the carried item's body (its drop spot) is a place, not an
+// erase — it must not wipe the wires that emanate from it (the companion's fix).
+clearHands();
+w.links.clear();
+w.nodes.con_c.pos = [445, 293]; w.player = [445, 293]; w.carrying = 'con_c';
+w.toggle_link('con_c', 'con_1');
+app._playClick(445, 293);                                // right on the item's body
+ok(w.links.has(w._link_key('con_c', 'con_1')),
+   'ray-delete: a click on the item body does not wipe its own wires');
+
 // carrying a box → a ray click is not an eraser (boxes create no intents)
 clearHands();
 w.links.clear(); w.toggle_link('con_1', 'con_2');

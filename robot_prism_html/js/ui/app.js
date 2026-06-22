@@ -849,11 +849,22 @@ export class App {
     // stack; a hold on a real stack (2+ items) opens a chooser menu.
     if (!w.carrying && !w.carry_box) { this._clickPickup(x, y); return; }
 
-    // Carrying a targeting device: a click over ANOTHER device's intent ray
-    // erases it (every ray sharing the small hit zone goes at once) rather than
-    // dropping. The carried device's own rays are excluded so a click on its
-    // drop spot places it instead of wiping its own connections.
-    if (objType(this._carriedKind())?.requiresTarget && this._deleteIntentAt(x, y, w.carrying)) return;
+    // Carrying a targeting device: a click ON the floating item itself (its body /
+    // drop spot) DROPS it; a click on an intent ray AWAY from the item ERASES that
+    // ray — including one of the carried device's OWN wires. We guard only the
+    // item's footprint, not the whole length of its wires: the carried item is
+    // glued to the cursor inside the ring (`_syncCarried`), so its wires emanate
+    // from the drop spot and a click there must place it, not wipe them — but once
+    // the cursor leaves the ring the item is frozen near the player, so a click out
+    // along a wire is far from the item and reads as the erase the player intends.
+    // (Excluding the carried device's rays wholesale, as before, retired wire
+    // deletion entirely. The C key still clears every own wire deliberately.)
+    if (objType(this._carriedKind())?.requiresTarget) {
+      const itemPos = w.carrying ? w.nodes[w.carrying]?.pos : null;
+      const guard = (objType(this._carriedKind())?.radius ?? CONN_R) + 4;
+      const onItem = itemPos && dist([x, y], itemPos) <= guard;
+      if (!onItem && this._deleteIntentAt(x, y)) return;
+    }
 
     // Otherwise a brief click drops the item where the live preview shows it —
     // but only when the click lands INSIDE the operating ring. A click outside
@@ -908,21 +919,18 @@ export class App {
     this._setFlash(STR.flash.recolourDone);
   }
 
-  // Delete the intent ray(s) under a click while carrying a targeting device.
-  // The hit zone is a few world units wide (no single-pixel hunting). Every
-  // device's intents are enumerated through the spec registry, so a connector's
-  // wires, a jammer's jam ray, and any future device's intents all delete the
-  // same way; if several share the zone, all go at once. Returns true if any did.
-  // `excludeId` (the carried device, when placing) skips that device's OWN
-  // intents — their rays start at its floating drop spot, so a click to place it
-  // must not erase its own wires (the C key clears those deliberately).
-  _deleteIntentAt(x, y, excludeId = null) {
+  // Delete the intent ray(s) under a click. The hit zone is a few world units wide
+  // (no single-pixel hunting). Every device's intents are enumerated through the
+  // spec registry, so a connector's wires, a jammer's jam ray, and any future
+  // device's intents all delete the same way; if several share the zone, all go at
+  // once. Returns true if any did. Callers decide WHEN a click is an erase vs. a
+  // place/drop (the carrying path guards the carried item's footprint first).
+  _deleteIntentAt(x, y) {
     const w = this.world;
     const THRESH = 6;
     const seen = new Set();
     const hits = [];
     for (const r of allIntentRays(w)) {
-      if (excludeId != null && r.owners && r.owners.includes(excludeId)) continue;
       if (pt_seg_dist([x, y], r.from, r.to) > THRESH) continue;
       if (seen.has(r.key)) continue;          // a ray shared by two devices: once
       seen.add(r.key); hits.push(r);
