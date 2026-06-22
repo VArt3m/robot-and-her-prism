@@ -7,7 +7,7 @@
  *   • a long-press on E, or a long left-mouse press, begins targeting;
  *   • a golden arrow is available in the window 0.333 s … 0.833 s into the press;
  *   • staying in the ring through that window drops into click-by-click;
- *   • a click on an intent ray deletes it;
+ *   • a click on one of the device's OWN intent rays deletes that ray;
  *   • C clears every intent of the carried device.
  *
  * None of that is re-described per object. What actually differs from one
@@ -31,8 +31,8 @@
  *               every stored intent ray of THIS kind, globally, for click-delete.
  *               `key` dedupes a ray shared by two devices; `owners` lists the
  *               node id(s) the ray belongs to (both endpoints for a light link),
- *               for inspection (the click-delete decides drop-vs-erase by the
- *               carried item's footprint, not by ownership);
+ *               so a click-delete erases only the carried/targeting device's OWN
+ *               intents (a ray whose `owners` include that device);
  *               `remove()` deletes that one intent. Empty for a mark-only device.
  *   candidates(world, deviceId, origin) -> [{ id, pos, reachable }]
  *               every thing this device could currently target, with `reachable`
