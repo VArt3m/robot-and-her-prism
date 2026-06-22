@@ -33,6 +33,9 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); 
 
 const statusEl = { textContent: '' };
 const app = new App(canvas, statusEl);
+// Startup now lands on Lorem's Puzzle #1; this suite exercises the full sandbox,
+// so switch to Test Grounds explicitly.
+app._loadLevel('test_grounds');
 const w = app.world;
 
 // Render once empty-handed — must not throw.

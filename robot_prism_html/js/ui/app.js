@@ -8,7 +8,7 @@
 
 import { SPEED, TICK, PLAYER_R, BOX_R, CONN_R, CONNECT_REACH, FORGE_REACH, DWELL_THRESH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { build_level, LEVELS } from '../sim/level.js';
+import { LEVELS } from '../sim/level.js';
 import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { Panel } from './panel.js';
@@ -62,10 +62,11 @@ export class App {
   constructor(canvas, statusEl) {
     this.canvas = canvas;
     this.statusEl = statusEl;
-    this.world = build_level();
     // Which level is loaded now (drives a full reset's rebuild and the level
-    // overlay's "current" mark). Test Grounds is the default.
+    // overlay's "current" mark). The registry's first entry loads at startup —
+    // currently Lorem's Puzzle #1 — and the world is built to match it.
     this._levelId = LEVELS[0].id;
+    this.world = this._buildCurrentLevel();
 
     // Rendering — add more renderers here later (e.g. renderer3d)
     this.renderer2d = new Renderer2D(canvas);

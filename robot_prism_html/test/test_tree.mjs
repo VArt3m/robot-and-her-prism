@@ -33,6 +33,9 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); 
 
 const app = new App(canvas, statusEl());
 function statusEl() { return { textContent: '' }; }
+// Startup now lands on Lorem's Puzzle #1; this suite drives the full sandbox,
+// so switch to Test Grounds explicitly.
+app._loadLevel('test_grounds');
 const w = app.world;
 
 // --- helpers to drive the gesture machine deterministically ---

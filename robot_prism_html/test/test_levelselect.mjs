@@ -37,13 +37,13 @@ const TG = 25, LP = 11;               // node counts (asserted in test_levels.mj
 const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
 
 // ===========================================================================
-// 1. Initial state: Test Grounds, no overlay.
+// 1. Initial state: Lorem's Puzzle #1 (the registry's first entry), no overlay.
 // ===========================================================================
 {
   const a = newApp();
-  ok(a._levelId === 'test_grounds', 'starts on Test Grounds');
+  ok(a._levelId === 'lorem_1', "starts on Lorem's Puzzle #1");
   ok(a.uiState.levelMenu === null, 'no overlay at start');
-  ok(count(a) === TG, 'Test Grounds world is loaded');
+  ok(count(a) === LP, "Lorem's Puzzle #1 world is loaded");
 }
 
 // ===========================================================================
@@ -54,7 +54,7 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
   a._openLevelMenu();
   ok(a.uiState.levelMenu && a.uiState.levelMenu.items.length === 2, 'opening shows the two-entry overlay');
   ok(a.uiState.levelMenu.items[0].current === true && a.uiState.levelMenu.items[1].current === false,
-     'Test Grounds is marked current');
+     "Lorem's Puzzle #1 (first entry) is marked current");
 }
 
 // ===========================================================================
@@ -65,7 +65,7 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
   a._openLevelMenu();
   a._handleAction('escape', 0);
   ok(a.uiState.levelMenu === null, 'Escape closes the overlay');
-  ok(a._levelId === 'test_grounds' && count(a) === TG, 'the level is unchanged after a cancel');
+  ok(a._levelId === 'lorem_1' && count(a) === LP, 'the level is unchanged after a cancel');
 }
 
 // ===========================================================================
@@ -74,29 +74,29 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
 {
   const a = newApp();
   a._openLevelMenu();
-  const lorem = a.uiState.levelMenu.items.find(it => it.id === 'lorem_1');
-  a._handleLevelMenuClick(...center(lorem.rect));
-  ok(a.uiState.levelMenu === null, 'the overlay closes on selection');
-  ok(a._levelId === 'lorem_1' && count(a) === LP, "Lorem's Puzzle #1 is loaded");
-
-  // Re-open: now Lorem is current; pick Test Grounds to go back.
-  a._openLevelMenu();
-  const cur = a.uiState.levelMenu.items.find(it => it.current);
-  ok(cur && cur.id === 'lorem_1', 'the current mark now follows Lorem');
   const tg = a.uiState.levelMenu.items.find(it => it.id === 'test_grounds');
   a._handleLevelMenuClick(...center(tg.rect));
-  ok(a._levelId === 'test_grounds' && count(a) === TG, 'selecting Test Grounds loads it back');
+  ok(a.uiState.levelMenu === null, 'the overlay closes on selection');
+  ok(a._levelId === 'test_grounds' && count(a) === TG, 'Test Grounds is loaded');
+
+  // Re-open: now Test Grounds is current; pick Lorem to go back.
+  a._openLevelMenu();
+  const cur = a.uiState.levelMenu.items.find(it => it.current);
+  ok(cur && cur.id === 'test_grounds', 'the current mark now follows Test Grounds');
+  const lorem = a.uiState.levelMenu.items.find(it => it.id === 'lorem_1');
+  a._handleLevelMenuClick(...center(lorem.rect));
+  ok(a._levelId === 'lorem_1' && count(a) === LP, "selecting Lorem's Puzzle #1 loads it back");
 }
 
 // ===========================================================================
-// 5. A full reset rebuilds the CURRENT level, not always Test Grounds.
+// 5. A full reset rebuilds the CURRENT level, not always the startup level.
 // ===========================================================================
 {
   const a = newApp();
-  a._loadLevel('lorem_1');
-  ok(count(a) === LP, 'on Lorem after load');
+  a._loadLevel('test_grounds');
+  ok(count(a) === TG, 'on Test Grounds after load');
   a._fullReset();
-  ok(a._levelId === 'lorem_1' && count(a) === LP, 'a full reset rebuilds Lorem (the current level), not Test Grounds');
+  ok(a._levelId === 'test_grounds' && count(a) === TG, 'a full reset rebuilds Test Grounds (the current level), not the startup level');
 }
 
 // ===========================================================================
@@ -109,12 +109,12 @@ const center = r => [r[0] + r[2] / 2, r[1] + r[3] / 2];
   // A miss (top-left corner, far from the centered panel) cancels — closes it.
   a._onMouseDown([3, 3], {});
   ok(a.uiState.levelMenu === null, 'a click missing every entry closes the overlay (cancel)');
-  ok(a._levelId === 'test_grounds', 'and changes nothing');
-  // A hit on the Lorem entry loads it through the same down-intercept.
+  ok(a._levelId === 'lorem_1', 'and changes nothing');
+  // A hit on the Test Grounds entry loads it through the same down-intercept.
   a._openLevelMenu();
-  const lorem = a.uiState.levelMenu.items.find(it => it.id === 'lorem_1');
-  a._onMouseDown(center(lorem.rect), {});
-  ok(a.uiState.levelMenu === null && a._levelId === 'lorem_1', 'a click on an entry loads it via the mouse intercept');
+  const tg = a.uiState.levelMenu.items.find(it => it.id === 'test_grounds');
+  a._onMouseDown(center(tg.rect), {});
+  ok(a.uiState.levelMenu === null && a._levelId === 'test_grounds', 'a click on an entry loads it via the mouse intercept');
 }
 
 // ===========================================================================

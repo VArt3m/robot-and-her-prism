@@ -17,24 +17,26 @@ const env = w => JSON.stringify({
 });
 
 // ===========================================================================
-// 1. The registry shape + the default entry point.
+// 1. The registry shape + the startup/menu order.
 // ===========================================================================
+const TG = LEVELS.find(l => l.id === 'test_grounds');   // the full sandbox
+const LP = LEVELS.find(l => l.id === 'lorem_1');         // the puzzle (loads first)
 {
   ok(Array.isArray(LEVELS) && LEVELS.length === 2, 'there are two registered levels');
-  ok(LEVELS[0].id === 'test_grounds' && LEVELS[0].name === 'Test Grounds',
-     'the first level is Test Grounds (the default)');
-  ok(LEVELS[1].id === 'lorem_1' && LEVELS[1].name === "Lorem's Puzzle #1",
-     "the second level is Lorem's Puzzle #1");
-  const def = build_level(), tg = LEVELS[0].build();
+  ok(LEVELS[0].id === 'lorem_1' && LEVELS[0].name === "Lorem's Puzzle #1",
+     "the first level is Lorem's Puzzle #1 (loads first, first in the menu)");
+  ok(LEVELS[1].id === 'test_grounds' && LEVELS[1].name === 'Test Grounds',
+     'the second level is Test Grounds');
+  const def = build_level(), tg = TG.build();
   ok(byId(def).size === byId(tg).size,
-     'build_level() returns Test Grounds (same node count as LEVELS[0])');
+     'build_level() is still the back-compat Test Grounds (same node count)');
 }
 
 // ===========================================================================
 // 2. Test Grounds is the full sandbox: both Forges and all the scratch parts.
 // ===========================================================================
 {
-  const tg = LEVELS[0].build();
+  const tg = TG.build();
   ok(kinds(tg, 'forge').length === 2, 'Test Grounds has both Forges');
   ok(tg.boxes.length === 1, 'Test Grounds has its test box');
   const ids = byId(tg);
@@ -48,8 +50,8 @@ const env = w => JSON.stringify({
 //    lower-right room behind the force field). Sources + receivers untouched.
 // ===========================================================================
 {
-  const tg = LEVELS[0].build();
-  const lp = LEVELS[1].build();
+  const tg = TG.build();
+  const lp = LP.build();
 
   ok(env(lp) === env(tg), 'geography + environment are identical (walls, ffs, barriers, logic, goal, start)');
   ok(lp.boxes.length === 0, 'the central test box (a pickable) is removed');
@@ -82,8 +84,8 @@ const env = w => JSON.stringify({
 // 4. Both levels solve cleanly (no throw) and are independent fresh worlds.
 // ===========================================================================
 {
-  const a = LEVELS[1].build();
-  const b = LEVELS[1].build();
+  const a = LP.build();
+  const b = LP.build();
   a.solve(true);
   b.solve(true);
   ok(a !== b && a.nodes !== b.nodes, 'each build() yields an independent world');

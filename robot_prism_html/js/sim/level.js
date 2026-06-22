@@ -105,11 +105,14 @@ function build_world(scratch) {
   return w;
 }
 
-// The level registry. `build_level()` (the original entry point) stays the
-// default — Test Grounds — so existing callers are unchanged.
+// The level registry. Registry ORDER is what the player sees: the first entry
+// loads at startup and sits first in the level-select menu — that is Lorem's
+// Puzzle #1. `build_level()` is kept as a back-compat helper that still returns
+// Test Grounds (the full sandbox), because the headless placement/highlight
+// suites build from it to get the scratch gadgets; it is NOT the startup level.
 export const LEVELS = [
-  { id: 'test_grounds', name: 'Test Grounds',      build: () => build_world(true)  },
   { id: 'lorem_1',      name: "Lorem's Puzzle #1", build: () => build_world(false) },
+  { id: 'test_grounds', name: 'Test Grounds',      build: () => build_world(true)  },
 ];
 
 export function build_level() {
