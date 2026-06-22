@@ -42,7 +42,7 @@ const allSame = (arr, v) => arr.every(x => x === v);
   w.add(new Node('Sr', 'source', [0, 0], { color: 'red' }));
   w.add(new Node('RC', 'connector', [150, 0]));                 // red, rank 1
   w.add(new Node('Sg', 'source', [300, -150], { color: 'green' })); // green, rank 0, clear to M
-  w.add(new Node('M',  'mixer', [300, 0], { mode: 'blend' }));
+  w.add(new Node('M',  'mixer', [300, 0]));
   w.add(new Node('rcv', 'receiver', [300, 200], { color: 'yellow' }));
   for (const [a, b] of [['Sr','RC'], ['RC','M'], ['Sg','M'], ['M','rcv']]) w.toggle_link(a, b);
 
@@ -64,7 +64,7 @@ const allSame = (arr, v) => arr.every(x => x === v);
   const w = new World(); w.player = null; w._uid = 1;
   w.add(new Node('Sr', 'source', [0, 0],   { color: 'red' }));
   w.add(new Node('Sg', 'source', [300, 0], { color: 'green' }));
-  w.add(new Node('M',  'mixer', [100, 0], { mode: 'blend' }));
+  w.add(new Node('M',  'mixer', [100, 0]));
   w.add(new Node('G',  'connector', [200, 0]));
   for (const [a, b] of [['Sr','M'], ['Sg','G'], ['M','G']]) w.toggle_link(a, b);
 
@@ -89,7 +89,7 @@ const allSame = (arr, v) => arr.every(x => x === v);
   w.add(new Node('R2', 'connector', [-120, 250]));                  // red, rank 2 (weak red feed)
   w.add(new Node('Sg', 'source', [250, -150], { color: 'green' })); // green@0
   w.add(new Node('GC', 'connector', [140, -90]));                   // green, rank 1
-  w.add(new Node('M',  'mixer', [0, 0], { mode: 'blend' }));
+  w.add(new Node('M',  'mixer', [0, 0]));
   for (const [a, b] of [['Sr','R1'], ['R1','R2'], ['R2','M'], ['Sr','M'], ['Sg','GC'], ['GC','M']])
     w.toggle_link(a, b);
 
@@ -158,7 +158,7 @@ const allSame = (arr, v) => arr.every(x => x === v);
   w.add(new Node('Sg', 'source', [300, -200], { color: 'green' })); // green@0
   w.add(new Node('G1', 'connector', [200, -120]));                  // green@1
   w.add(new Node('G2', 'connector', [150, -40]));                   // green@2 — feeds M from "above"
-  w.add(new Node('M',  'mixer', [120, 0], { mode: 'blend' }));
+  w.add(new Node('M',  'mixer', [120, 0]));
   for (const [a, b] of [['Sr','M'], ['Sg','G1'], ['G1','G2'], ['G2','M']]) w.toggle_link(a, b);
 
   const emits = emitOverSolves(w, 'M', 6);
@@ -184,7 +184,7 @@ const allSame = (arr, v) => arr.every(x => x === v);
   w.add(new Node('Sb', 'source', [ 300,-260], { color: 'blue' }));   // a distant blue,
   w.add(new Node('B1', 'connector', [220, -180]));                   // relayed in via
   w.add(new Node('B2', 'connector', [160,  -90]));                   // a 2-hop chain (rank 2)
-  w.add(new Node('M',  'mixer', [120, 0], { mode: 'blend' }));
+  w.add(new Node('M',  'mixer', [120, 0]));
   for (const [a, b] of [['Sr','M'], ['Sg','M'], ['Sb','B1'], ['B1','B2'], ['B2','M']]) w.toggle_link(a, b);
 
   const emits = emitOverSolves(w, 'M', 6);

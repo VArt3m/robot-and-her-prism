@@ -127,7 +127,6 @@ const en = {
     connColorSet: (c) => (c ? `Corrupted — locked to ${en.colors[c] ?? c}` : 'Cleaned — a plain relay again'),
     invPairSet: (p) => `Inverter set to swap ${en.colors[p[0]] ?? p[0]} ↔ ${en.colors[p[1]] ?? p[1]}`,
     invModeSet: (m) => (m === 'complement' ? 'Inverter set to output the complement (fill to white)' : 'Inverter set to swap a colour pair'),
-    mixerModeSet: (m) => (m === 'whiten' ? 'Mixer set to make white' : 'Mixer set to blend two colours'),
     // (No "No Forge in range" message: pressing F out of any Forge's radius is a
     // silent no-op, not a programming attempt, so there is nothing to report.)
     forgeSpent: 'This Forge is spent',
@@ -161,8 +160,6 @@ const en = {
     invMode: (m) => (m === 'complement' ? 'Complement (fill to white)' : 'Swap a pair'),
     // Inverter colour-pair chooser: the two colours it swaps between.
     invPair: (p) => `Swap ${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[0]] ?? p[0])}↔${({ red: 'Red', green: 'Green', blue: 'Blue' }[p[1]] ?? p[1])}`,
-    // Mixer form chooser: blend two primaries, or make white.
-    mixerMode: (m) => (m === 'whiten' ? 'Make white' : 'Blend two'),
   },
 
   // Bottom status bar.
@@ -239,10 +236,9 @@ const en = {
       if (raised) lines.push('raised on a box');
       return lines;
     },
-    mixer: (emitColor, links, raised, fixedColor, mode) => {
+    mixer: (emitColor, links, raised) => {
       const lines = [en.kinds.mixer];
-      if (fixedColor) lines.push([{ t: 'corrupted — locked to ' }, { t: en.colors[fixedColor] ?? fixedColor, c: fixedColor }]);
-      else lines.push(mode === 'whiten' ? 'makes white' : 'blends to a secondary');
+      lines.push('mixes its inputs');
       lines.push(emitColor
         ? [{ t: 'emits ' }, { t: en.colors[emitColor] ?? emitColor, c: emitColor }]
         : 'no output');

@@ -12,8 +12,9 @@ export class Node {
     // every non-inverter. A clean inverter re-emits in-pair light as the other
     // half. Reprogrammable at a Forge. Order is irrelevant — it is treated as a set.
     this.pair = pair;
-    // Mixer: which form it is in — 'blend' (add two primaries) or 'whiten' (make
-    // white); null for every non-mixer. Reprogrammable at a Forge.
+    // Inverter: which form it is in — 'swap' (swap a colour pair) or 'complement'
+    // (fill the input to white); null for every non-inverter. Reprogrammable at a
+    // Forge. (The mixer has no form — it is a single, non-programmable device.)
     this.mode = mode;
     // Forge: remaining programming-menu uses; null for everything else.
     this.uses = uses;

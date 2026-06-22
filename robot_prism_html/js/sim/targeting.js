@@ -49,12 +49,17 @@
 
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { kindIsJammable } from './objects.js';
-import { RELAY_SPECS } from './relays.js';
+import { RELAY_SPECS, isCorruptibleKind } from './relays.js';
 
-// The node kinds a light wire (or a rewirer's recolour) may attach to: sources,
-// receivers, and every relay (connector / inverter / future sister). Built from
-// the relay registry so a new sister needs no edit here.
+// The node kinds a light wire may attach to: sources, receivers, and every relay
+// (connector / inverter / mixer / future sister). Built from the relay registry so
+// a new sister needs no edit here.
 const WIRE_KINDS = ['source', 'receiver', ...Object.keys(RELAY_SPECS)];
+
+// The node kinds a rewirer may RECOLOUR: sources, receivers, and only the
+// CORRUPTIBLE relays. A non-corruptible relay (the mixer) is excluded — it cannot
+// be locked to a colour, so it is never offered as a recolour target either.
+const RECOLOR_KINDS = ['source', 'receiver', ...Object.keys(RELAY_SPECS).filter(isCorruptibleKind)];
 
 const HIT = 18;   // how near a click / arrow tip must fall, in world units
 
@@ -169,7 +174,7 @@ export const TARGET_SPECS = {
     sweep: 'set',
     flash: 'recolourMarked',
     targetAt(world, deviceId, x, y) {
-      const n = nearestNode(world, x, y, WIRE_KINDS, deviceId);
+      const n = nearestNode(world, x, y, RECOLOR_KINDS, deviceId);
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.set_recolor(deviceId, targetId); },
@@ -177,7 +182,7 @@ export const TARGET_SPECS = {
     // `origin` (the robot while carrying). The device body and the target are
     // excluded so neither self-blocks.
     candidates(world, deviceId, origin = world.nodes[deviceId]?.pos) {
-      return nodesOfKinds(world, WIRE_KINDS, deviceId)
+      return nodesOfKinds(world, RECOLOR_KINDS, deviceId)
         .map(n => ({
           id: n.id, pos: [...n.pos],
           reachable: origin ? world.ray_clear(origin, n.pos, 'rewirer',

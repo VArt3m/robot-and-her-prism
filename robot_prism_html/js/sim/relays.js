@@ -8,9 +8,10 @@
  * What relays share (handled generically elsewhere, NOT per kind):
  *   • occlusion — a relay is a laser endpoint that re-emits instead of stopping
  *     (engine `_leveled_blockers`, occlusion `carriedRayType`);
- *   • corruption — a Forge or a fired rewirer can lock a `color` onto any relay
- *     (null = clean). A corrupted relay emits that colour on ANY incoming light
- *     and never "dies" on a conflict — identical for every kind (`relayEmit`);
+ *   • corruption — a Forge or a fired rewirer can lock a `color` onto a corruptible
+ *     relay (null = clean). A corrupted relay emits that colour on ANY incoming
+ *     light and never "dies" on a conflict — identical for every kind (`relayEmit`).
+ *     A kind may opt OUT with `corruptible: false` (the mixer always mixes);
  *   • the solver loop, the dead/confused map, links, buttons, carrying, stacking
  *     on boxes, recolour targeting — all keyed off `isRelayKind`, not the kind.
  *
@@ -84,29 +85,29 @@ export const RELAY_SPECS = {
     },
   },
 
-  // Mixer — COMBINES its inputs; a single PRIMARY always confuses it (there is
-  // nothing to mix). It has two programmable forms (node.mode):
-  //   'blend'  (default) — sums (additively ORs) everything it receives and
-  //            succeeds only when that sum is a SECONDARY, i.e. exactly two of the
-  //            three primaries are present. So: two distinct primaries → their
-  //            secondary; a lone secondary → itself (retranslated); a secondary
-  //            plus a primary already inside it → that same secondary. It is
-  //            confused by a single primary (sum is one primary), by white, and by
-  //            anything whose sum reaches white (all three primaries).
-  //   'whiten' — tries to make WHITE from whatever it receives, primary or
-  //            secondary. It succeeds (emits white, and so can relay/retranslate
-  //            white) exactly when the inputs together cover all three primaries
-  //            (their additive sum is white); otherwise it is confused. This form
-  //            can produce nothing but white.
+  // Mixer — COMBINES its inputs into their additive sum and emits that. It is a
+  // SINGLE, non-programmable form with no corruption (see `corruptible` below):
+  //   • sum (bitwise OR) every incoming colour;
+  //   • a lone DUAL input (one secondary) passes straight through — that is already
+  //     a valid mix, so it is NOT confused;
+  //   • two primaries → their secondary; all three primaries (or any sum that
+  //     reaches white) → WHITE — the mixer can EMIT white;
+  //   • it is CONFUSED by a single base colour (the sum is one primary — nothing to
+  //     mix) and by WHITE on the INPUT (white may be emitted but never received).
+  // Confusion falls out of cleanEmit returning null while lit (the default rule),
+  // so no isConfused override is needed.
   mixer: {
-    cleanEmit: (node, incoming) => {
+    corruptible: false,
+    cleanEmit: (_node, incoming) => {
+      if (incoming.size === 0) return null;          // unfed → dark (idle, handled as not-confused)
       let m = 0;
-      for (const c of incoming) m |= colorMask(c);
-      if (node.mode === 'whiten') return m === WHITE_MASK ? 'white' : null;
-      // 'blend' (the original form): the sum must be a secondary — exactly two of
-      // the three primary bits set (one primary = too little, white = too much).
+      for (const c of incoming) {
+        if (c === 'white') return null;              // white received → confused (emit-only)
+        m |= colorMask(c);
+      }
       const bits = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
-      return bits === 2 ? maskColor(m) : null;
+      if (bits <= 1) return null;                    // a single base colour (or only black) → confused
+      return maskColor(m);                           // 2 bits → the secondary; 3 bits → white
     },
   },
 };
@@ -119,13 +120,23 @@ export function isRelayKind(kind) {
   return Object.prototype.hasOwnProperty.call(RELAY_SPECS, kind);
 }
 
+// May this relay kind be CORRUPTED (a Forge or a fired rewirer locking a `color`
+// onto it)? Default yes; a kind opts out with `corruptible: false` (the mixer —
+// it always mixes, and is neither programmable nor recolourable). The Forge/
+// rewirer also keep their menus/targets off a non-corruptible kind, but gating
+// the emit here too means a stray `color` could never make a mixer act corrupted.
+export function isCorruptibleKind(kind) {
+  const spec = RELAY_SPECS[kind];
+  return !!spec && spec.corruptible !== false;
+}
+
 // The full emit of a relay node given its delivered incoming colours: a corrupted
-// relay (`color` set) emits that locked colour whenever it receives any light at
-// all and never dies on a conflict; a clean relay defers to its kind's cleanEmit.
-// One definition, shared by every sister.
+// relay (`color` set, on a corruptible kind) emits that locked colour whenever it
+// receives any light at all and never dies on a conflict; otherwise a clean relay
+// defers to its kind's cleanEmit. One definition, shared by every sister.
 export function relayEmit(node, incoming) {
   if (!node) return null;
-  if (node.color) return incoming.size >= 1 ? node.color : null;
+  if (node.color && isCorruptibleKind(node.kind)) return incoming.size >= 1 ? node.color : null;
   const spec = RELAY_SPECS[node.kind];
   return spec ? spec.cleanEmit(node, incoming) : null;
 }
@@ -137,7 +148,8 @@ export function relayEmit(node, incoming) {
 // black from white emits null but is NOT confused); the default is the historical
 // rule that any dark-while-lit clean relay is confused.
 export function relayConfused(node, incoming) {
-  if (!node || node.color) return false;       // corrupted relays never die
+  if (!node) return false;
+  if (node.color && isCorruptibleKind(node.kind)) return false;   // corrupted relays never die
   if (incoming.size === 0) return false;       // unlit is idle, not confused
   const spec = RELAY_SPECS[node.kind];
   if (!spec) return false;

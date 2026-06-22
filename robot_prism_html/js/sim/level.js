@@ -66,9 +66,9 @@ function build_world(scratch) {
     w.add(new Node('con_5', 'connector', [300,360], { label:'5' }));
 
     // One more inverter and one more mixer, also for testing — same clean defaults
-    // as their originals (inverter swaps red<->blue; mixer in 'blend' mode).
+    // (inverter swaps red<->blue; the mixer is a single, non-programmable form).
     w.add(new Node('inv_b', 'inverter', [700,180], { label:'J' }));
-    w.add(new Node('mix_b', 'mixer',    [680,440], { label:'Y', mode:'blend' }));
+    w.add(new Node('mix_b', 'mixer',    [680,440], { label:'Y' }));
 
     // Two accumulators (portable sources) for testing: one empty (wire a single
     // colour to it for ~2s to charge it), one pre-charged blue.
@@ -82,10 +82,11 @@ function build_world(scratch) {
     w.add(new Node('mine_a', 'mine',    [430, 440], { fuse: 3 }));
     w.add(new Node('rw_a',   'rewirer', [520, 440], { color: 'red' }));
     w.add(new Node('jam_a',  'jammer',  [470, 380]));
-    // A mixer (another relay sister): clean, in its default 'blend' form (sums its
-    // inputs to a secondary). Sits with the other gadgets so it's easy to grab,
-    // wire to two colours, and test — reprogram it to 'whiten' at a Forge.
-    w.add(new Node('mix_a',  'mixer',   [590, 380], { label:'X', mode:'blend' }));
+    // A mixer (another relay sister): it combines its inputs into their additive
+    // sum (two primaries → a secondary, all three → white). A single, non-
+    // programmable, non-corruptible device — sits with the other gadgets so it's
+    // easy to grab and wire to a couple of colours to test.
+    w.add(new Node('mix_a',  'mixer',   [590, 380], { label:'X' }));
 
     // Two Forges, bottom-centre, clear of the existing beams. forge_a is a normal
     // (corrupting) station; forge_b is clean-only (corrupts:false) — it can strip a

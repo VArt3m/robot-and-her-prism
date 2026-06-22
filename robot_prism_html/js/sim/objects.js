@@ -34,11 +34,12 @@ export const OBJECT_TYPES = {
   // else confuses it. Corruption (`color`) and recolouring work exactly as for a
   // connector; programming also reprograms its `pair`. Same physical footprint.
   inverter:  { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R, relay: true },
-  // Mixer — another sister. It COMBINES inputs instead of relaying one (a single
-  // colour confuses it). Two programmable forms (`mode`): 'blend' adds two
-  // primaries into a secondary; 'whiten' makes white when the inputs cover all
-  // three primaries. Corruption / recolouring / wiring as for any relay.
-  mixer:     { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: true,  jammable: false, radius: CONN_R, relay: true },
+  // Mixer — another sister. It COMBINES its inputs into their additive sum and
+  // emits that (two primaries → a secondary; all three → white). A lone secondary
+  // passes through; a single base colour, or any white on the input, confuses it.
+  // It is NOT programmable and NOT corruptible — a singular device that always
+  // mixes. Wiring works as for any relay.
+  mixer:     { material: true, pushable: false, carriable: true, requiresTarget: true,  programmable: false, jammable: false, radius: CONN_R, relay: true },
   // Programmable only — a portable mine. Fuse (seconds) is reprogrammable and
   // counts down from its first drop; on zero it destroys walls in a small radius.
   // Jammable: a jam ray freezes it (its countdown is held).

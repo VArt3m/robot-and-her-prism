@@ -1733,7 +1733,7 @@ export class App {
       case 'mixer': {
         const emit = w.emit[node.id] ?? null;
         const links = w.links_pairs.filter(([a, b]) => a === node.id || b === node.id).length;
-        lines = T.mixer(emit, links, w._conn_elevated(node.id), node.color, node.mode);
+        lines = T.mixer(emit, links, w._conn_elevated(node.id));
         break;
       }
       case 'mine':     lines = T.mine(node.fuse, node.fuse_running, node.disabled); break;

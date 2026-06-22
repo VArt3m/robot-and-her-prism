@@ -117,9 +117,11 @@ export class Engine {
   //      — it consumes exactly that prefix and ranks at 1 + that tier, one step below
   //      the feed that satisfied it and above every feeder it actually used. Weaker
   //      feeders past that tier are left out (and, once it is settled, the directional
-  //      / same-rank laws suppress them anyway) — so a blend mixer fed red@0, green@0
+  //      / same-rank laws suppress them anyway) — so a mixer fed red@0, green@0
   //      and a distant blue@2 makes YELLOW from the near pair at rank 1 and never
-  //      consumes the blue, instead of summing all three into a confusing white.
+  //      reaches for the blue, rather than climbing to also consume blue@2 and make
+  //      white. (A mixer CAN emit white — it just stops at the first tier that lets
+  //      it emit anything valid, and the near pair already does.)
   //      If NO tier ever lets it emit, it is genuinely confused: unranked and dark.
   //   3. As feeders appear or vanish across the solve, the intake is recomputed and
   //      the feeder set re-derived (the fixpoint lives in `propagate`).
