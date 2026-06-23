@@ -5,7 +5,7 @@
  * know about. A future renderer3d.js can sit alongside this with the same
  * interface so both can be driven from app.js simultaneously.
  */
-import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC } from '../core/constants.js';
+import { COLORS, DIM, PLAYER_R, BOX_R, BTN_R, CONN_R, MINE_R, CONNECT_REACH, FORGE_R, FORGE_REACH, LOGIC_KINDS, WORLD_W, WORLD_H, ACCUM_FILL_SEC, ACCUM_LAYER_GAP, ACCUM_LAYER_WIDTH } from '../core/constants.js';
 import { dist, facingUnit } from '../core/geometry.js';
 import { objType } from '../sim/objects.js';
 import { isRelayKind } from '../sim/relays.js';
@@ -699,12 +699,23 @@ export class Renderer2D {
         const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
         const charged = !!n.color;
+        const mix = charged ? null : (w.engine._accum_color?.[n.id] ?? null);
         const c = COLORS[n.color] ?? '#999';
         const r = 12;
         const x0 = x - r, y0 = y - r, s = 2 * r;
+        // While an empty accumulator can radiate, it grows a second contour: an
+        // external layer at CONN_R + GAP, of width WIDTH, in the mix colour — it
+        // becomes (temporarily) bigger. Drawn first, behind the body.
+        if (mix) {
+          const mc = COLORS[mix] ?? '#7fb0e0';
+          const gr = CONN_R + ACCUM_LAYER_GAP + ACCUM_LAYER_WIDTH / 2;
+          ctx.strokeStyle = mc; ctx.lineWidth = ACCUM_LAYER_WIDTH; ctx.setLineDash([]);
+          strokeRoundRect(ctx, x - gr, y - gr, 2 * gr, 2 * gr, 6);
+        }
         // A rounded square (battery-like) marks it apart from the diamond source
-        // and round jammer. Filled with its colour when charged; white when empty.
-        ctx.fillStyle = charged ? c : '#fff';
+        // and round jammer. Filled with its colour when charged; when empty it is
+        // tinted toward the mix it is gathering (white if it is gathering nothing).
+        ctx.fillStyle = charged ? c : (mix ? (COLORS[mix] ?? '#fff') : '#fff');
         fillRoundRect(ctx, x0, y0, s, s, 4);
         // Empty accumulators show a charge arc (fraction of ACCUM_FILL_SEC).
         if (!charged) {

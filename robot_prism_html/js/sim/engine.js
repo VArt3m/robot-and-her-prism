@@ -1,10 +1,11 @@
 import {
   EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH,
   CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY, ACCUM_FILL_SEC,
+  ACCUM_FLICKER_GRACE, ACCUM_LAYER_GAP, ACCUM_LAYER_WIDTH,
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist, pt_seg_dist, squareSegs } from '../core/geometry.js';
 import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
-import { isRelayKind, relayEmit, relayConfused } from './relays.js';
+import { isRelayKind, relayEmit, relayConfused, accumulatorEmit } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
 
 const PLAYER_OWNER = '__player__';
@@ -18,6 +19,16 @@ const beamKey = (o, t) => `${o}\x00${t}`;
 // CHARGED accumulator (a portable source). An empty accumulator emits nothing.
 function emitsAsSource(n) {
   return n.kind === 'source' || (isAccumulatorKind(n.kind) && !!n.color);
+}
+
+// An EMPTY accumulator on the field is a charging SINK: it COMPUTES a charge
+// colour (the additive sum of its strongest feeders) but radiates NOTHING outward
+// and holds the weakest rank, so it never pushes back — every beam reaching it is
+// absorbed. (A CHARGED accumulator is a source — see emitsAsSource — and a carried
+// one is inert.) It is intentionally not a relay kind, so it stays out of the
+// relay fixpoint; its intake is computed in a dedicated post-pass.
+function isChargingSink(n, carrying) {
+  return isAccumulatorKind(n.kind) && !n.color && n.id !== carrying;
 }
 
 export class Engine {
@@ -57,7 +68,14 @@ export class Engine {
     // the link). Advanced only in real-time `step`; reset by a cold `solve`.
     this.accum_charge = {};
     this.accum_in = {};
+    this.accum_grace = {};       // seconds of grace spent while the outcome flickers off-target
     this._accum_t = null;
+    // Per empty accumulator, the colour it would radiate (additive sum of its
+    // strongest feeders) and the set of feeder node-ids that produced it. Derived
+    // every solve (cold or timed); the charge tracks the colour, and a finished
+    // fill cuts exactly these feeder links.
+    this._accum_color = {};
+    this._accum_feeders = {};
   }
 
   // ---- blockers ----
@@ -84,7 +102,9 @@ export class Engine {
         for (const [s1,s2] of squareSegs(n.pos, CONN_R)) segs.push([s1,s2,lvl,n.id]);
       } else {
         if (n.id === w.carrying) continue;
-        const r = objType(n.kind)?.radius ?? CONN_R;
+        const r = isAccumulatorKind(n.kind)
+          ? this.accumFootprintRadius(n.id)
+          : (objType(n.kind)?.radius ?? CONN_R);
         for (const [s1,s2] of squareSegs(n.pos, r)) segs.push([s1,s2,0,n.id]);
       }
     }
@@ -198,9 +218,51 @@ export class Engine {
     return { consumed, rank: Infinity, confused: true, emit: null };   // lit but cannot emit → confused
   }
 
+  // For each EMPTY accumulator (a charging sink), collect per delivered colour the
+  // strongest (lowest) feeder rank AND the set of feeder origins at that strongest
+  // rank. Unlike the relay intake (which keeps one rank per colour), the accumulator
+  // needs the actual feeders: if two or more strongest feeders share a colour, BOTH
+  // are feeders — and a finished fill cuts every one of them. `rank` supplies each
+  // origin's own rank (an unranked origin counts as +Inf).
+  //   → { id -> Map(colour -> { minRank, origins:Set }) }
+  _gatherAccumIncoming(beams, delivery, rank) {
+    const w = this.world;
+    const out = {};
+    for (const n of Object.values(w.nodes))
+      if (isChargingSink(n, w.carrying)) out[n.id] = new Map();
+    this._forEachDelivered(beams, delivery, (b, nt) => {
+      if (!nt || !isChargingSink(nt, w.carrying)) return;
+      const fr = rank.has(b.o) ? rank.get(b.o) : Infinity;
+      const m = out[b.t];
+      const e = m.get(b.color);
+      if (!e || fr < e.minRank) m.set(b.color, { minRank: fr, origins: new Set([b.o]) });
+      else if (fr === e.minRank) e.origins.add(b.o);
+    });
+    return out;
+  }
+
+  // Decide one empty accumulator's intake by FEEDER TIER, strongest first — the same
+  // "hungry relay" rule, but it stops at the first tier that radiates ANYTHING (the
+  // accumulator has no forbidden colour, so any non-empty tier already emits). The
+  // consumed tier fixes both the charge colour and the feeder set (all origins at
+  // the consumed tiers, ties included).
+  //   perColour: Map(colour -> { minRank, origins:Set })
+  //   → { color: string|null, feeders: Set<id> }
+  _accumIntake(perColour) {
+    const consumed = new Set(), feeders = new Set();
+    if (perColour.size === 0) return { color: null, feeders };
+    const tiers = [...new Set([...perColour.values()].map(v => v.minRank))].sort((a, b) => a - b);
+    for (const T of tiers) {
+      for (const [c, e] of perColour)
+        if (e.minRank === T) { consumed.add(c); for (const o of e.origins) feeders.add(o); }
+      const col = accumulatorEmit(consumed);
+      if (col !== null) return { color: col, feeders };
+    }
+    return { color: accumulatorEmit(consumed), feeders };
+  }
+
   // Two rank maps equal? (same keys, same values) — used to detect the fixpoint.
-  _sameRank(a, b) {
-    if (a.size !== b.size) return false;
+  _sameRank(a, b) {    if (a.size !== b.size) return false;
     for (const [k, v] of a) if (b.get(k) !== v) return false;
     return true;
   }
@@ -456,6 +518,21 @@ export class Engine {
       if (!changed) break;
     }
     if (last === null) last = resolve(emit, rank, confused);
+    // Empty accumulators are charging SINKS: they radiated nothing and stayed at
+    // the weakest rank (absent from `rank`). Record the colour each WOULD radiate
+    // (its strongest-feeder sum) and the feeder set that produced it — the charge
+    // tracks the colour; a finished fill cuts exactly those feeders.
+    this._accum_color = {};
+    this._accum_feeders = {};
+    {
+      const fb = last[0], fd = last[last.length - 1];
+      const accIn = this._gatherAccumIncoming(fb, fd, rank);
+      for (const id in accIn) {
+        const r = this._accumIntake(accIn[id]);
+        this._accum_color[id] = r.color;
+        this._accum_feeders[id] = r.feeders;
+      }
+    }
     this._rank = rank;
     this._confused = confused;
     return [emit, last, rank, confused];
@@ -736,51 +813,69 @@ export class Engine {
   }
 
   // ---- accumulator charging ----
-  // The set of distinct delivered colours reaching each EMPTY accumulator. A
-  // charged accumulator is a source (never charges); the carried one is inert.
-  _accum_incoming(beams, delivery) {
-    const w = this.world;
-    const inc = {};
-    for (const n of Object.values(w.nodes))
-      if (isAccumulatorKind(n.kind) && !n.color && n.id !== w.carrying) inc[n.id] = new Set();
-    this._forEachDelivered(beams, delivery, (b) => {
-      if (inc[b.t]) inc[b.t].add(b.color);
-    });
-    return inc;
+  // The grown footprint radius of a charging accumulator (its external layer), or
+  // CONN_R when idle / charged. Driven by the LAST step's charge so it is stable
+  // frame-to-frame (a cold solve has no charge, so it reads the base footprint).
+  accumFootprintRadius(id) {
+    const n = this.world.nodes[id];
+    if (n && isAccumulatorKind(n.kind) && !n.color && (this.accum_charge[id] ?? 0) > 0)
+      return CONN_R + ACCUM_LAYER_GAP + ACCUM_LAYER_WIDTH;
+    return CONN_R;
   }
 
-  // Advance each empty accumulator's charge while EXACTLY ONE colour reaches it;
-  // reset to zero on none or a conflict (more than one colour) — so a clean fill
-  // needs an uninterrupted single colour. Stores that colour in accum_in for the
-  // fill. Real-time only (like the rewirer charge); a cold solve resets it.
-  _update_accum_charge(incoming, now) {
+  // Advance each empty accumulator's charge toward its current OUTCOME colour (the
+  // additive sum of its strongest feeders, computed in the solve as _accum_color).
+  // Charging needs the outcome to HOLD: a brief flicker to another colour — or to
+  // nothing — is tolerated for up to ACCUM_FLICKER_GRACE before the charge is
+  // dropped (lost feed) or restarted on the new colour. What matters is the
+  // OUTCOME, so swapping one white-making mix for another keeps charging. A carried
+  // accumulator is not a charging sink (no entry in _accum_color), so it never
+  // charges. Real-time only (like the rewirer charge); a cold solve resets it.
+  _update_accum_charge(now) {
     const dt = this._accum_t === null ? 0 : Math.max(0, now - this._accum_t);
     this._accum_t = now;
     let changed = false;
-    const live = new Set(Object.keys(incoming));
-    for (const id in incoming) {
-      const colours = incoming[id];
+    const colours = this._accum_color || {};
+    const live = new Set(Object.keys(colours));
+    for (const id of live) {
       const cur = this.accum_charge[id] ?? 0;
-      let nv, col;
-      if (colours.size === 1) { col = [...colours][0]; nv = Math.min(ACCUM_FILL_SEC, cur + dt); }
-      else { col = null; nv = 0; }             // none or a conflict → reset
-      if (Math.abs(nv - cur) > 1e-9 || this.accum_in[id] !== col) changed = true;
-      this.accum_charge[id] = nv;
-      this.accum_in[id] = col;
+      const grace = this.accum_grace[id] ?? 0;
+      const target = this.accum_in[id] ?? null;     // the colour we are charging toward
+      const out = colours[id] ?? null;              // the current outcome (may be null)
+      let nCharge = cur, nTarget = target, nGrace = grace;
+      if (out != null && out === target) {                 // steady: advance, clear grace
+        nCharge = Math.min(ACCUM_FILL_SEC, cur + dt); nGrace = 0;
+      } else if (target == null) {                          // not charging yet: begin on any colour
+        if (out != null) { nTarget = out; nCharge = Math.min(ACCUM_FILL_SEC, dt); nGrace = 0; }
+      } else {                                              // outcome differs (flicker or a real change)
+        nGrace = grace + dt;
+        if (nGrace > ACCUM_FLICKER_GRACE) {
+          if (out != null) { nTarget = out; nCharge = Math.min(ACCUM_FILL_SEC, dt); nGrace = 0; } // restart on the new colour
+          else { nTarget = null; nCharge = 0; nGrace = 0; }                                       // lost the feed: reset
+        }
+        // within grace: hold the current charge & target, waiting for the outcome to restore
+      }
+      if (nCharge !== cur || nTarget !== target || nGrace !== grace) changed = true;
+      this.accum_charge[id] = nCharge; this.accum_in[id] = nTarget; this.accum_grace[id] = nGrace;
     }
-    // Drop charge state for anything no longer an empty accumulator (filled/carried).
+    // Drop state for anything no longer a charging sink (filled / carried / removed).
     for (const id of Object.keys(this.accum_charge))
-      if (!live.has(id)) { delete this.accum_charge[id]; delete this.accum_in[id]; changed = true; }
+      if (!live.has(id)) {
+        delete this.accum_charge[id]; delete this.accum_in[id]; delete this.accum_grace[id];
+        changed = true;
+      }
     return changed;
   }
 
-  // Empty accumulators whose charge has completed — ready for the UI to fill (set
-  // the colour and drop the link). Returns [{ id, color }].
+  // Empty accumulators whose charge has completed — ready for the UI to fill: stamp
+  // the colour, then cut ONLY its feeder links (the rest are kept). Returns
+  // [{ id, color, feeders:[id…] }].
   ready_accumulators() {
     const out = [];
     for (const id in this.accum_charge) {
       const col = this.accum_in[id];
-      if (col && (this.accum_charge[id] ?? 0) >= ACCUM_FILL_SEC - 1e-6) out.push({ id, color: col });
+      if (col && (this.accum_charge[id] ?? 0) >= ACCUM_FILL_SEC - 1e-6)
+        out.push({ id, color: col, feeders: [...(this._accum_feeders[id] ?? [])] });
     }
     return out;
   }
@@ -826,6 +921,7 @@ export class Engine {
       this._charge_t = null;
       this.accum_charge = {};
       this.accum_in = {};
+      this.accum_grace = {};
       this._accum_t = null;
     }
     const [emit, last] = this._settle(() => this.propagate());
@@ -1033,7 +1129,7 @@ export class Engine {
     this.lit = this._lit_map(beams, delivery);
     const charge_changed = this._update_charge(this.lit, now);
     const recolor_changed = this._update_recolor(now);
-    const accum_changed = this._update_accum_charge(this._accum_incoming(beams, delivery), now);
+    const accum_changed = this._update_accum_charge(now);
     this.active = this._active_map(this.lit);
     this.logic_val = this.evaluate_logic(this.lit, w.pressed);
     for (const ff of w.ffs) ff.is_open = this.field_open(ff, this.logic_val);

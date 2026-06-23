@@ -110,6 +110,22 @@ export const RELAY_SPECS = {
   },
 };
 
+// The empty Accumulator, while it sits on the field, behaves like a relay for
+// INTAKE purposes only: it gathers its feeders by tier (the shared "hungry relay"
+// rule in the engine) and RADIATES their additive sum. Unlike the mixer it has NO
+// forbidden colour — any non-empty intake radiates something, so it is never
+// confused. It is null ONLY when nothing reaches it (idle). An all-black intake
+// (mask 0) still radiates: black is a real colour here, not "no light".
+// NOTE: the accumulator is deliberately NOT a member of RELAY_SPECS / isRelayKind.
+// While empty it is a pure light SINK (it radiates nothing OUTWARD and holds the
+// weakest rank); this function only computes the colour it is CHARGING toward.
+export function accumulatorEmit(incoming) {
+  if (incoming.size === 0) return null;
+  let m = 0;
+  for (const c of incoming) m |= colorMask(c);
+  return maskColor(m) ?? 'black';
+}
+
 export function relaySpec(kind) {
   return RELAY_SPECS[kind] || null;
 }

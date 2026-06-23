@@ -25,7 +25,22 @@ export const FORGE_USES_DEFAULT = 3;
 export const CUT_LINGER = 0.75;
 export const CROSSING_CUT_INSTANT = false;
 export const RECOLOR_DELAY = 3.0;   // seconds a deployed rewirer must hold a clear shot before it fires
-export const ACCUM_FILL_SEC = 2.0;  // seconds of an uninterrupted single colour to charge an empty accumulator
+export const ACCUM_FILL_SEC = 4.0;  // seconds of an UNINTERRUPTED outcome colour to charge an empty accumulator
+// While charging, a few ticks of grace before an OUTCOME change resets the charge,
+// so a momentary flicker (white→yellow→white) does not throw away progress.
+export const ACCUM_FLICKER_GRACE = 0.13;
+// A charging accumulator grows a second contour outside its body: an external
+// layer at radius CONN_R + GAP, of width WIDTH. The grown footprint is what it
+// occludes light at (and, in a later pass, what pushes objects). Pure cosmetics
+// + light reach; the inner contour (CONN_R) is what feeders still connect to.
+export const ACCUM_LAYER_GAP = 4;
+export const ACCUM_LAYER_WIDTH = 4;
+// A charging accumulator holds the WEAKEST possible rank: it never pushes back on
+// a feeder and everything that reaches it is absorbed by the external layer. The
+// engine already treats an unfed/empty accumulator as +Infinity (weaker than any
+// finite rank), so this constant documents the intent and is used where a finite
+// sentinel reads more clearly than Infinity.
+export const ACCUM_CHARGE_RANK = 32;
 
 export const COLORS = {
   red: '#e23b3b', green: '#27a838', blue: '#2b5cd6',

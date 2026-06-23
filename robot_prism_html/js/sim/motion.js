@@ -1,6 +1,6 @@
 import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
 import { first_block_t, dist, segments_cross, seg_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES } from './objects.js';
+import { OBJECT_TYPES, isAccumulatorKind } from './objects.js';
 
 export class Motion {
   constructor(world, engine) {
@@ -163,6 +163,14 @@ export class Motion {
     for (const c of w.relays()) {
       if (c.id === w.carrying) continue;
       if (dist(new_, c.pos) < PLAYER_R + CONN_R - 2) return;
+    }
+    // A charging accumulator grows a larger external body (its layer). While grown
+    // it stops the player like any solid object. (Actively SHOVING other objects /
+    // nudging itself off walls is deferred — see ACCUM_LAYER_* in constants.js.)
+    for (const a of w.carriable_nodes()) {
+      if (!isAccumulatorKind(a.kind) || a.id === w.carrying) continue;
+      const r = this.engine.accumFootprintRadius(a.id);
+      if (r > CONN_R && dist(new_, a.pos) < PLAYER_R + r - 2) return;
     }
     // Forges are material fixtures — they stop the player like any solid object.
     for (const f of w.forges()) {

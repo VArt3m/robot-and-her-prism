@@ -59,11 +59,17 @@ export const OBJECT_TYPES = {
   // An Accumulator — a PORTABLE source with a charge. Two states keyed by its
   // `color` field: EMPTY (null) and CHARGED (a colour). A charged accumulator is
   // a rank-0 source that emits ONLY its own colour (it never relays incoming
-  // light and is never confused — incoming rays are dead weight); an empty one is
-  // a sink that fills over a couple of uninterrupted seconds of a single incoming
-  // colour, then becomes charged and drops the link that filled it. It can be
-  // wired (targeted) like a connector. Material, carriable; same footprint as a
-  // relay. NOT a relay (`relay` unset) so it stays out of the relay machinery.
+  // light and is never confused — incoming rays are dead weight). An EMPTY one is
+  // a charging SINK: it behaves like a relay for INTAKE only (it gathers feeders
+  // by tier and would radiate their additive sum — and, having no forbidden
+  // colour, it is never confused), but it radiates nothing outward and holds the
+  // weakest rank, so everything reaching it is absorbed. It charges over a few
+  // uninterrupted seconds of a steady OUTCOME colour, then becomes charged, cuts
+  // exactly its feeder links (keeping every other intent), and emits as a source.
+  // While charging it grows a second external contour (its layer), enlarging its
+  // footprint. It can be wired (targeted) like a connector. Material, carriable;
+  // same base footprint as a relay. NOT a relay (`relay` unset) so it stays out of
+  // the relay machinery — its intake is handled by a dedicated engine pass.
   accumulator: { material: true, pushable: false, carriable: true, requiresTarget: true, programmable: false, jammable: false, radius: CONN_R },
 };
 

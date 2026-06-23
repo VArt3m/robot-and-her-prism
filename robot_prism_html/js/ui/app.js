@@ -900,11 +900,12 @@ export class App {
 
   _commitFills(now) {
     const w = this.world;
-    this._commitReady(w.ready_accumulators(), ({ id, color }) => {
+    this._commitReady(w.ready_accumulators(), ({ id, color, feeders }) => {
       const nd = w.nodes[id];
       if (!nd || nd.kind !== 'accumulator') return;
-      nd.color = color;          // empty → charged: now a rank-0 portable source
-      w.clear_links_of(id);      // the connection that got it filled drops
+      nd.color = color;                            // empty → charged: now a rank-0 portable source
+      for (const f of (feeders || []))            // cut ONLY the feeder links; keep every other intent
+        w.links.delete(w._link_key(id, f));
     }, STR.flash.accumFilled, now);
   }
 

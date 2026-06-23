@@ -151,7 +151,7 @@ const en = {
     recolourMarked: 'Recolour target set — it charges and fires once the rewirer is down with a clear shot',
     recolourDone: 'Recolour applied — the rewirer is spent',
     jamMarked: 'Jam target set — active once the jammer is on the ground',
-    accumFilled: 'Accumulator charged — it is now a portable source, and the link that filled it dropped',
+    accumFilled: 'Accumulator charged — it is now a portable source; its feeder links dropped, other links kept',
     accumDischarged: 'Accumulator emptied — it can be charged again',
     noLineOfSight: 'No line of sight',
     targeting: (what) => `Targeting — click ${what}; click empty or tap E to finish`,
