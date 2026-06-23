@@ -33,7 +33,7 @@ export const ACCUM_FLICKER_GRACE = 0.13;
 // layer at radius CONN_R + GAP, of width WIDTH. The grown footprint is what it
 // occludes light at (and, in a later pass, what pushes objects). Pure cosmetics
 // + light reach; the inner contour (CONN_R) is what feeders still connect to.
-export const ACCUM_LAYER_GAP = 4;
+export const ACCUM_LAYER_GAP = 8;
 export const ACCUM_LAYER_WIDTH = 4;
 // A charging accumulator holds the WEAKEST possible rank: it never pushes back on
 // a feeder and everything that reaches it is absorbed by the external layer. The

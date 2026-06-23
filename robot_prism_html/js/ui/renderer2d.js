@@ -703,19 +703,36 @@ export class Renderer2D {
         const c = COLORS[n.color] ?? '#999';
         const r = 12;
         const x0 = x - r, y0 = y - r, s = 2 * r;
-        // While an empty accumulator can radiate, it grows a second contour: an
-        // external layer at CONN_R + GAP, of width WIDTH, in the mix colour — it
-        // becomes (temporarily) bigger. Drawn first, behind the body.
+        // While an empty accumulator can radiate it is CHARGING: it grows a second
+        // contour (the external layer at CONN_R+GAP, width WIDTH, in the mix colour).
+        // The layer breathes and an inward ripple reads as light being drawn in.
         if (mix) {
           const mc = COLORS[mix] ?? '#7fb0e0';
-          const gr = CONN_R + ACCUM_LAYER_GAP + ACCUM_LAYER_WIDTH / 2;
+          const t = performance.now() / 1000;
+          const outerR = CONN_R + ACCUM_LAYER_GAP + ACCUM_LAYER_WIDTH / 2;
+          const innerR = r + 1;
+          const breath = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(t * 3.2));   // breathing alpha
+          ctx.save();
+          ctx.globalAlpha = breath;
           ctx.strokeStyle = mc; ctx.lineWidth = ACCUM_LAYER_WIDTH; ctx.setLineDash([]);
-          strokeRoundRect(ctx, x - gr, y - gr, 2 * gr, 2 * gr, 6);
+          strokeRoundRect(ctx, x - outerR, y - outerR, 2 * outerR, 2 * outerR, 7);
+          ctx.restore();
+          // Two staggered ripples contracting outer → inner (absorption), looping.
+          const period = 1.15;
+          for (const off of [0, 0.5]) {
+            const ph = ((t / period) + off) % 1;
+            const rr = outerR - ph * (outerR - innerR);
+            ctx.save();
+            ctx.globalAlpha = 0.5 * (1 - ph);
+            ctx.strokeStyle = mc; ctx.lineWidth = 2; ctx.setLineDash([]);
+            strokeRoundRect(ctx, x - rr, y - rr, 2 * rr, 2 * rr, Math.max(4, 7 * rr / outerR));
+            ctx.restore();
+          }
         }
-        // A rounded square (battery-like) marks it apart from the diamond source
-        // and round jammer. Filled with its colour when charged; when empty it is
-        // tinted toward the mix it is gathering (white if it is gathering nothing).
-        ctx.fillStyle = charged ? c : (mix ? (COLORS[mix] ?? '#fff') : '#fff');
+        // Body: a rounded square (battery-like) marks it apart from the diamond
+        // source and round jammer. Charged → its colour; empty → white, so the glyph
+        // stays readable (the CONTOUR, not the body, carries the mix colour).
+        ctx.fillStyle = charged ? c : '#fff';
         fillRoundRect(ctx, x0, y0, s, s, 4);
         // Empty accumulators show a charge arc (fraction of ACCUM_FILL_SEC).
         if (!charged) {
@@ -727,7 +744,13 @@ export class Renderer2D {
             ctx.strokeStyle = ic; ctx.lineWidth = 3; ctx.setLineDash([]); ctx.stroke();
           }
         }
-        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, charged ? '#222' : '#90a4ae');
+        // Inner contour: the mix colour while charging (so the contour "becomes" the
+        // mix), unless the player is targeting / can pick it up (then the affordance
+        // ring wins). Otherwise the usual target ring.
+        const emphasise = targetingNow || near || ePick?.id === n.id;
+        ctx.strokeStyle = (mix && !emphasise)
+          ? (COLORS[mix] ?? '#90a4ae')
+          : targetRing(targetingNow, near, ePick?.id === n.id, charged ? '#222' : '#90a4ae');
         ctx.lineWidth = charged ? 2 : 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2, 3]);
         strokeRoundRect(ctx, x0, y0, s, s, 4);

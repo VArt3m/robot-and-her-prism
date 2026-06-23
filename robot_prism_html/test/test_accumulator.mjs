@@ -268,5 +268,57 @@ ok(accumulatorEmit(S()) === null, 'no input → null (idle)');
   ok(w.engine.accumFootprintRadius('A') > 12, 'a charging accumulator grows its footprint');
 }
 
+// ---------------------------------------------------------------------------
+// 14. Relays (connector / inverter / mixer) CAN target an accumulator — empty
+//     (to feed it) or charged (it is a source). Previously they could not.
+// ---------------------------------------------------------------------------
+{
+  const w = mk();
+  w.add(new Node('cn', 'connector', [0, 0]));
+  w.add(new Node('iv', 'inverter',  [0, 60]));
+  w.add(new Node('mx', 'mixer',     [0, 120]));
+  w.add(new Node('A', 'accumulator', [200, 60], { color: null }));
+  const has = (kind, dev) => targetSpec(kind).candidates(w, dev).map(c => c.id).includes('A');
+  ok(has('connector', 'cn'), 'a connector can target an EMPTY accumulator');
+  ok(has('inverter', 'iv'), 'an inverter can target an EMPTY accumulator');
+  ok(has('mixer', 'mx'), 'a mixer can target an EMPTY accumulator');
+  ok(targetSpec('connector').targetAt(w, 'cn', 200, 60)?.id === 'A',
+     'the golden arrow lands on the accumulator');
+  w.nodes['A'].color = 'red';
+  ok(has('connector', 'cn'), 'a connector can also target a CHARGED accumulator');
+}
+
+// ---------------------------------------------------------------------------
+// 15. A NON-FEEDER beam (delivered but not a feeder) is absorbed by the external
+//     layer: it is drawn stopping at the outer border, not at the inner contour.
+// ---------------------------------------------------------------------------
+{
+  const w = mk();
+  w.add(new Node('gs', 'source', [0, 0],   { color: 'green' }));
+  w.add(new Node('bs', 'source', [0, 200], { color: 'blue' }));
+  w.add(new Node('A', 'accumulator', [300, 100], { color: null }));
+  w.add(new Node('rs', 'source', [600, 100], { color: 'red' }));
+  w.add(new Node('rc', 'connector', [450, 100]));   // red arrives at rank 1
+  w.toggle_link('gs', 'A'); w.toggle_link('bs', 'A');
+  w.toggle_link('rs', 'rc'); w.toggle_link('rc', 'A');
+  w.solve(true); w.step(0); w.step(0.3);            // begin charging → footprint grows
+  const fr = w.engine.accumFootprintRadius('A');
+  ok(fr > 12, 'the charging footprint is grown');
+  const f = w.engine._accum_feeders['A'];
+  ok(f.has('gs') && f.has('bs') && !f.has('rc'),
+     'green & blue are feeders (rank 0); the rank-1 red is not');
+  const drawn = (ox, oy) => {
+    for (const [O, E, , deliv] of w.engine.beams_draw)
+      if (Math.abs(O[0] - ox) < 1 && Math.abs(O[1] - oy) < 1)
+        return { len: Math.hypot(E[0] - O[0], E[1] - O[1]), deliv };
+    return null;
+  };
+  const red = drawn(450, 100);                       // rc → A, dl = 150
+  ok(red && Math.abs(red.len - (150 - fr)) < 1.5 && red.deliv === false,
+     'the non-feeder red stops at the external border (absorbed), not the inner contour');
+  const grn = drawn(0, 0);                           // gs → A (a feeder)
+  ok(grn && grn.deliv === true, 'a feeder beam reaches the inner contour (full delivery)');
+}
+
 console.log(`\naccumulator tests: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

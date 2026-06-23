@@ -950,6 +950,21 @@ export class Engine {
     this._last_beams_t = beams;
   }
 
+  // A beam delivered INTO an empty (charging) accumulator: if its origin is NOT one
+  // of that accumulator's feeders, it is absorbed by the EXTERNAL LAYER — visually it
+  // must stop at the outer border, not reach the inner contour. Returns the capped
+  // length (centre → outer edge) or null when no cap applies (a feeder, a charged
+  // accumulator, or any other target). Purely visual: the beam is still delivered
+  // (absorbed) for the simulation.
+  _accumLayerCap(b) {
+    const nt = this.world.nodes[b.t];
+    if (!nt || !isAccumulatorKind(nt.kind) || nt.color) return null;   // only an EMPTY accumulator
+    if (!this._accum_color[b.t]) return null;                          // only while it can radiate
+    const feeders = this._accum_feeders[b.t];
+    if (feeders && feeders.has(b.o)) return null;                      // a feeder reaches the inner contour
+    return Math.max(0, b.dl - this.accumFootprintRadius(b.t));
+  }
+
   // ---- cut animation ----
   _animate_beams(beams, length, delivery, now = null) {
     if (now === null) now = performance.now() / 1000;
@@ -973,8 +988,10 @@ export class Engine {
       // feed), but are SHOWN edge to edge with the delivered look (no stub). Every
       // other beam draws at its real animated length and delivered state.
       const full = b.tug === 'same' || b.tug === 'soft';
-      const vlen = full ? b.dl : st.len;
-      const vdeliv = full ? true : st.deliv;
+      let vlen = full ? b.dl : st.len;
+      let vdeliv = full ? true : st.deliv;
+      const cap = this._accumLayerCap(b);
+      if (cap !== null && vlen > cap) { vlen = cap; vdeliv = false; }
       out.push([[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug]);
     }
     for (const key of [...this.beam_anim.keys()])
@@ -1082,8 +1099,10 @@ export class Engine {
       // full length with the delivered look (see _animate_beams); everything else
       // draws at its live effective length.
       const full = b.tug === 'same' || b.tug === 'soft';
-      const vlen = full ? b.dl : L;
-      const vdeliv = full ? true : (L >= b.dl - 1e-6);
+      let vlen = full ? b.dl : L;
+      let vdeliv = full ? true : (L >= b.dl - 1e-6);
+      const cap = this._accumLayerCap(b);
+      if (cap !== null && vlen > cap) { vlen = cap; vdeliv = false; }
       return [[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug];
     });
   }

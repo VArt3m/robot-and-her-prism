@@ -53,10 +53,13 @@ import { kindIsJammable } from './objects.js';
 import { RELAY_SPECS, isCorruptibleKind } from './relays.js';
 import { linkKey } from './world.js';
 
-// The node kinds a light wire may attach to: sources, receivers, and every relay
-// (connector / inverter / mixer / future sister). Built from the relay registry so
-// a new sister needs no edit here.
-const WIRE_KINDS = ['source', 'receiver', ...Object.keys(RELAY_SPECS)];
+// The node kinds a light wire may attach to: sources, receivers, accumulators
+// (a portable source — empty or charged), and every relay (connector / inverter /
+// mixer / future sister). Built from the relay registry so a new sister needs no
+// edit here. The accumulator is added explicitly because it is intentionally NOT a
+// relay kind, yet a relay may still wire INTO it (to feed an empty one or clash a
+// charged one).
+const WIRE_KINDS = ['source', 'receiver', 'accumulator', ...Object.keys(RELAY_SPECS)];
 
 // The node kinds a rewirer may RECOLOUR: sources, receivers, and only the
 // CORRUPTIBLE relays. A non-corruptible relay (the mixer) is excluded — it cannot
