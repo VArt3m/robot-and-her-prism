@@ -185,10 +185,18 @@ function crossScene() {
   eng._ray_obstacles = [{ cross: true, P: [200, 308], r: 4, level: 0, owners: new Set() }];
   ok(!backBeam(), 'a spot beyond the ray body does not intercept');
 
-  // A blob whose owners include an endpoint of the pair is that beam's OWN
-  // interception — skipped, so it never self-un-suppresses.
-  eng._ray_obstacles = [{ cross: true, P: [100, 300], r: 4, level: 0, owners: new Set(['c1']) }];
-  ok(!backBeam(), 'a blob owned by the beam itself is skipped');
+  // A blob the beam ITSELF forms (its own directed key) is skipped — no beam
+  // un-suppresses itself via its own interception.
+  eng._ray_obstacles = [{ cross: true, P: [100, 300], r: 4, level: 0, owners: new Set(['c1>s1', 'g>h']) }];
+  ok(!backBeam(), 'a blob the beam itself forms is skipped');
+
+  // REGRESSION: a blob formed by the beam's REVERSE twin (s1→c1) plus a transverse
+  // beam is NOT self-interception — it must still intercept. This is the vanishing
+  // back-beam: a higher→lower beam on the same line as a CUT forward beam lost its
+  // presence once the forward cut landed (T-junction), because the blob there was
+  // (wrongly) owned by node, dropping the twin.
+  eng._ray_obstacles = [{ cross: true, P: [200, 300], r: 4, level: 0, owners: new Set(['s1>c1', 'g>h']) }];
+  ok(backBeam(), 'a blob formed by the reverse twin (+ a transverse beam) still intercepts');
 
   // A blob at the emitter end (behind the start) does not obstruct.
   eng._ray_obstacles = [{ cross: true, P: [300, 300], r: 4, level: 0, owners: new Set() }];
@@ -208,7 +216,7 @@ function crossScene() {
   const blobs = eng._beamCrossBlobs(beams, [400, 200]);
   ok(blobs.length === 1 && Math.abs(blobs[0].P[0] - 300) < 1e-6 && Math.abs(blobs[0].P[1] - 300) < 1e-6,
      'a T-junction yields a blob at the interception point');
-  ok(blobs[0].owners.has('a') && blobs[0].owners.has('d'), 'the blob records the forming beams as owners');
+  ok(blobs[0].owners.has('a>b') && blobs[0].owners.has('c>d'), 'the blob records the forming beams as directed keys');
 
   // Two beams that share a node (a fan) are not an interception → no blob.
   const fan = [
@@ -220,6 +228,32 @@ function crossScene() {
   // The built obstacle set carries blobs alongside the beam segments.
   const obs = eng._obstaclesFromBeams(beams, [400, 200]);
   ok(obs.some(o => o.cross) && obs.some(o => o.P1), 'obstacles include both segments and interception blobs');
+}
+
+// ---------------------------------------------------------------------------
+// 6. SCENE REGRESSION (the reported bug). A horizontal green ray crosses a
+//    vertical red link at P; the back-beam up that same vertical (the connector's
+//    upward green, aimed at the red source) must SURVIVE after the cuts resolve —
+//    the interception at P keeps it un-suppressed even though the green ray now
+//    ends exactly at P (a T-junction the segment test alone would miss).
+// ---------------------------------------------------------------------------
+{
+  const w = new World(); w._uid = 1;
+  w.add(new Node('G1', 'source', [100, 300], { color: 'green' }));   // upper green source
+  w.add(new Node('C1', 'connector', [500, 300]));                     // upper connector
+  w.add(new Node('R', 'source', [300, 100], { color: 'red' }));      // red source (vertical)
+  w.add(new Node('C2', 'connector', [300, 500]));                     // lower connector
+  w.add(new Node('G2', 'source', [150, 560], { color: 'green' }));   // lower green source feeds C2
+  w.toggle_link('G1', 'C1');     // horizontal green ray, crosses the vertical at (300,300)
+  w.toggle_link('G2', 'C2');     // C2 emits green
+  w.toggle_link('R', 'C2');      // vertical link; C2→R is the upward back-beam
+
+  w.solve(true, false);
+  ok(hasBeam(w.engine, 'C2', 'R'),
+     'the upward back-beam survives the resolved cut (interception keeps its presence)');
+  // And it stays put across timed frames (no flicker-out once the linger elapses).
+  for (let i = 0; i < 6; i++) w.step(0.2 * (i + 1));
+  ok(hasBeam(w.engine, 'C2', 'R'), 'it does not vanish after the 0.75s cut linger elapses');
 }
 
 console.log(`\nray-occlusion tests: ${pass} passed, ${fail} failed`);

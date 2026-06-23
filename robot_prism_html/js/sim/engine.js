@@ -414,7 +414,7 @@ export class Engine {
       // spot at its OWN endpoint (the segment test below would miss that). Skipped
       // for a beam that itself forms the crossing (its own interception).
       if (ob.cross) {
-        if (ob.owners && (ob.owners.has(o) || ob.owners.has(t))) continue;
+        if (ob.owners && ob.owners.has(`${o}>${t}`)) continue;  // a beam's OWN interception (not its reverse twin)
         const ax = T[0] - O[0], ay = T[1] - O[1];
         const L2 = ax * ax + ay * ay;
         if (L2 < 1e-9) continue;
@@ -482,7 +482,11 @@ export class Engine {
         if (!r) continue;
         blobs.push({
           cross: true, P: r[0], r: CROSS_OCCLUDE_R, level: bi.level,
-          owners: new Set([bi.o, bi.t, bj.o, bj.t]),
+          // The forming beams as DIRECTED keys. A beam's interception must not
+          // un-suppress THAT beam (self-reference), but it MUST still un-suppress
+          // the beam's reverse twin on the same line — that back-direction is a
+          // different beam, legitimately blocked by the transverse ray here.
+          owners: new Set([`${bi.o}>${bi.t}`, `${bj.o}>${bj.t}`]),
         });
       }
     }
