@@ -979,19 +979,7 @@ export class App {
   // that have no connector on them (an occupied box's top connector is already
   // a candidate). Honors radius + no-teleport safeguard.
   _nearestPickup() {
-    const w = this.world;
-    let pick = null, best = CONNECT_REACH, blocked = false;
-    const consider = (loc, item) => {
-      const d = dist(w.player, loc);
-      if (d >= best) return;
-      if (w.reach_blocked(w.player, loc)) { blocked = true; return; }
-      pick = item; best = d;
-    };
-    for (const c of w.carriable_nodes()) consider(c.pos, { kind: c.kind, id: c.id });
-    for (const bx of w.boxes) {
-      const occupied = w.relays().some(c => dist(c.pos, bx) < BOX_R);
-      if (!occupied) consider(bx, { kind: 'box', box: bx });
-    }
+    const { pick, blocked } = this.world.nearestPickup();
     if (!pick) { if (blocked) this._setFlash(STR.flash.cantReachBlocked); return false; }
     return this._pickItem(pick);
   }

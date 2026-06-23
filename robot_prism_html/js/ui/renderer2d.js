@@ -147,6 +147,25 @@ function starPts(cx, cy, r = 16, ri = 7, n = 5) {
   return pts;
 }
 
+// Ring hue for an item within pick-up range: brighter when it is the one E would
+// actually grab (the top of the nearest stack), dimmer otherwise.
+function nearHue(isTop) { return isTop ? '#4dd0e1' : '#2a8fa3'; }
+
+// The small "(drop here)" / "(targeting)" badge above a carried item.
+function drawBadge(ctx, x, y, dy, color, label) {
+  ctx.fillStyle = color;
+  ctx.font = '7px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(label, x, y - dy);
+}
+
+// Ring colour for a simple targetable device (rewirer / jammer / accumulator):
+// gold while targeting, the near-hue while in pick-up range, else its resting hue.
+function targetRing(targetingNow, near, isTop, resting) {
+  return targetingNow ? '#f5c518' : (near ? nearHue(isTop) : resting);
+}
+
 // Measure the pixel width of a tooltip line. A line is either a plain string
 // or a rich segment array [{t, c?, k?, m?}]. Font context is restored on exit.
 function measureLine(ctx, line, textFont, keyFont) {
@@ -257,23 +276,12 @@ export class Renderer2D {
     const { sel, mode } = uiState;
     const canPickup = (pos) => mode === 'play' && w.player && !w.carrying && !w.carry_box
       && dist(w.player, pos) < CONNECT_REACH && !w.reach_blocked(w.player, pos);
-    // Pre-compute which item E would pick (nearest reachable carriable).
+    // Pre-compute which item E would pick (nearest reachable carriable / box) —
+    // the same definition the E-key pickup uses, via world.nearestPickup.
     let ePick = null;
     if (mode === 'play' && w.player && !w.carrying && !w.carry_box) {
-      let best = Infinity;
-      for (const c of w.carriable_nodes()) {
-        if (!canPickup(c.pos)) continue;
-        const d = dist(w.player, c.pos);
-        if (d < best) { best = d; ePick = { id: c.id }; }
-      }
-      for (const bx of w.boxes) {
-        const occupied = Object.values(w.nodes).some(n => isRelayKind(n.kind) && dist(n.pos,bx)<BOX_R);
-        if (occupied || !canPickup(bx)) continue;
-        const d = dist(w.player, bx);
-        if (d < best) { best = d; ePick = { box: bx }; }
-      }
+      ePick = w.nearestPickup().pick;
     }
-    const nearHue = (isTop) => isTop ? '#4dd0e1' : '#2a8fa3';
 
     // Map world coordinates → physical pixels in one transform.
     ctx.setTransform(scale * dpr, 0, 0, scale * dpr, ox * dpr, oy * dpr);
@@ -631,9 +639,8 @@ export class Renderer2D {
           ctx.fillText(STR.glyph[n.kind] ?? STR.glyph.connector, x, y);   // 'c' connector / 'i' inverter
         }
         if (carriedNow) {
-          ctx.fillStyle = ring; ctx.font = '7px sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? STR.badge.targeting : (wouldElevate ? STR.badge.stackHere : STR.badge.dropHere), x, y-14);
+          drawBadge(ctx, x, y, 14, ring,
+            targetingNow ? STR.badge.targeting : (wouldElevate ? STR.badge.stackHere : STR.badge.dropHere));
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';
@@ -651,8 +658,7 @@ export class Renderer2D {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(n.fuse == null ? '' : `${n.fuse}`, x, y);
         if (carriedNow) {
-          ctx.fillStyle = '#e23b3b'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
-          ctx.fillText(STR.badge.dropHere, x, y-13);
+          drawBadge(ctx, x, y, 13, '#e23b3b', STR.badge.dropHere);
         }
 
       } else if (n.kind === 'rewirer') {
@@ -662,14 +668,13 @@ export class Renderer2D {
         const c = COLORS[n.color] ?? '#999';
         polygon(ctx, diamond(x, y, 12));
         ctx.fillStyle = '#fff'; ctx.fill();
-        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : c); ctx.lineWidth = 3;
+        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, c); ctx.lineWidth = 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = c; ctx.fill();
         if (carriedNow) {
-          ctx.fillStyle = targetingNow ? '#f5c518' : c; ctx.font = '7px sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
+          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : c,
+            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
         }
 
       } else if (n.kind === 'jammer') {
@@ -678,15 +683,15 @@ export class Renderer2D {
         const near = canPickup(n.pos);
         ctx.beginPath(); ctx.arc(x, y, 12, 0, 2*Math.PI);
         ctx.fillStyle = '#eceff1'; ctx.fill();
-        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#37474f'); ctx.lineWidth = 3;
+        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, '#37474f'); ctx.lineWidth = 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = '#37474f'; ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(STR.glyph.jammer, x, y);
         if (carriedNow) {
-          ctx.fillStyle = targetingNow ? '#f5c518' : '#37474f'; ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y-15);
+          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : '#37474f',
+            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
         }
 
       } else if (n.kind === 'accumulator') {
@@ -711,7 +716,7 @@ export class Renderer2D {
             ctx.strokeStyle = ic; ctx.lineWidth = 3; ctx.setLineDash([]); ctx.stroke();
           }
         }
-        ctx.strokeStyle = targetingNow ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : (charged ? '#222' : '#90a4ae'));
+        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, charged ? '#222' : '#90a4ae');
         ctx.lineWidth = charged ? 2 : 3;
         if (carriedNow && !targetingNow) ctx.setLineDash([2, 3]);
         strokeRoundRect(ctx, x0, y0, s, s, 4);
@@ -721,9 +726,8 @@ export class Renderer2D {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(STR.glyph.accumulator, x, y);
         if (carriedNow) {
-          ctx.fillStyle = targetingNow ? '#f5c518' : (charged ? c : '#607d8b');
-          ctx.font = '7px sans-serif'; ctx.textBaseline = 'bottom';
-          ctx.fillText(targetingNow ? STR.badge.targeting : STR.badge.dropHere, x, y - 15);
+          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : (charged ? c : '#607d8b'),
+            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
         }
 
       } else if (n.kind === 'forge') {

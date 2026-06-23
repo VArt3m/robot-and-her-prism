@@ -1,4 +1,4 @@
-import { BOX_R, CONN_R, PLAYER_R } from '../core/constants.js';
+import { BOX_R, CONN_R, PLAYER_R, CONNECT_REACH } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
 import { OBJECT_TYPES, kindIsJammable, isRelay, isAccumulatorKind } from './objects.js';
 import { Engine } from './engine.js';
@@ -79,6 +79,29 @@ export class World {
   // bare [x,y] points, not nodes.
   carriable_nodes() {
     return Object.values(this.nodes).filter(n => OBJECT_TYPES[n.kind]?.carriable && !n.spent);
+  }
+
+  // The nearest in-reach, unobstructed pickable to the player: a carriable node
+  // or an UNOCCUPIED box. Returns `{ pick, blocked }` where `pick` is
+  // `{ kind, id } | { kind:'box', box } | null` and `blocked` is true when an
+  // otherwise-closer candidate was unreachable (so the UI can say "blocked"
+  // rather than "nothing here"). One definition for the E-key pickup and the
+  // renderer's pick-up highlight, so the two can never drift.
+  nearestPickup() {
+    let pick = null, best = CONNECT_REACH, blocked = false;
+    const consider = (loc, item) => {
+      if (!this.player) return;
+      const d = dist(this.player, loc);
+      if (d >= best) return;
+      if (this.reach_blocked(this.player, loc)) { blocked = true; return; }
+      pick = item; best = d;
+    };
+    for (const c of this.carriable_nodes()) consider(c.pos, { kind: c.kind, id: c.id });
+    for (const bx of this.boxes) {
+      const occupied = this.relays().some(c => dist(c.pos, bx) < BOX_R);
+      if (!occupied) consider(bx, { kind: 'box', box: bx });
+    }
+    return { pick, blocked };
   }
 
   field_by_id(fid) {
@@ -257,5 +280,5 @@ export class World {
     return this.motion.placement_spot(player, ux, uy, r, gap, maxD, wantDist, ignoreConn);
   }
   at_goal() { return this.motion.at_goal(); }
-  player_touching_beam() { return this.motion.player_touching_beam(); }
+  player_touching_beam() { return this.engine.player_on_beam(); }
 }

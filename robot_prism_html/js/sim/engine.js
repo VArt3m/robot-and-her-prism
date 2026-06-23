@@ -1,8 +1,8 @@
 import {
-  EPS, PLAYER_R, BOX_R, CONN_R, BTN_R,
+  EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH,
   CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY, ACCUM_FILL_SEC,
 } from '../core/constants.js';
-import { seg_inter, first_block_t, dist, squareSegs } from '../core/geometry.js';
+import { seg_inter, first_block_t, dist, pt_seg_dist, squareSegs } from '../core/geometry.js';
 import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
 import { isRelayKind, relayEmit, relayConfused } from './relays.js';
 import { rayProfile, rayBlockerSegments } from './occlusion.js';
@@ -37,6 +37,11 @@ export class Engine {
     this._beam_targets = new Map();
     this._beam_instant = new Map();
     this._last_beams_t = [];
+    // Live beams treated as wall-like for the DIRECTIONAL suppression decision
+    // only (see _beams_and_cross). Set to the previous frame's beams on the timed
+    // path (step), left null on the cold path (solve) so static snapshots and the
+    // headless suites are unaffected.
+    this._ray_obstacles = null;
     this.dead_conns = new Set();   // connectors killed by conflicting incoming colours
     // Live jammer rays for the renderer: [{ from, to, live, reaches }]. `live`
     // means the jammer is deployed (on the ground); `reaches` means its ray is
@@ -243,6 +248,14 @@ export class Engine {
         // With a wall between, the connection is incomplete and BOTH ends radiate
         // at it (no suppression). Same-rank / unreached pairs are never suppressed.
         //
+        // A live RAY counts as wall-like for THIS decision: if another beam crosses
+        // the path (the PREVIOUS frame's beams, `_ray_obstacles`, set only on the
+        // timed step), the connection is likewise "incomplete", so the back-beam is
+        // emitted — and then cut at the crossing by the ordinary crossing mechanic
+        // below. This is a deliberately one-frame-lagged, self-referential rule, so
+        // a configuration where the radiated beam cuts its own supply can oscillate
+        // (intended); the cold solve leaves `_ray_obstacles` null and never does this.
+        //
         // EXCEPTION — a CONFUSED target is still "looking for food": it took light
         // but cannot yet make a valid output, so the rank it currently holds is only
         // PROVISIONAL (computed from the colours that have reached it so far). It must
@@ -258,7 +271,8 @@ export class Engine {
         // — it never pushes back on what feeds it. A confused relay emits null, so it
         // pushes nothing back in the meantime; this only opens the inbound direction.
         const clear = hard_mat >= dl - 1e-6;
-        if (clear && RANK(o) > RANK(t) && !confused.has(t)) continue;
+        if (clear && RANK(o) > RANK(t) && !confused.has(t)
+            && !this._rayCrosses(O, T, level, o, t)) continue;
         // Same-rank head-on on a clear path is a TUG-OF-WAR: two equal-priority
         // emitters push at each other, so each beam is capped at the MIDPOINT —
         // it splits there and feeds NEITHER end (same-rank peers never feed). This
@@ -323,6 +337,52 @@ export class Engine {
     return [beams, cross];
   }
 
+  // Does a live beam (from `_ray_obstacles`) cross the segment O→T strictly
+  // between its ends, at the same level, without sharing a node with it? Used
+  // only to defeat the directional suppression (a crossing ray = wall-like).
+  // Returns false whenever there are no obstacles (the cold path), so the static
+  // solve is untouched.
+  _rayCrosses(O, T, level, o, t) {
+    const obs = this._ray_obstacles;
+    if (!obs) return false;
+    for (const ob of obs) {
+      if (ob.level !== level) continue;
+      if (ob.o === o || ob.o === t || ob.t === o || ob.t === t) continue;  // meet at a shared node, not a crossing
+      const r = seg_inter(O, T, ob.P1, ob.P2);
+      if (!r) continue;
+      const [, tA, tB] = r;
+      if (EPS < tA && tA < 1 - EPS && EPS < tB && tB < 1 - EPS) return true;
+    }
+    return false;
+  }
+
+  // Snapshot the current (about-to-be-previous) frame's beams as wall-like
+  // obstacle segments, each spanning its live EFFECTIVE length (where light is
+  // actually present — a cut or tug-capped beam blocks only as far as it reaches).
+  _buildRayObstacles() {
+    const lengths = this._last_beams_t.map(b => this.beam_eff.get(beamKey(b.o, b.t))?.len ?? b.hard);
+    return this._obstaclesFromBeams(this._last_beams_t, lengths);
+  }
+
+  // Build wall-like obstacle segments from a beam list and the length each beam
+  // actually reaches. Shared by the timed snapshot (effective lengths) and the
+  // static fixpoint (the previous pass's crossing-resolved lengths).
+  _obstaclesFromBeams(beams, lengths) {
+    const obs = [];
+    for (let k = 0; k < beams.length; k++) {
+      const b = beams[k];
+      const len = lengths[k];
+      if (len < 1e-6) continue;
+      obs.push({ o: b.o, t: b.t, level: b.level, P1: b.O, P2: [b.O[0] + b.dx * len, b.O[1] + b.dy * len] });
+    }
+    return obs;
+  }
+
+  // A cheap signature of an obstacle set (which beams reach how far), so the
+  // static fixpoint can tell when the rays-as-walls picture has stopped changing.
+  _obstacleKey(beams, lengths) {
+    return beams.map((b, k) => `${b.o}>${b.t}:${b.level}:${lengths[k].toFixed(2)}`).join('|');
+  }
   resolve(emit, rank = null, confused = null) {
     if (rank === null) rank = this._sourceRanks();
     if (confused === null) confused = EMPTY_SET;
@@ -352,7 +412,7 @@ export class Engine {
   // and so a confused tool stops capping its own food. `resolve` returns a tuple
   // whose first element is `beams` and whose LAST element is `delivery`, so the
   // cold and timed resolvers (different middle fields) both drive this unchanged.
-  _propagateWith(resolve) {
+  _propagateWith(resolve, selfObstacles = false) {
     const w = this.world;
     const conns = Object.values(w.nodes)
       .filter(n => isRelayKind(n.kind) && n.id !== w.carrying)
@@ -363,7 +423,16 @@ export class Engine {
     let rank = this._sourceRanks();
     let confused = EMPTY_SET;
     let last = null;
+    let obsKey = null;
     for (let iter = 0; iter < 2*conns.length+6; iter++) {
+      // STATIC ray-occlusion: with no "previous frame" to lean on, feed the
+      // previous PASS's beams back in as wall-like obstacles, so the suppression
+      // decisions converge against the beam field they themselves produce. The
+      // loop also re-runs while this picture keeps changing, so it settles to a
+      // self-consistent state (or caps, exactly as the timed path may oscillate).
+      // The timed path leaves _ray_obstacles fixed (set once per frame).
+      if (selfObstacles)
+        this._ray_obstacles = last ? this._obstaclesFromBeams(last[0], last[1]) : null;
       const result = resolve(emit, rank, confused);
       const beams = result[0], delivery = result[result.length - 1];
       const [, inRank] = this._gatherIncoming(beams, delivery, rank);
@@ -380,6 +449,10 @@ export class Engine {
       rank = newRank;
       confused = newConfused;
       last = result;
+      if (selfObstacles) {
+        const nk = this._obstacleKey(result[0], result[1]);
+        if (nk !== obsKey) { changed = true; obsKey = nk; }
+      }
       if (!changed) break;
     }
     if (last === null) last = resolve(emit, rank, confused);
@@ -390,7 +463,7 @@ export class Engine {
 
   // Cold (full-recompute) light fixpoint. `last` = [beams, length, delivery].
   propagate() {
-    return this._propagateWith((e, r, c) => this.resolve(e, r, c));
+    return this._propagateWith((e, r, c) => this.resolve(e, r, c), true);
   }
 
   _lit_map(beams, delivery) {
@@ -924,10 +997,33 @@ export class Engine {
     return false;
   }
 
+  // Is the player standing on any beam's path? Judged against each beam's length
+  // as it would be drawn IGNORING the player — `hard_mat` (the material reach,
+  // which excludes the player) for an ordinary beam, and the full length for a
+  // tug/soft beam (those are always drawn full and the player never visually cuts
+  // them). This is deliberately independent of `player_block`: the dwell test that
+  // engages the self-block must not read a beam that the block itself has already
+  // retracted off her, or engaging the block would instantly drop "touching" to
+  // false and the block would flicker (a long-standing, position-dependent bug).
+  player_on_beam() {
+    const w = this.world;
+    if (!w.player) return false;
+    for (const b of this._last_beams_t) {
+      const full = b.tug === 'same' || b.tug === 'soft';
+      const len = full ? b.dl : b.hard_mat;
+      const end = [b.O[0] + b.dx * len, b.O[1] + b.dy * len];
+      if (pt_seg_dist(w.player, b.O, end) < BEAM_TOUCH) return true;
+    }
+    return false;
+  }
+
   step(now = null) {
     if (now === null) now = performance.now() / 1000;
     const w = this.world;
     this._fill_instant = false;
+    // Treat the PREVIOUS frame's beams as wall-like obstacles for this frame's
+    // directional-suppression decisions (the timed-only ray-occlusion rule).
+    this._ray_obstacles = this._buildRayObstacles();
     const old_emit = { ...this.emit };
     const old_open = w.ffs.map(ff => ff.is_open);
     const old_disabled = w.ffs.map(ff => ff.disabled);

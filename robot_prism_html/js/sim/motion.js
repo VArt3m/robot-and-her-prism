@@ -1,5 +1,5 @@
-import { PLAYER_R, BOX_R, CONN_R, BEAM_TOUCH } from '../core/constants.js';
-import { first_block_t, dist, pt_seg_dist, segments_cross } from '../core/geometry.js';
+import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
+import { first_block_t, dist, segments_cross } from '../core/geometry.js';
 import { OBJECT_TYPES } from './objects.js';
 
 export class Motion {
@@ -194,10 +194,5 @@ export class Motion {
   at_goal() {
     const w = this.world;
     return Boolean(w.player && w.goal && dist(w.player, w.goal) < 18);
-  }
-
-  player_touching_beam() {
-    const w = this.world;
-    return w.beams_draw.some(([a, b]) => pt_seg_dist(w.player, a, b) < BEAM_TOUCH);
   }
 }
