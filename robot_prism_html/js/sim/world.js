@@ -275,6 +275,7 @@ export class World {
 
   // ---- player / boxes ----
   move_player(dx, dy) { this.motion.move_player(dx, dy); }
+  blocked_by_purple(old, new_) { return this.motion.blocked_by_purple(old, new_); }
   reach_blocked(a, b) { return this.motion.reach_blocked(a, b); }
   placement_spot(player, ux, uy, r, gap, maxD, wantDist, ignoreConn = null) {
     return this.motion.placement_spot(player, ux, uy, r, gap, maxD, wantDist, ignoreConn);

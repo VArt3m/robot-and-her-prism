@@ -1,5 +1,5 @@
 import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
-import { first_block_t, dist, segments_cross } from '../core/geometry.js';
+import { first_block_t, dist, segments_cross, seg_seg_dist } from '../core/geometry.js';
 import { OBJECT_TYPES } from './objects.js';
 
 export class Motion {
@@ -8,9 +8,32 @@ export class Motion {
     this.engine = engine;
   }
 
+  // Radius-aware static collision. The player is a disc of radius PLAYER_R; a
+  // move is blocked when that disc, swept from `old` to `new_`, would come
+  // within (PLAYER_R - 2) of any solid segment (the -2 matches the small overlap
+  // the box / connector / forge checks already allow). Judging the SWEPT disc —
+  // not just whether the centre line crosses a segment — is what seals the
+  // off-by-a-pixel gaps at junctions (force-field ends, the tan/purple jog, wall
+  // corners) where a centre-only test let the body slip through. She spawns far
+  // from every wall and this check never lets the centre come within the radius,
+  // so she can never end up inside the skin and get trapped; sliding parallel
+  // (distance stays at the radius, not below it) is always allowed.
   _static_blocked(old, new_, carry) {
     const segs = this.world.staticBlockerSegs({ barriers: 'carry', carry });
-    return segments_cross(old, new_, segs);
+    const R = PLAYER_R - 2;
+    for (const [s1, s2] of segs) {
+      if (seg_seg_dist(old, new_, s1, s2) < R) return true;
+    }
+    return false;
+  }
+
+  // True when a move is stopped SOLELY by the purple field — blocked while
+  // carrying (purple is solid to a laden robot) yet clear empty-handed (she may
+  // walk through it). The app uses this to auto-drop a carried object on contact
+  // with the field instead of just halting at it.
+  blocked_by_purple(old, new_) {
+    if (!this.world.barriers.some(b => b.kind === 'purple')) return false;
+    return this._static_blocked(old, new_, true) && !this._static_blocked(old, new_, false);
   }
 
   _box_blocked(idx, old, new_) {

@@ -6,7 +6,7 @@ engine can still follow along. If you only remember one thing: the tests are tin
 standalone scripts that build a toy world, ask the simulation a question, and
 assert the answer — no test framework, no browser, no magic.
 
-- **19 suites, ~950 assertions, run in a few seconds.**
+- **20 suites, ~980 assertions, run in a few seconds.**
 - Everything is headless Node (`.mjs` ES modules); the few UI tests fake just
   enough of a browser to construct the app object.
 - Source of truth for behaviour lives in `CLAUDE.md` (architecture) and the per-file
@@ -85,7 +85,7 @@ prefer the cheaper, deterministic cold solve.
 
 ---
 
-## 4. The map — all 19 suites at a glance
+## 4. The map — all 20 suites at a glance
 
 | Suite | Checks | Area |
 |---|--:|---|
@@ -94,6 +94,7 @@ prefer the cheaper, deterministic cold solve.
 | `test_rank_feeders` | 23 | Beam physics |
 | `test_ray_occlusion` | 15 | Beam physics |
 | `test_player_block` | 12 | Beam physics |
+| `test_collision` | 25 | Collision & carry |
 | `test_inverter` | 62 | Devices |
 | `test_mixer` | 61 | Devices |
 | `test_accumulator` | 26 | Devices |
@@ -177,6 +178,32 @@ that engages this block measures her against the beam's *player-independent* len
 (`hard_mat`), never the already-cut beam — otherwise engaging the block retracts the
 beam off her and instantly disengages it. Covers the off-centre reproducer, the
 centred case, stepping clear (the block releases), and a diagonal beam.
+
+---
+
+## 5b. Player collision & carry physics
+
+### `test_collision` — radius-aware movement, the purple field, and one wall
+This suite guards the player-physics fixes. **Collision is radius-aware:** the robot
+is treated as a disc swept from her old position to the new one, and a move is
+blocked when that sweep comes within `PLAYER_R − 2` of any wall, barrier, or closed
+force field — not merely when her centre line crosses one. That difference is what
+seals the off-by-a-pixel gaps where blocker segments almost meet (a force-field end
+beside the border, the tan/purple barrier jog, the tan top beside the ceiling, wall
+corners), which a centre-only test let her slip her body through. The suite drives a
+small greedy navigator over the *real* `world.move_player` to prove she can no longer
+clip those junctions, then flood-fills the level to prove every key spot is still
+reachable (sealing the leaks didn't wall anything off), and checks the two everyday
+motions directly: sliding parallel to a wall is allowed, driving straight into one
+stops at the radius. **The purple field** is the carry-only barrier; the suite checks
+that `blocked_by_purple` isolates it (true crossing purple, false crossing the tan
+barrier or open space; passable empty-handed). Finally it pins the **app-level
+auto-drop** with a mocked DOM: walking a carried object into the field sets it down on
+the near side (it never crosses) and she continues empty-handed — unless the cursor is
+inside her activation ring, the "careful manipulation" exception, in which case it is
+not dropped. The same suite also asserts the **upper-left wall** now reaches `y=146`,
+that this closes the `src_red` sightline from the purple-field lip, and that the player
+doorway below stays wide.
 
 ---
 

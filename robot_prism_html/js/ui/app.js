@@ -535,6 +535,16 @@ export class App {
     if ((vx || vy) && hasFocus) {
       const step = SPEED * TICK;
       const before = [...w.player];
+      // Purple field: walking a carried object into it sets the object DOWN on
+      // the near side (it never crosses the field) and she walks on empty-handed.
+      // The sole exception is "careful manipulation" — when the cursor is inside
+      // her activation ring she is positioning the item by hand, so the field just
+      // blocks her as before and nothing is dropped.
+      if ((w.carrying || w.carry_box)
+          && dist(w.player, ui.mouse) >= CONNECT_REACH
+          && w.blocked_by_purple(before, [before[0] + vx * step, before[1] + vy * step])) {
+        this._commitPlacement(ui.placePreview || this._resolvePlacement(ui.mouse));
+      }
       w.move_player(vx * step, 0);
       w.move_player(0, vy * step);
       moved = w.player[0] !== before[0] || w.player[1] !== before[1];

@@ -23,7 +23,13 @@ function build_world(scratch) {
   w.walls.push(
     new Wall([L,T],[R,T]), new Wall([R,T],[R,B]),
     new Wall([R,B],[L,B]), new Wall([L,B],[L,T]),
-    new Wall([235,13],[235,138]), new Wall([237,490],[237,628]),
+    // Upper-left wall. Its bottom reaches y=146 (not 138): a connector at the
+    // lower-right room's purple-field lip has a sightline to src_red that slips
+    // just under y=138 (it crosses x=235 at y≈143.8), so the beam was "barely
+    // possible". Ending the wall at 146 makes that shot barely-but-surely blocked
+    // while leaving the player doorway (the gap down to the lower wall at y=490)
+    // amply wide.
+    new Wall([235,13],[235,146]), new Wall([237,490],[237,628]),
   );
 
   w.add(new Node('src_red',  'source', [140,55],  { color:'red' }));

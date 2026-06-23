@@ -54,6 +54,20 @@ export function segments_cross(a, b, segs) {
   return false;
 }
 
+// Minimum distance between two segments a→b and s1→s2 (zero if they cross).
+// Used by the radius-aware player/static collision: the body is a disc swept
+// along a→b, so blocking when this drops below the radius keeps the body off
+// every wall AND seals the off-by-a-pixel gaps where blocker segments almost
+// meet (force-field ends vs. the border, the tan/purple barrier jog, wall
+// corners) — the spots a centre-only crossing test let her slip through.
+export function seg_seg_dist(a, b, s1, s2) {
+  if (segments_cross(a, b, [[s1, s2]])) return 0;
+  return Math.min(
+    pt_seg_dist(a, s1, s2), pt_seg_dist(b, s1, s2),
+    pt_seg_dist(s1, a, b), pt_seg_dist(s2, a, b),
+  );
+}
+
 // The four edge segments of an axis-aligned square centred at `c` with
 // half-extent `r`, as [[p0,p1],[p1,p2],[p2,p3],[p3,p0]]. One source of truth for
 // the box-outline blockers built by both the engine and the occlusion module.
