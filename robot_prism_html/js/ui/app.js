@@ -113,6 +113,10 @@ export class App {
       showPassable:  false,   // effective "highlight passable ray area" this frame
       targetHints:   null,    // [{ pos, reachable, radius }] | null
       passableRegion:null,    // visibility-polygon points | null
+      // Control mode: when true (the default) the robot continuously faces the
+      // mouse; when false, facing is driven only by the aim/drag gestures (the
+      // original navigation mode). Toggled from the level menu; persisted.
+      faceMouse:     this._loadPref('faceMouse', true),
     };
 
     // Mouse drag tracking
@@ -316,10 +320,34 @@ export class App {
   // ---- level-select overlay ----
   // Lay the level entries as a centered vertical stack. The rects are stored on
   // uiState so the renderer draws and app.js hit-tests against the SAME geometry.
+  // ---- persisted UI preferences (a real web game, so localStorage is fine) ----
+  _loadPref(key, dflt) {
+    try { const v = localStorage.getItem('rp_' + key); return v === null ? dflt : JSON.parse(v); }
+    catch { return dflt; }
+  }
+  _savePref(key, val) {
+    try { localStorage.setItem('rp_' + key, JSON.stringify(val)); } catch { /* storage off — keep in-memory */ }
+  }
+
+  // Face-mouse mode: every frame, point the robot's facing at the cursor. In the
+  // other (original) mode this is a no-op and facing stays gesture-driven. Skipped
+  // while a modal menu is up or outside play. Facing is cosmetic (eyes + the
+  // placement direction fallback), so this needs no sim step — _draw runs each
+  // frame and picks it up.
+  _updateFacing() {
+    const w = this.world, ui = this.uiState;
+    if (!ui.faceMouse || ui.mode !== 'play' || ui.levelMenu || !w.player || !ui.mouse) return;
+    const dx = ui.mouse[0] - w.player[0], dy = ui.mouse[1] - w.player[1];
+    const d = Math.hypot(dx, dy);
+    if (d > PLAYER_R) w.facing = [dx / d, dy / d];   // deadzone: hold facing when the cursor is on her
+  }
+
   _openLevelMenu() {
     const IW = 320, IH = 42, GAP = 12, TITLE_H = 52, FOOT_H = 34, PAD = 22;
+    const CTRL_H = 38, CTRL_GAP = 16;
     const n = LEVELS.length;
-    const blockH = TITLE_H + n * IH + (n - 1) * GAP + FOOT_H;
+    const entriesH = n * IH + (n - 1) * GAP;
+    const blockH = TITLE_H + entriesH + CTRL_GAP + CTRL_H + FOOT_H;
     const top = (WORLD_H - blockH) / 2;
     const left = (WORLD_W - IW) / 2;
     const items = LEVELS.map((l, i) => ({
@@ -328,11 +356,14 @@ export class App {
       current: l.id === this._levelId,
       rect: [left, top + TITLE_H + i * (IH + GAP), IW, IH],
     }));
+    const ctrlY = top + TITLE_H + entriesH + CTRL_GAP;
     this.uiState.levelMenu = {
       items,
+      // A control toggle at the foot of the menu (the new face-mouse mode lives here).
+      control: { key: 'faceMouse', rect: [left, ctrlY, IW, CTRL_H] },
       panel: [left - PAD, top - PAD, IW + 2 * PAD, blockH + 2 * PAD],
       titleY: top,
-      footY: top + TITLE_H + n * IH + (n - 1) * GAP,
+      footY: ctrlY + CTRL_H,
     };
   }
 
@@ -341,6 +372,12 @@ export class App {
   _handleLevelMenuClick(x, y) {
     const menu = this.uiState.levelMenu;
     if (!menu) return;
+    // The control toggle: flip the mode, persist it, and keep the menu open.
+    if (menu.control && pointInRect(x, y, menu.control.rect)) {
+      this.uiState.faceMouse = !this.uiState.faceMouse;
+      this._savePref('faceMouse', this.uiState.faceMouse);
+      return;
+    }
     for (const it of menu.items) {
       if (pointInRect(x, y, it.rect)) {
         this.uiState.levelMenu = null;
@@ -507,6 +544,7 @@ export class App {
     }
     this._updateHover();
     this._updateHighlights();
+    this._updateFacing();
     this._updatePanel(ts);
     this._draw();
     this._updateStatus();

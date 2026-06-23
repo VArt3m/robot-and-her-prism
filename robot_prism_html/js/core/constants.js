@@ -42,6 +42,23 @@ export const ACCUM_LAYER_WIDTH = 4;
 // sentinel reads more clearly than Infinity.
 export const ACCUM_CHARGE_RANK = 32;
 
+// Ray-occlusion edge case: where two live beams intercept (cross, or a T-junction
+// where one ends on the other), the crossing POINT itself is given a small
+// occlusion presence so the directional-suppression rule sees it — even when a
+// beam meets it exactly at its own endpoint (which the beam-segment obstacles miss).
+// This presence lives ONLY in the ray-obstacle set (it never blocks the player or
+// object placement). Kept small so only beams genuinely reaching the spot register.
+export const CROSS_OCCLUDE_R = 4;
+
+// A ray's logical HALF-thickness. Rays are solved as centrelines, but they are not
+// truly zero-width — this is their official thickness for the one place it must be
+// judged: whether an incoming ray brushes an interception spot (see _rayCrosses).
+// The renderer's beam width / crossing bulges are cosmetic and may differ; THIS is
+// the number the simulation uses. Folding it into the interception test means a
+// ray whose body merely grazes a junction is still caught — we prefer intercepting
+// a barely-touching ray over letting one that visually blends slip through.
+export const RAY_HALF_W = 2;
+
 export const COLORS = {
   red: '#e23b3b', green: '#27a838', blue: '#2b5cd6',
   yellow: '#e8c020', cyan: '#1fb6c4', magenta: '#c43fb0',

@@ -121,6 +121,10 @@ const en = {
     title: 'Select a level',
     current: 'current',
     escHint: 'Esc or click outside to cancel',
+    // The control row at the foot of the menu.
+    faceMouseLabel: 'Robot faces the mouse',
+    on: 'ON',
+    off: 'OFF',
   },
 
   // Receiver fill-time label shown in edit mode.

@@ -1,7 +1,7 @@
 import {
   EPS, PLAYER_R, BOX_R, CONN_R, BTN_R, BEAM_TOUCH,
   CUT_LINGER, CROSSING_CUT_INSTANT, LOGIC_KINDS, RECOLOR_DELAY, ACCUM_FILL_SEC,
-  ACCUM_FLICKER_GRACE, ACCUM_LAYER_GAP, ACCUM_LAYER_WIDTH,
+  ACCUM_FLICKER_GRACE, ACCUM_LAYER_GAP, ACCUM_LAYER_WIDTH, CROSS_OCCLUDE_R, RAY_HALF_W,
 } from '../core/constants.js';
 import { seg_inter, first_block_t, dist, pt_seg_dist, squareSegs } from '../core/geometry.js';
 import { objType, kindIsJammable, isAccumulatorKind } from './objects.js';
@@ -409,6 +409,25 @@ export class Engine {
     if (!obs) return false;
     for (const ob of obs) {
       if (ob.level !== level) continue;
+      // A crossing-POINT blob (an interception spot): it has presence in a small
+      // radius, so a beam reaching it counts as obstructed even when it meets the
+      // spot at its OWN endpoint (the segment test below would miss that). Skipped
+      // for a beam that itself forms the crossing (its own interception).
+      if (ob.cross) {
+        if (ob.owners && (ob.owners.has(o) || ob.owners.has(t))) continue;
+        const ax = T[0] - O[0], ay = T[1] - O[1];
+        const L2 = ax * ax + ay * ay;
+        if (L2 < 1e-9) continue;
+        let tp = ((ob.P[0] - O[0]) * ax + (ob.P[1] - O[1]) * ay) / L2;
+        if (tp <= EPS) continue;        // a spot at/behind the emitter end does not obstruct
+        if (tp > 1) tp = 1;             // include the target end (the case the segment test misses)
+        const nx = O[0] + tp * ax, ny = O[1] + tp * ay;
+        // Thickness bias: the incoming ray is not a zero-width line — add its
+        // half-thickness so a ray whose BODY just grazes the spot still intercepts
+        // (prefer catching a barely-touching ray over letting a visual blend pass).
+        if (Math.hypot(ob.P[0] - nx, ob.P[1] - ny) <= ob.r + RAY_HALF_W) return true;
+        continue;
+      }
       if (ob.o === o || ob.o === t || ob.t === o || ob.t === t) continue;  // meet at a shared node, not a crossing
       const r = seg_inter(O, T, ob.P1, ob.P2);
       if (!r) continue;
@@ -437,7 +456,37 @@ export class Engine {
       if (len < 1e-6) continue;
       obs.push({ o: b.o, t: b.t, level: b.level, P1: b.O, P2: [b.O[0] + b.dx * len, b.O[1] + b.dy * len] });
     }
+    for (const blob of this._beamCrossBlobs(beams, lengths)) obs.push(blob);
     return obs;
+  }
+
+  // The interception spots of a beam set: every point where two live beams meet —
+  // a clean crossing OR a T-junction (one beam ending on another). Each becomes a
+  // small point-blob so the spot has occlusion PRESENCE for the directional rule
+  // (see _rayCrosses). Beams that share a node (a fan from one device) are not an
+  // interception. Spots live only in the ray-obstacle set, so they never block the
+  // player or object placement.
+  _beamCrossBlobs(beams, lengths) {
+    const blobs = [];
+    const n = beams.length;
+    const E = beams.map((b, k) => [b.O[0] + b.dx * lengths[k], b.O[1] + b.dy * lengths[k]]);
+    for (let i = 0; i < n; i++) {
+      if (lengths[i] < 1e-6) continue;
+      const bi = beams[i];
+      for (let j = i + 1; j < n; j++) {
+        if (lengths[j] < 1e-6) continue;
+        const bj = beams[j];
+        if (bi.level !== bj.level) continue;
+        if (bi.o === bj.o || bi.o === bj.t || bi.t === bj.o || bi.t === bj.t) continue;  // shared node, not an interception
+        const r = seg_inter(bi.O, E[i], bj.O, E[j]);
+        if (!r) continue;
+        blobs.push({
+          cross: true, P: r[0], r: CROSS_OCCLUDE_R, level: bi.level,
+          owners: new Set([bi.o, bi.t, bj.o, bj.t]),
+        });
+      }
+    }
+    return blobs;
   }
 
   // A cheap signature of an obstacle set (which beams reach how far), so the

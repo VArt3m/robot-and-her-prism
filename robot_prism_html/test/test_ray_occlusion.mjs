@@ -147,5 +147,80 @@ function crossScene() {
      'straight chain: no spurious back-beams toward the source');
 }
 
+// ---------------------------------------------------------------------------
+// 4. INTERCEPTION SPOTS. Where two beams meet, the crossing POINT gets a small
+//    occlusion presence — so a beam reaching the spot at its OWN endpoint (which
+//    the beam-SEGMENT obstacles miss) still defeats the directional suppression.
+// ---------------------------------------------------------------------------
+{
+  const w = new World(); w._uid = 1;
+  w.add(new Node('s1', 'source', [100, 300], { color: 'red' }));
+  w.add(new Node('c1', 'connector', [300, 300]));
+  w.toggle_link('s1', 'c1');
+  const eng = w.engine;
+  const emit = { s1: 'red', c1: 'red' };
+  const rank = new Map([['s1', 0], ['c1', 1]]);   // s1 stronger; c1→s1 is the suppressed back-beam
+  const backBeam = () => eng._beams_and_cross(emit, rank, new Set())[0]
+    .some(b => b.o === 'c1' && b.t === 's1');
+
+  // A SEGMENT obstacle that only touches the path at its endpoint (s1) is missed
+  // by the strict segment test — the back-beam stays suppressed (the old bug).
+  eng._ray_obstacles = [{ o: 'ox', t: 'oy', level: 0, P1: [100, 200], P2: [100, 400] }];
+  ok(!backBeam(), 'a crossing only at the target ENDPOINT is missed by the segment test');
+
+  // A crossing-POINT blob at that same spot (the target endpoint) DOES register,
+  // so the back-beam is emitted — the fix.
+  eng._ray_obstacles = [{ cross: true, P: [100, 300], r: 4, level: 0, owners: new Set() }];
+  ok(backBeam(), 'an interception blob at the target endpoint defeats suppression');
+
+  // A blob off to the side (beyond its small radius) does nothing.
+  eng._ray_obstacles = [{ cross: true, P: [200, 360], r: 4, level: 0, owners: new Set() }];
+  ok(!backBeam(), 'a blob off the path (outside its radius) leaves it suppressed');
+
+  // Thickness bias: a junction just past the blob radius (4) but within the ray's
+  // half-thickness (+2 → 6) still intercepts — a body that barely grazes is caught.
+  eng._ray_obstacles = [{ cross: true, P: [200, 305], r: 4, level: 0, owners: new Set() }];
+  ok(backBeam(), 'a spot grazed by the ray body (within blob + half-thickness) intercepts');
+  // Clearly beyond blob + half-thickness: no contact, no interception.
+  eng._ray_obstacles = [{ cross: true, P: [200, 308], r: 4, level: 0, owners: new Set() }];
+  ok(!backBeam(), 'a spot beyond the ray body does not intercept');
+
+  // A blob whose owners include an endpoint of the pair is that beam's OWN
+  // interception — skipped, so it never self-un-suppresses.
+  eng._ray_obstacles = [{ cross: true, P: [100, 300], r: 4, level: 0, owners: new Set(['c1']) }];
+  ok(!backBeam(), 'a blob owned by the beam itself is skipped');
+
+  // A blob at the emitter end (behind the start) does not obstruct.
+  eng._ray_obstacles = [{ cross: true, P: [300, 300], r: 4, level: 0, owners: new Set() }];
+  ok(!backBeam(), 'a blob at the emitter end does not count');
+}
+
+// ---------------------------------------------------------------------------
+// 5. BLOB GENERATION. A T-junction (one beam ending on another) yields one blob
+//    at the interception, tagged with the forming beams as owners.
+// ---------------------------------------------------------------------------
+{
+  const eng = new World().engine;
+  const beams = [
+    { o: 'a', t: 'b', O: [300, 100], dx: 0, dy: 1, level: 0 },   // vertical, len 400 → [300,500]
+    { o: 'c', t: 'd', O: [100, 300], dx: 1, dy: 0, level: 0 },   // horizontal, len 200 → ends at [300,300]
+  ];
+  const blobs = eng._beamCrossBlobs(beams, [400, 200]);
+  ok(blobs.length === 1 && Math.abs(blobs[0].P[0] - 300) < 1e-6 && Math.abs(blobs[0].P[1] - 300) < 1e-6,
+     'a T-junction yields a blob at the interception point');
+  ok(blobs[0].owners.has('a') && blobs[0].owners.has('d'), 'the blob records the forming beams as owners');
+
+  // Two beams that share a node (a fan) are not an interception → no blob.
+  const fan = [
+    { o: 'x', t: 'b', O: [300, 300], dx: 1, dy: 0, level: 0 },
+    { o: 'x', t: 'd', O: [300, 300], dx: 0, dy: 1, level: 0 },
+  ];
+  ok(eng._beamCrossBlobs(fan, [100, 100]).length === 0, 'beams sharing a node make no interception blob');
+
+  // The built obstacle set carries blobs alongside the beam segments.
+  const obs = eng._obstaclesFromBeams(beams, [400, 200]);
+  ok(obs.some(o => o.cross) && obs.some(o => o.P1), 'obstacles include both segments and interception blobs');
+}
+
 console.log(`\nray-occlusion tests: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

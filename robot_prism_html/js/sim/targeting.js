@@ -141,8 +141,8 @@ export const TARGET_SPECS = {
     kindsFor: (world, deviceId) => {
       const relays = Object.keys(RELAY_SPECS);
       return world.nodes[deviceId]?.color
-        ? ['source', 'receiver', ...relays]      // charged: a source, may feed receivers
-        : ['source', ...relays];                 // empty: wires to sources/relays to be filled
+        ? ['source', 'receiver', 'accumulator', ...relays]   // charged: a source, may feed receivers & accumulators
+        : ['source', 'accumulator', ...relays];              // empty: wires to sources/accumulators/relays to be filled
     },
   }),
 

@@ -289,6 +289,21 @@ ok(accumulatorEmit(S()) === null, 'no input → null (idle)');
 }
 
 // ---------------------------------------------------------------------------
+// 16. An accumulator can target ANOTHER accumulator (empty or charged).
+// ---------------------------------------------------------------------------
+{
+  const w = mk();
+  w.add(new Node('A', 'accumulator', [0, 0], { color: null }));
+  w.add(new Node('B', 'accumulator', [200, 0], { color: null }));
+  const spec = targetSpec('accumulator');
+  const cands = (dev) => spec.candidates(w, dev).map(c => c.id);
+  ok(cands('A').includes('B'), 'an empty accumulator can target another accumulator');
+  ok(spec.targetAt(w, 'A', 200, 0)?.id === 'B', 'the golden arrow lands on the other accumulator');
+  w.nodes['A'].color = 'blue';
+  ok(cands('A').includes('B'), 'a charged accumulator can target another accumulator');
+}
+
+// ---------------------------------------------------------------------------
 // 15. A NON-FEEDER beam (delivered but not a feeder) is absorbed by the external
 //     layer: it is drawn stopping at the outer border, not at the inner contour.
 // ---------------------------------------------------------------------------

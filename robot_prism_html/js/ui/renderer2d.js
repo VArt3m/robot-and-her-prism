@@ -938,6 +938,32 @@ export class Renderer2D {
           ctx.fillText(STR.levelMenu.current, rx + rw - 12, ry + rh / 2);
         }
       }
+      // Control toggle row: label on the left, an ON/OFF pill on the right.
+      if (lm.control) {
+        const [cx, cy, cw, ch] = lm.control.rect;
+        const on = !!uiState.faceMouse;
+        ctx.fillStyle = 'rgba(20, 22, 28, 0.92)';
+        ctx.fillRect(cx, cy, cw, ch);
+        ctx.strokeStyle = '#5a6172'; ctx.lineWidth = 1;
+        ctx.strokeRect(cx, cy, cw, ch);
+        ctx.fillStyle = '#dfe3ea';
+        ctx.font = '13px sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(STR.levelMenu.faceMouseLabel, cx + 14, cy + ch / 2);
+        // Pill.
+        const pw = 52, phh = 22, prx = cx + cw - pw - 12, pry = cy + (ch - phh) / 2;
+        ctx.fillStyle = on ? '#2f7d4f' : '#5a3a3a';
+        ctx.strokeStyle = on ? '#49b06f' : '#8a5a5a';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(prx, pry, pw, phh, 11);
+        else ctx.rect(prx, pry, pw, phh);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(on ? STR.levelMenu.on : STR.levelMenu.off, prx + pw / 2, pry + phh / 2 + 0.5);
+      }
       // Footer hint.
       ctx.fillStyle = '#9aa0ac';
       ctx.font = '12px sans-serif';
