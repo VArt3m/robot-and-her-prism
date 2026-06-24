@@ -28,13 +28,13 @@ const RESET_HOLD_SEC = 2;
 // equal to the tree's AIM_HOLD_MS so every "operating hold" feels the same.
 const MENU_HOLD_MS = 333;
 
-// Press-and-hold timing for the targeting/programming tree (a press in the
-// annulus while carrying). AIM_HOLD_MS reaches the branch point; AIM_DECIDE_MS
-// is the extra window after the golden arrow launches in which the player
-// either pulls the cursor out of the ring (keep drawing the arrow) or holds it
-// inside (fall into click-by-click targeting / the Setup·Target menu).
+// Press-and-hold timing for the golden-arrow wiring gesture (a press in the
+// annulus while carrying a targeting device). At AIM_HOLD_MS the held press
+// launches the golden arrow, which then keeps drawing until release — there is
+// no further decision window. (Click-by-click targeting was removed: a click on
+// a target while merely carrying now makes the intent directly. Programming
+// lives at a Forge.)
 const AIM_HOLD_MS = 333;
-const AIM_DECIDE_MS = 500;
 
 // Radius (world units) within which a click grabs the character to walk her.
 // Smaller than the operating radius so a drag started off the character (but
@@ -82,7 +82,6 @@ export class App {
     this.panel = new Panel(canvas.parentElement, {
       toggleTargets:   () => { this.uiState.panel.targets  = !this.uiState.panel.targets; },
       togglePassable:  () => { this.uiState.panel.passable = !this.uiState.panel.passable; },
-      toggleTargeting: () => this._togglePanelTargeting(),
       forge:           () => this._invokeForge(),
       discharge:       () => this._handleAction('discharge', performance.now() / 1000),
       beginReset:      () => { this._panelResetSince = performance.now(); },
@@ -104,7 +103,6 @@ export class App {
       menu:    null,     // stack chooser { x, y, items:[{label,kind,...,rect}] }
       wireDrag: null,    // [x,y] cursor while pulling a wire from a carried connector
       placePreview: null,// live "shadow" of the carried item: { carried, spot, type, elevated }
-      targeting: null,   // click-by-click targeting modal: { id, kind } | null
       hover:   null,     // hover tooltip: { pos:[x,y], radius, lines:[...] } | null
       // Tool-panel sticky toggles. Alt/Ctrl XOR against these each frame to give
       // the effective `showTargets` / `showPassable` highlight flags below.
@@ -122,8 +120,8 @@ export class App {
     // Mouse drag tracking
     this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
 
-    // Targeting/programming tree gesture: an annulus press-hold while carrying.
-    // { since, kind, branched, decideAt, decided } | null
+    // Golden-arrow wiring gesture: an annulus press-hold while carrying a
+    // targeting device. { since, kind, branched } | null
     this._aim = null;
 
     // Rewind (undo) stack of pre-action snapshots, newest last (max UNDO_MAX).
@@ -297,7 +295,6 @@ export class App {
     this._pushRun = false;
     this._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
     this._aim = null;
-    ui.targeting = null;
     ui.menu = null;
     ui.levelMenu = null;
     ui.placePreview = null;
@@ -406,11 +403,17 @@ export class App {
   }
 
   // ---- highlights (possible targets / passable ray area) ----
-  // Each highlight is the XOR of its sticky panel toggle and the matching
-  // momentary key: Alt for targets, Ctrl for passable. So holding the key turns
-  // a highlight ON when its toggle is off, and (as requested) SUPPRESSES it
-  // while held when the toggle is on. Both only render something while carrying
-  // an item that actually has the relevant ray/targets.
+  // The "passable ray area" is the XOR of its sticky panel toggle and the
+  // momentary key (Space), so holding the key turns it ON when the toggle is off
+  // and SUPPRESSES it while held when the toggle is on. It only renders while
+  // carrying an item that has the relevant ray.
+  //
+  // The "possible targets" contour is different: whenever a targeting device is
+  // carried it ALWAYS shows a faint, dotted golden contour around what can be
+  // targeted (so the affordance is never hidden). The "Targets" toggle (XOR'd
+  // with Shift) does not create those contours — it makes them MORE visible
+  // (bright rings, reachable vs. blocked distinguished). `showTargets` carries
+  // that prominence flag through to the renderer.
   _updateHighlights() {
     const ui = this.uiState;
     const w = this.world;
@@ -423,7 +426,9 @@ export class App {
     if (ui.mode !== 'play' || !w.player) return;
     const kind = this._carriedKind();
 
-    if (ui.showTargets && w.carrying && objType(kind)?.requiresTarget) {
+    // Always populate target hints for a carried targeting device — the renderer
+    // draws them faint unless `showTargets` asks for the prominent version.
+    if (w.carrying && objType(kind)?.requiresTarget) {
       const spec = targetSpec(kind);
       if (spec && spec.candidates) {
         ui.targetHints = spec.candidates(w, w.carrying, w.player).map(c => ({
@@ -450,15 +455,11 @@ export class App {
   _updatePanel(nowMs) {
     const ui = this.uiState;
     const w = this.world;
-    const kind = this._carriedKind();
-    const canTarget = Boolean(w.carrying && objType(kind)?.requiresTarget);
     this.panel.refresh({
       targets:  ui.panel.targets,
       passable: ui.panel.passable,
       targetsFlip: this.input.held.has('hl_targets'),
       passFlip:    this.input.held.has('hl_passable'),
-      targetingActive: Boolean(ui.targeting),
-      canTarget,
       canForge: this._canForge(),
       canDischarge: Boolean(w.carrying && w.nodes[w.carrying]?.kind === 'accumulator' && w.nodes[w.carrying]?.color),
       canUndo: this._undo.length > 0,
@@ -468,16 +469,13 @@ export class App {
     this.panel.setConflict(this._panelConflict(), nowMs);
   }
 
-  // The panel "overrides a currently targetable item" when, during a targeting
-  // gesture (the golden-arrow link drag, or click-by-click), the pointer is over
-  // the panel AND at least one live target sits behind its footprint. That is
-  // the only situation in which the panel is in the player's way, so it is the
-  // only one that triggers the fade.
+  // The panel "overrides a currently targetable item" when, during the
+  // golden-arrow link drag, the pointer is over the panel AND at least one live
+  // target sits behind its footprint. That is the only situation in which the
+  // panel is in the player's way, so it is the only one that triggers the fade.
   _panelConflict() {
-    const ui = this.uiState;
     const inLinking = this._drag.active && this._drag.kind === 'wire';
-    const inClickByClick = Boolean(ui.targeting);
-    if (!inLinking && !inClickByClick) return false;
+    if (!inLinking) return false;
     if (!this.panel.isPointerOver()) return false;
     const cands = this._currentTargetCandidates();
     if (!cands.length) return false;
@@ -491,31 +489,16 @@ export class App {
     return false;
   }
 
-  // Everything the active targeting context could currently target — used both
-  // by the conflict check above. Spec-driven, so no per-kind code lives here.
+  // Everything the carried targeting device could currently target — used by the
+  // conflict check above. Spec-driven, so no per-kind code lives here.
   _currentTargetCandidates() {
     const w = this.world;
-    const ui = this.uiState;
-    if (ui.targeting) {
-      const spec = targetSpec(ui.targeting.kind);
-      return spec && spec.candidates ? spec.candidates(w, ui.targeting.id, w.player) : [];
-    }
     const kind = this._carriedKind();
     if (w.carrying && objType(kind)?.requiresTarget) {
       const spec = targetSpec(kind);
       return spec && spec.candidates ? spec.candidates(w, w.carrying, w.player) : [];
     }
     return [];
-  }
-
-  // Panel "Targeting" button: enter click-by-click if a targeting device is in
-  // hand, or leave it if already active. (The button is disabled otherwise, so
-  // the empty-handed path is just a guard.)
-  _togglePanelTargeting() {
-    const w = this.world;
-    if (this.uiState.targeting) { this._exitTargeting(); return; }
-    const kind = this._carriedKind();
-    if (w.carrying && objType(kind)?.requiresTarget) this._enterTargeting(kind);
   }
 
   _scheduleFrame() {
@@ -628,10 +611,8 @@ export class App {
     const w = this.world;
     const ui = this.uiState;
     if (action === 'carry_release') {
-      // E released. If the hold already fired the tree / chooser, swallow it.
+      // E released. If the hold already fired the chooser, swallow it.
       if (this._carryConsumed) return;
-      // A brief E in click-by-click leaves the mode (back to ordinary carrying).
-      if (ui.targeting) { this._exitTargeting(); return; }
       if (w.carrying || w.carry_box) {
         // Set the carried item down where it is being previewed (the shadow).
         // The preview is recomputed continuously and is always a legal, in-reach
@@ -644,8 +625,8 @@ export class App {
     } else if (action === 'clear') {
       // C clears every intent of the carried targeting device, through its spec.
       // Any object that requires a target listens for C — connector links, a
-      // jammer's jam mark, and so on — in carrying or click-by-click alike.
-      // Objects with no target (a box, a mine) ignore C entirely.
+      // jammer's jam mark, and so on. Objects with no target (a box, a mine)
+      // ignore C entirely.
       const cid = w.carrying;
       const spec = targetSpec(this._carriedKind());
       if (cid && spec && spec.persistent) {
@@ -672,11 +653,9 @@ export class App {
         this._setFlash(STR.flash.accumDischarged);
       }
     } else if (action === 'escape') {
-      // Escape closes the modal level overlay first; else an open chooser menu;
-      // else it leaves click-by-click targeting.
+      // Escape closes the modal level overlay first; else an open chooser menu.
       if (ui.levelMenu) ui.levelMenu = null;
       else if (ui.menu) ui.menu = null;
-      else if (ui.targeting) this._exitTargeting();
     }
     // Note: 'reset' is no longer a one-shot action — a full reset is driven by
     // a continuous 3-second hold of R, handled in _updateResetHold().
@@ -703,12 +682,6 @@ export class App {
     this._press = { active: true, t: performance.now(), x, y, moved: false, consumed: false };
     this._drag.moved = false;
     this._drag.linkHit = null;
-    // In click-by-click targeting, a press is a target click or the hold-to-exit
-    // gesture — never a walk / wire-drag / placement drag.
-    if (this.uiState.targeting) {
-      this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
-      return;
-    }
     const dp = w.player ? dist([x, y], w.player) : Infinity;
     const carriedKind = this._carriedKind();
     if (w.player && dp < PLAYER_GRAB_R) {
@@ -722,10 +695,11 @@ export class App {
       };
     } else if (w.player && carriedKind && dp < CONNECT_REACH) {
       // Annulus (off her, inside the operating ring) while carrying → begin an
-      // aim-hold. The branch (swallow / golden arrow / programming) is chosen at
-      // the 1/3-second mark in _updateGestures; until then the placement shadow
-      // keeps previewing, and a quick release is still a plain drop.
-      this._aim = { since: performance.now(), kind: carriedKind, branched: false, decideAt: null, decided: false };
+      // aim-hold. At the 1/3-second mark _updateGestures either launches the
+      // golden arrow (a targeting device) or swallows the press (anything else);
+      // until then the placement shadow keeps previewing, and a quick release is
+      // still a plain drop.
+      this._aim = { since: performance.now(), kind: carriedKind, branched: false };
       this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
     } else {
       this._drag = { active:false, kind:null, ref:null, moved:false, linkHit:null };
@@ -874,32 +848,23 @@ export class App {
     // A click while a chooser menu is open resolves (or cancels) the menu.
     if (ui.menu) { this._handleMenuClick(x, y); return; }
 
-    // Click-by-click targeting: a click on a valid target marks it (link / jam /
-    // recolour); a click on THIS device's own bare intent ray erases that ray; a
-    // click that hits neither leaves the mode. Apply is tried first so clicking a
-    // target that sits under its own ray marks it rather than erasing the ray (the
-    // common case for a jammer, whose ray ends on the gate it targets). Deletion is
-    // scoped to the targeting device — it never erases another device's intents.
-    if (ui.targeting) {
-      if (this._applyTargetIntent(x, y)) return;
-      if (this._deleteIntentAt(x, y, ui.targeting.id)) return;
-      this._exitTargeting();
-      return;
-    }
-
     // Empty-handed: pick something up. A quick click takes the top of the
     // stack; a hold on a real stack (2+ items) opens a chooser menu.
     if (!w.carrying && !w.carry_box) { this._clickPickup(x, y); return; }
 
-    // Carrying a targeting device: a click ON the floating item itself (its body /
-    // drop spot) DROPS it; a click on one of the CARRIED device's OWN intent rays,
-    // away from the item, ERASES that ray. Deletion is scoped to the carried device
-    // (`w.carrying`), so it only ever removes this device's own wires — clicking a
-    // node B that it links to erases the A→B wire, never B's other links, and a ray
-    // belonging to some other device is left alone. We guard only the item's
-    // footprint (so a drop click isn't read as an erase of the wires emanating from
-    // it); the C key still clears every own wire deliberately.
+    // Carrying a targeting device, a click is its targeting interaction (no
+    // separate mode anymore):
+    //   • a click ON a valid target MAKES / toggles the intent (link / jam /
+    //     recolour) — apply is tried first so clicking a target that sits under
+    //     its own ray marks it rather than erasing the ray (the jammer case);
+    //   • a click on one of the CARRIED device's OWN intent rays, away from the
+    //     item, ERASES that ray (scoped to `w.carrying`, so it only ever removes
+    //     this device's own intents — never another device's);
+    //   • anything else falls through to the drop test below.
+    // The item's own footprint is excluded from the erase so a drop click isn't
+    // read as wiping the wires emanating from it; the C key still clears them.
     if (objType(this._carriedKind())?.requiresTarget) {
+      if (this._applyTargetIntent(x, y)) return;
       const itemPos = w.carrying ? w.nodes[w.carrying]?.pos : null;
       const guard = (objType(this._carriedKind())?.radius ?? CONN_R) + 4;
       const onItem = itemPos && dist([x, y], itemPos) <= guard;
@@ -1090,19 +1055,14 @@ export class App {
     this.uiState.menu = { x, y, items: laid };
   }
 
-  // ---- targeting / programming tree (annulus press-hold) ----
-  // Resolved each frame. Two jobs: (1) while click-by-click targeting is active,
-  // a still ~1/3 s hold anywhere exits it; (2) otherwise advance the aim-hold
-  // through its branch point and the golden-arrow decision window.
+  // ---- golden-arrow wiring gesture (annulus press-hold) ----
+  // Resolved each frame: advance the aim-hold to its 1/3 s branch point, where a
+  // held press either launches the golden arrow (a targeting device) or is
+  // swallowed (anything else). There is no decision window anymore — once the
+  // arrow is up it keeps drawing until release.
   _updateGestures() {
     const w = this.world;
-    const ui = this.uiState;
     const now = performance.now();
-
-    // While click-by-click targeting is active the aim-hold never runs. Exit is
-    // a brief click on empty space (handled in _playClick) or a tap of E
-    // (handled in carry_release) — not a timed hold.
-    if (ui.targeting) return;
 
     const a = this._aim;
     if (!a) return;
@@ -1112,35 +1072,17 @@ export class App {
     if (this._drag.active && this._drag.kind === 'player') { this._aim = null; return; }
     const reqT = !!(objType(kind) || {}).requiresTarget;
 
-    // (1) Branch point at 1/3 s. Programming is no longer reachable from a hold —
-    // it is summoned with F / the panel's Forge button while next to a Forge (see
-    // _invokeForge). So a held press only ever drives TARGETING:
-    //   • a targeting device launches the golden arrow + decision window;
+    // Branch point at 1/3 s. Programming lives at a Forge (F / the panel's Forge
+    // button); click-by-click targeting was removed (a click on a target while
+    // carrying makes the intent directly). So a held annulus press only ever
+    // launches the golden-arrow wiring:
+    //   • a targeting device launches the arrow, which then draws until release;
     //   • anything else (a programmable-only mine) is simply swallowed.
     if (!a.branched && now - a.since >= AIM_HOLD_MS) {
       a.branched = true;
-      if (reqT) {
-        this._startAimArrow();
-        a.decideAt = now + AIM_DECIDE_MS;
-      } else {
-        p.consumed = true;     // swallow: the release will not drop
-        this._aim = null;
-      }
-      return;
-    }
-
-    // (2) Decision window: did the cursor leave the operating ring?
-    if (a.decideAt && !a.decided && now >= a.decideAt) {
-      a.decided = true;
-      const inRing = dist(w.player, ui.mouse) < CONNECT_REACH;
-      if (inRing) {
-        // Stayed inside → fall out of arrow-drawing into click-by-click targeting.
-        this._endAimArrow();
-        p.consumed = true;
-        this._enterTargeting(kind);
-      }
-      // Left the ring → the golden arrow keeps drawing (the wire drag lives on).
-      this._aim = null;
+      if (reqT) this._startAimArrow();
+      else p.consumed = true;     // swallow: the release will not drop
+      this._aim = null;           // hold resolved; the wire drag (if any) lives on its own
     }
   }
 
@@ -1153,30 +1095,6 @@ export class App {
       preSnap: this._captureState(), preSig: this._sig(), committed: false,
     };
     this.uiState.wireDrag = [...this.uiState.mouse];
-  }
-
-  _endAimArrow() {
-    this._drag.active = false;
-    this.uiState.wireDrag = null;
-  }
-
-  // Enter click-by-click targeting: the object turns gold and stays on the
-  // player; clicks create intents until a ~1/3 s hold exits.
-  _enterTargeting(kind) {
-    const w = this.world;
-    if (!w.carrying) return;
-    this._endAimArrow();
-    this.uiState.targeting = { id: w.carrying, kind };
-    this.uiState.placePreview = null;
-    w.nodes[w.carrying].pos[0] = w.player[0];
-    w.nodes[w.carrying].pos[1] = w.player[1];
-    const what = STR.targetWhat[kind] ?? STR.targetWhat.default;
-    this._setFlash(STR.flash.targeting(what));
-  }
-
-  _exitTargeting() {
-    this.uiState.targeting = null;
-    this._setFlash(STR.flash.doneTargeting);
   }
 
   // The programming sequence: a small chooser of values for the carried device,
@@ -1272,11 +1190,11 @@ export class App {
     }
   }
 
-  // Apply a click-by-click target intent for the carried device. Generic: the
-  // carried kind's spec says what is targetable and how an intent is recorded.
-  // Returns true if a valid target sat under the cursor (whether or not the
-  // effect could apply) — the caller uses that to decide whether to leave the
-  // mode. No per-kind branching lives here.
+  // Apply a target intent for the carried device from a click at (x, y). Generic:
+  // the carried kind's spec says what is targetable and how an intent is recorded.
+  // Returns true if a valid target sat under the cursor (whether or not the effect
+  // could apply) — the caller uses that to know a target was hit (so it neither
+  // erases a ray nor drops the item). No per-kind branching lives here.
   _applyTargetIntent(x, y) {
     const w = this.world;
     const ui = this.uiState;
@@ -1306,10 +1224,11 @@ export class App {
     // clicked outside the menu → just cancel
   }
 
-  // Each frame: a ~half-second long-press on the left mouse button OR the E key
-  // opens the stack chooser, when the player is empty-handed and a stack is in
-  // reach. The mouse targets the stack under the cursor; E targets the nearest
-  // in-reach stack.
+  // Each frame: a ~1/3 s long-press on the left mouse button OR the E key opens
+  // the stack chooser, when the player is empty-handed and a stack is in reach.
+  // The mouse targets the stack under the cursor; E targets the nearest in-reach
+  // stack. While carrying, an E hold does nothing — but it IS consumed, so its
+  // release never drops the item: only a brief E tap drops/places.
   _updateHoldMenu() {
     const ui = this.uiState;
     const now = performance.now();
@@ -1320,14 +1239,13 @@ export class App {
       if (since !== null) this._carryConsumed = false;   // a fresh press began
       this._prevCarrySince = since;
     }
-    if (!ui.menu && !ui.targeting && since !== null && !this._carryConsumed && now - since >= AIM_HOLD_MS) {
+    if (!ui.menu && since !== null && !this._carryConsumed && now - since >= AIM_HOLD_MS) {
       if (this.world.carrying || this.world.carry_box) {
-        // Carrying → E is the operating tool: a ~1/3 s hold fires the same branch
-        // as the mouse tree, but goes straight to the end state (no golden arrow).
-        this._fireECarryTree();
-        this._carryConsumed = true;          // the release must not also drop
+        // Carrying → a hold does nothing, but consume it so the release won't drop.
+        this._carryConsumed = true;
       } else if (this._tryOpenMenuForE()) {
-        this._carryConsumed = true;          // empty-handed → stack chooser
+        // Empty-handed → the stack chooser (the only thing an E hold does).
+        this._carryConsumed = true;
       }
     }
 
@@ -1336,16 +1254,6 @@ export class App {
     if (!ui.menu && p && p.active && !p.consumed && !p.moved && now - p.t >= MENU_HOLD_MS) {
       if (this._tryOpenMenuAt(p.x, p.y)) p.consumed = true;
     }
-  }
-
-  // E-as-operating-tool: a ~1/3 s E hold while carrying a targeting device drops
-  // straight into click-by-click targeting (no golden-arrow / linking step —
-  // that would be awkward off a key hold). Programming is summoned separately
-  // (F / the Forge button), so a programmable-only device is just swallowed.
-  _fireECarryTree() {
-    const kind = this._carriedKind();
-    if ((objType(kind) || {}).requiresTarget) this._enterTargeting(kind);
-    // otherwise → nothing (swallowed)
   }
 
   // Open the chooser for the stack under (x, y), if it is a real (2+) stack in
@@ -1431,9 +1339,9 @@ export class App {
       if (w.carrying) { w.nodes[w.carrying].pos[0] = p[0]; w.nodes[w.carrying].pos[1] = p[1]; }
       if (w.carry_box) { w.carry_box[0] = p[0]; w.carry_box[1] = p[1]; }
     };
-    if (this._drag.active || ui.targeting) {
-      // Active gesture (walking her / pulling a wire) or click-by-click
-      // targeting: the item stays centred on the player, no shadow.
+    if (this._drag.active) {
+      // Active gesture (walking her / pulling the golden-arrow wire): the item
+      // stays centred on the player, no shadow.
       ui.placePreview = null;
       sit(w.player);
       return;
@@ -1681,7 +1589,7 @@ export class App {
     ui.hover = null;
     if (ui.mode !== 'play') return;
     if (w.carrying || w.carry_box) return;
-    if (this._drag.active || ui.targeting || ui.menu || ui.levelMenu) return;
+    if (this._drag.active || ui.menu || ui.levelMenu) return;
     if (ui.resetProgress > 0 || !ui.mouse) return;
 
     const hit = this._hoverTarget(ui.mouse[0], ui.mouse[1]);

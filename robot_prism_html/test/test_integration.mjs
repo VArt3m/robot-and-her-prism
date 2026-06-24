@@ -158,15 +158,17 @@ ok(true, 'ticks ran without throwing');
   w.player = [470, 380];
   if (!w.carrying) app._pickItem({ kind: 'jammer', id: 'jam_a' });
 
-  // Targets toggle ON → effective ON, hints populated; held Alt suppresses it.
+  // The targetable contour is ALWAYS populated while a targeting device is
+  // carried; the Targets toggle / Shift only flips `showTargets` (prominence),
+  // never the existence of the hints.
   ui.panel.targets = true; app.input.held.delete('hl_targets');
   app._updateHighlights();
   ok(ui.showTargets === true, 'panel targets toggle → showTargets on');
   ok(Array.isArray(ui.targetHints) && ui.targetHints.length > 0, 'target hints populated for the jammer');
   app.input.held.add('hl_targets');
   app._updateHighlights();
-  ok(ui.showTargets === false, 'held Q suppresses the toggled-on targets highlight (XOR)');
-  ok(ui.targetHints === null, 'no hints while suppressed');
+  ok(ui.showTargets === false, 'held Shift suppresses the toggled-on prominence (XOR)');
+  ok(Array.isArray(ui.targetHints) && ui.targetHints.length > 0, 'faint hints stay populated even when not prominent');
   app.input.held.delete('hl_targets');
 
   // Passable toggle ON → a polygon region for the jammer ray.
@@ -199,21 +201,25 @@ ok(true, 'ticks ran without throwing');
   const [wx, wy] = app.renderer2d.screenToWorld(sx, sy);
   ok(Math.abs(wx - 300) < 1e-6 && Math.abs(wy - 200) < 1e-6, 'worldToScreen ↔ screenToWorld round-trips');
 
-  // Build a targeting context (jam_a exists as a placed node with field/mine
-  // candidates), then stub the panel geometry: pointer over it, footprint huge
-  // so any candidate counts as "behind" it, identity world→screen.
-  ui.targeting = { id: 'jam_a', kind: 'jammer' };
+  // Conflict fires during the golden-arrow link drag when the panel covers a
+  // live target. Carry a targeting device (so there are candidates), arm a wire
+  // drag, and stub the panel geometry: pointer over it, footprint huge so any
+  // candidate counts as "behind" it, identity world→screen.
+  w.player = [470, 380];
+  w.carrying = 'jam_a';
+  app._drag = { active: true, kind: 'wire', ref: null, moved: false, linkHit: null };
   app.panel.isPointerOver = () => true;
   app.panel.footprintRect = () => ({ left: 0, top: 0, right: 1e4, bottom: 1e4 });
   app.renderer2d.worldToScreen = (x, y) => [x, y];
-  ok(app._panelConflict() === true, 'conflict: targeting + pointer over + target behind panel');
+  ok(app._panelConflict() === true, 'conflict: wire drag + pointer over + target behind panel');
 
   app.panel.isPointerOver = () => false;
   ok(app._panelConflict() === false, 'no conflict when the pointer is off the panel');
 
   app.panel.isPointerOver = () => true;
-  ui.targeting = null;                     // no targeting context at all
-  ok(app._panelConflict() === false, 'no conflict outside any targeting gesture');
+  app._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+  ok(app._panelConflict() === false, 'no conflict outside the golden-arrow link drag');
+  w.carrying = null;
 }
 
 // --- Forge chooser hides no-op options; out of radius is silent ---

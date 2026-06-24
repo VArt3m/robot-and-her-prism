@@ -103,7 +103,7 @@ prefer the cheaper, deterministic cold solve.
 | `test_targeting` | 68 | Frameworks |
 | `test_programming` | 187 | Frameworks |
 | `test_integration` | 108 | UI / app |
-| `test_tree` | 94 | UI / app |
+| `test_tree` | 89 | UI / app |
 | `test_placement` | 70 | UI / app |
 | `test_highlight` | 31 | UI / app |
 | `test_levelselect` | 18 | UI / app |
@@ -286,8 +286,11 @@ round-trip; and the Forge chooser end-to-end (no-op hiding, clean-vs-corrupting
 Forges, the two-Forge overlap dead-zone, and the inverter's multi-facet menu).
 
 ### `test_tree` — the gesture state machine + Forge gateway
-Drives the press-and-hold annulus gesture (now targeting-only) and the Forge
-programming gateway by **back-dating timestamps** so the timers fire
+Drives the press-and-hold annulus gesture (now the golden-arrow wiring only — a
+hold launches the arrow, which draws until release; there is no click-by-click
+mode and no E-hold targeting) plus the **click-to-intent** path (a plain click on
+a target while carrying makes / toggles / erases an intent) and the Forge
+programming gateway, by **back-dating timestamps** so the timers fire
 deterministically, then asserts each branch of the state machine.
 
 ### `test_placement` — the carried-item drop shadow

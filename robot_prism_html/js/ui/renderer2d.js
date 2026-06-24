@@ -151,7 +151,7 @@ function starPts(cx, cy, r = 16, ri = 7, n = 5) {
 // actually grab (the top of the nearest stack), dimmer otherwise.
 function nearHue(isTop) { return isTop ? '#4dd0e1' : '#2a8fa3'; }
 
-// The small "(drop here)" / "(targeting)" badge above a carried item.
+// The small "(drop here)" / "(stack here)" badge above a carried item.
 function drawBadge(ctx, x, y, dy, color, label) {
   ctx.fillStyle = color;
   ctx.font = '7px sans-serif';
@@ -160,10 +160,10 @@ function drawBadge(ctx, x, y, dy, color, label) {
   ctx.fillText(label, x, y - dy);
 }
 
-// Ring colour for a simple targetable device (rewirer / jammer / accumulator):
-// gold while targeting, the near-hue while in pick-up range, else its resting hue.
-function targetRing(targetingNow, near, isTop, resting) {
-  return targetingNow ? '#f5c518' : (near ? nearHue(isTop) : resting);
+// Ring colour for a simple device (rewirer / jammer / accumulator): the near-hue
+// while in pick-up range, else its resting hue.
+function targetRing(near, isTop, resting) {
+  return near ? nearHue(isTop) : resting;
 }
 
 // Measure the pixel width of a tooltip line. A line is either a plain string
@@ -592,12 +592,10 @@ export class Renderer2D {
 
       } else if (isRelayKind(n.kind)) {
         const carriedNow = w.carrying === n.id;
-        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const wouldElevate = carriedNow && pp && pp.elevated;
         const near = canPickup(n.pos);
         const dead = Boolean(w.dead_conns && w.dead_conns.has(n.id));
-        const ring = targetingNow ? '#f5c518'
-          : carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
+        const ring = carriedNow ? (wouldElevate ? '#8e44ad' : '#2e8b57')
           : (dead ? '#e23b3b'
           : (sel===n.id ? '#f5c518' : (near ? nearHue(ePick?.id === n.id) : '#222')));
         const col = w.emit[n.id];
@@ -640,7 +638,7 @@ export class Renderer2D {
         }
         if (carriedNow) {
           drawBadge(ctx, x, y, 14, ring,
-            targetingNow ? STR.badge.targeting : (wouldElevate ? STR.badge.stackHere : STR.badge.dropHere));
+            wouldElevate ? STR.badge.stackHere : STR.badge.dropHere);
         } else if (w._conn_elevated(n.id)) {
           ctx.fillStyle = '#8e44ad'; ctx.font = '7px sans-serif';
           ctx.textBaseline = 'top';
@@ -663,40 +661,35 @@ export class Renderer2D {
 
       } else if (n.kind === 'rewirer') {
         const carriedNow = w.carrying === n.id;
-        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
         const c = COLORS[n.color] ?? '#999';
         polygon(ctx, diamond(x, y, 12));
         ctx.fillStyle = '#fff'; ctx.fill();
-        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, c); ctx.lineWidth = 3;
-        if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
+        ctx.strokeStyle = targetRing(near, ePick?.id === n.id, c); ctx.lineWidth = 3;
+        if (carriedNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = c; ctx.fill();
         if (carriedNow) {
-          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : c,
-            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
+          drawBadge(ctx, x, y, 15, c, STR.badge.dropHere);
         }
 
       } else if (n.kind === 'jammer') {
         const carriedNow = w.carrying === n.id;
-        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
         ctx.beginPath(); ctx.arc(x, y, 12, 0, 2*Math.PI);
         ctx.fillStyle = '#eceff1'; ctx.fill();
-        ctx.strokeStyle = targetRing(targetingNow, near, ePick?.id === n.id, '#37474f'); ctx.lineWidth = 3;
-        if (carriedNow && !targetingNow) ctx.setLineDash([2,3]);
+        ctx.strokeStyle = targetRing(near, ePick?.id === n.id, '#37474f'); ctx.lineWidth = 3;
+        if (carriedNow) ctx.setLineDash([2,3]);
         ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = '#37474f'; ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(STR.glyph.jammer, x, y);
         if (carriedNow) {
-          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : '#37474f',
-            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
+          drawBadge(ctx, x, y, 15, '#37474f', STR.badge.dropHere);
         }
 
       } else if (n.kind === 'accumulator') {
         const carriedNow = w.carrying === n.id;
-        const targetingNow = uiState.targeting && uiState.targeting.id === n.id;
         const near = canPickup(n.pos);
         const charged = !!n.color;
         const mix = charged ? null : (w.engine._accum_color?.[n.id] ?? null);
@@ -744,15 +737,15 @@ export class Renderer2D {
             ctx.strokeStyle = ic; ctx.lineWidth = 3; ctx.setLineDash([]); ctx.stroke();
           }
         }
-        // Inner contour: the mix colour while charging (so the contour "becomes" the
-        // mix), unless the player is targeting / can pick it up (then the affordance
-        // ring wins). Otherwise the usual target ring.
-        const emphasise = targetingNow || near || ePick?.id === n.id;
+        // Inner contour: the mix colour while charging (so the contour "becomes"
+        // the mix), unless the player can pick it up (then the affordance ring
+        // wins). Otherwise the usual resting ring.
+        const emphasise = near || ePick?.id === n.id;
         ctx.strokeStyle = (mix && !emphasise)
           ? (COLORS[mix] ?? '#90a4ae')
-          : targetRing(targetingNow, near, ePick?.id === n.id, charged ? '#222' : '#90a4ae');
+          : targetRing(near, ePick?.id === n.id, charged ? '#222' : '#90a4ae');
         ctx.lineWidth = charged ? 2 : 3;
-        if (carriedNow && !targetingNow) ctx.setLineDash([2, 3]);
+        if (carriedNow) ctx.setLineDash([2, 3]);
         strokeRoundRect(ctx, x0, y0, s, s, 4);
         ctx.setLineDash([]);
         ctx.fillStyle = charged ? (n.color === 'white' || n.color === 'yellow' ? '#333' : '#fff') : '#607d8b';
@@ -760,8 +753,7 @@ export class Renderer2D {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(STR.glyph.accumulator, x, y);
         if (carriedNow) {
-          drawBadge(ctx, x, y, 15, targetingNow ? '#f5c518' : (charged ? c : '#607d8b'),
-            targetingNow ? STR.badge.targeting : STR.badge.dropHere);
+          drawBadge(ctx, x, y, 15, charged ? c : '#607d8b', STR.badge.dropHere);
         }
 
       } else if (n.kind === 'forge') {
@@ -804,17 +796,24 @@ export class Renderer2D {
       ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1; ctx.stroke();
     }
 
-    // "Possible targets" highlight: a ring around everything the carried item
-    // can target. A reachable target (clear ray) gets a bright solid ring; an
-    // unreachable one (the shot is blocked) a fainter dashed ring, so the player
-    // can tell "I could mark it, but it won't bite from here". Populated by
-    // app.js (uiState.targetHints).
+    // "Possible targets" contour: a ring around everything the carried item can
+    // target. Populated by app.js (uiState.targetHints) WHENEVER a targeting
+    // device is carried, so the affordance is always visible. Two intensities:
+    //   • default (Targets toggle / Shift OFF): a faint, dotted golden contour —
+    //     extremely unobtrusive, uniform for every target.
+    //   • prominent (uiState.showTargets ON): a bright solid gold ring for a
+    //     reachable target (clear ray) and a fainter grey dashed ring for one the
+    //     shot can't currently reach, so the player can tell them apart.
     if (uiState.targetHints) {
+      const prominent = uiState.showTargets;
       for (const h of uiState.targetHints) {
         const [hx, hy] = h.pos;
         const r = (h.radius ?? 14) + 5;
         ctx.beginPath(); ctx.arc(hx, hy, r, 0, 2 * Math.PI);
-        if (h.reachable) {
+        if (!prominent) {
+          // Faint, dotted, golden — barely there.
+          ctx.strokeStyle = 'rgba(245, 197, 24, 0.35)'; ctx.lineWidth = 1; ctx.setLineDash([1, 5]);
+        } else if (h.reachable) {
           ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 2.5; ctx.setLineDash([]);
         } else {
           ctx.strokeStyle = 'rgba(120, 130, 145, 0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]);

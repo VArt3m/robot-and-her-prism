@@ -1,7 +1,8 @@
-// State-machine test: the annulus press-and-hold gesture (now TARGETING-only —
-// programming was decoupled to the Forge) plus the Forge programming gateway.
-// Drives the gesture timers directly (back-dating press/aim timestamps) and
-// asserts each branch. Run: node test_tree.mjs
+// State-machine test: the annulus press-and-hold gesture (the golden-arrow
+// wiring — programming lives at the Forge, and click-by-click targeting was
+// removed in favour of a plain click on a target while carrying) plus the Forge
+// programming gateway. Drives the gesture timers directly (back-dating
+// press/aim timestamps) and asserts each branch. Run: node test_tree.mjs
 import { dist } from '../js/core/geometry.js';
 import { CONNECT_REACH } from '../js/core/constants.js';
 import { targetSpec } from '../js/sim/targeting.js';
@@ -39,7 +40,7 @@ app._loadLevel('test_grounds');
 const w = app.world;
 
 // --- helpers to drive the gesture machine deterministically ---
-function clearHands() { w.carrying = null; w.carry_box = null; app.uiState.targeting = null; app._aim = null; app._press = null; app.uiState.menu = null; }
+function clearHands() { w.carrying = null; w.carry_box = null; app._aim = null; app._press = null; app.uiState.menu = null; }
 function holdInAnnulus(player, pressPt, mouse) {
   // place the player, start a press in the annulus, and aim the cursor
   w.player = [...player];
@@ -50,9 +51,6 @@ function elapse(ms) {                     // back-date the press + aim so `ms` h
   const past = performance.now() - ms;
   if (app._press) app._press.t = past;
   if (app._aim) app._aim.since = past;
-}
-function forceDecide() {                  // make the golden-arrow decision window expire now
-  if (app._aim) app._aim.decideAt = performance.now() - 1;
 }
 const menuItem = (label) => (app.uiState.menu?.items || []).find(it => it.label === label);
 function clickMenu(label) { const it = menuItem(label); ok(!!it, `menu has "${label}"`); if (it) { const [rx, ry, rw, rh] = it.rect; app._playClick(rx + rw / 2, ry + rh / 2); } }
@@ -79,8 +77,8 @@ ok(app._aim && app._aim.kind === 'box', 'A: aim-hold armed for the box');
 elapse(400); app._updateGestures();
 ok(app._aim === null, 'A: aim resolved');
 ok(app._press && app._press.consumed === true, 'A: press consumed (release will not drop)');
-ok(app.uiState.targeting === null && app.uiState.menu === null && !app._drag.active,
-   'A: nothing happens — no targeting, no menu, no arrow');
+ok(app.uiState.menu === null && !app._drag.active,
+   'A: nothing happens — no menu, no arrow');
 
 // =========================================================================
 // C — programmable only (mine): the hold is SWALLOWED. Programming has moved to
@@ -91,53 +89,59 @@ w.player = [430, 440];
 ok(app._pickItem({ kind: 'mine', id: 'mine_a' }), 'C: picked up the mine');
 holdInAnnulus([430, 440], [450, 440]);
 elapse(400); app._updateGestures();
-ok(app.uiState.menu === null && app.uiState.targeting === null && !app._drag.active,
+ok(app.uiState.menu === null && !app._drag.active,
    'C: a hold on a programmable-only device does nothing (no chooser)');
 ok(app._aim === null && app._press.consumed, 'C: aim resolved + press consumed');
 clearHands();
 
 // =========================================================================
-// B — targeting only (connector): golden arrow, then the ring decision.
+// B — targeting device (connector): a hold launches the golden arrow, which
+// then keeps drawing until release — there is NO in-ring decision / click-by-
+// click mode anymore (whether the cursor stays in or leaves the ring).
 // =========================================================================
-// B-out: cursor leaves the ring during the window → keep drawing the arrow.
+// B-out: cursor leaves the ring → the arrow keeps drawing.
 clearHands();
 w.player = [445, 293];
 ok(app._pickItem({ kind: 'connector', id: 'con_c' }), 'B: picked up the connector');
 holdInAnnulus([445, 293], [465, 293]);
 elapse(400); app._updateGestures();       // branch → launch arrow
 ok(app._drag.active && app._drag.kind === 'wire', 'B: golden arrow launched at 1/3 s');
-ok(app._aim && app._aim.decideAt, 'B: decision window armed');
+ok(app._aim === null, 'B: aim resolved at launch (no decision window)');
 app.uiState.mouse = [445 + 200, 293];     // pull the cursor OUT of the ring
-forceDecide(); app._updateGestures();
+app._updateGestures();
 ok(app._drag.active && app._drag.kind === 'wire', 'B-out: arrow keeps drawing when cursor left the ring');
-ok(app.uiState.targeting === null, 'B-out: did not fall into click-by-click');
-ok(app._aim === null, 'B-out: aim cleared');
 
-// B-in: cursor stays in the ring → fall into click-by-click targeting.
+// B-in: cursor stays in the ring → the arrow STILL keeps drawing (no mode).
 clearHands();
 w.player = [445, 293];
 app._pickItem({ kind: 'connector', id: 'con_c' });
 holdInAnnulus([445, 293], [465, 293]);
 elapse(400); app._updateGestures();        // branch → arrow
 app.uiState.mouse = [455, 293];            // cursor stays INSIDE the ring (dist 10)
-forceDecide(); app._updateGestures();
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'connector', 'B-in: entered click-by-click targeting');
-ok(!app._drag.active && app.uiState.wireDrag === null, 'B-in: arrow ended');
-ok(Math.abs(w.nodes['con_c'].pos[0] - w.player[0]) < 1e-6, 'B-in: connector centred on the player');
-// click a node → toggles a link (the intent)
-const linksBefore = w.links.size;
-app._playClick(w.nodes['con_1'].pos[0], w.nodes['con_1'].pos[1]);
-ok(w.links.size === linksBefore + 1, 'B-in: clicking a node creates a link intent');
-// a brief click on empty space (not a target) leaves the mode
-app._playClick(700, 300);
-ok(app.uiState.targeting === null, 'B-in: a click on empty space exits click-by-click');
-ok(w.carrying === 'con_c', 'B-in: still carrying after the exit click');
+app._updateGestures();
+ok(app._drag.active && app._drag.kind === 'wire', 'B-in: arrow keeps drawing even inside the ring');
+ok(app.uiState.menu === null, 'B-in: no chooser / mode opened');
+app._onMouseUp([455, 293], {});            // release ends the arrow
 clearHands();
 
+// B-click: plain carrying (no hold) — a click on a node MAKES the link intent,
+// a second click on it toggles it OFF, and links ignore distance (a click on the
+// far node still wires it). con_1 is left where it is so later tests are clean.
+clearHands(); w.links.clear();
+w.player = [445, 293]; w.nodes['con_c'].pos = [445, 293]; w.carrying = 'con_c';
+const b1 = w.nodes['con_1'].pos;
+ok(!w.links.has(w._link_key('con_c', 'con_1')), 'B-click: no link before clicking');
+app._playClick(b1[0], b1[1]);                            // click the target node
+ok(w.links.has(w._link_key('con_c', 'con_1')), 'B-click: clicking a node makes the link intent');
+ok(w.carrying === 'con_c', 'B-click: making an intent does not drop the device');
+app._playClick(b1[0], b1[1]);                            // click it again → toggle off
+ok(!w.links.has(w._link_key('con_c', 'con_1')), 'B-click: clicking a linked node toggles the intent off');
+clearHands(); w.links.clear();
+
 // =========================================================================
-// D — programmable + targeting (rewirer): a hold now drives TARGETING only.
-// Programming (the colour) is summoned at a Forge, so there is no Setup/Target
-// menu and no programming-first branch anymore.
+// D — programmable + targeting (rewirer): a hold launches the arrow (no Setup/
+// Target menu, no programming-first branch — programming is at a Forge), and a
+// plain click on a target MARKS the recolour (deferred, never instant).
 // =========================================================================
 clearHands();
 w.player = [520, 440];
@@ -145,23 +149,23 @@ ok(app._pickItem({ kind: 'rewirer', id: 'rw_a' }), 'D: picked up the rewirer');
 holdInAnnulus([520, 440], [540, 440]);
 elapse(400); app._updateGestures();        // branch → arrow
 ok(app._drag.active && app._drag.kind === 'wire', 'D: a hold launches the golden arrow');
-app.uiState.mouse = [528, 440];            // stay inside the ring
-forceDecide(); app._updateGestures();
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'D: in-ring decision → click-by-click');
 ok(app.uiState.menu === null, 'D: no Setup/Target menu anymore');
+app._onMouseUp([540, 440], {});
 // the rewirer MARKS a target it has line of sight to, but does NOT recolour
 // instantly — the recolour is deferred to deployment.
+clearHands();
 w.player = [140, 90];
-w.nodes['rw_a'].pos[0] = 140; w.nodes['rw_a'].pos[1] = 90;   // (centred on her while targeting)
+app._pickItem({ kind: 'rewirer', id: 'rw_a' });
+w.nodes['rw_a'].pos[0] = 140; w.nodes['rw_a'].pos[1] = 90;   // (centred on her while carrying)
 w.nodes['rw_a'].color = 'blue';
 const srcColorBefore = w.nodes['src_red'].color;
 app._playClick(w.nodes['src_red'].pos[0], w.nodes['src_red'].pos[1]);
 ok(w.nodes['src_red'].color === srcColorBefore, 'D: rewirer does NOT recolour instantly (effect deferred)');
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'D: still targeting after marking');
-app.uiState.targeting = null;
-clearHands();
+ok(w.recolor_links.get('rw_a') === 'src_red', 'D: the click marks the recolour target');
+ok(w.carrying === 'rw_a', 'D: still carrying after marking');
+clearHands(); w.recolor_links.clear();
 
-// Even with a blank colour, a hold still just targets (no programming-first).
+// Even with a blank colour, a hold still just launches the arrow (no chooser).
 clearHands();
 w.player = [520, 440];
 app._pickItem({ kind: 'rewirer', id: 'rw_a' });
@@ -170,23 +174,24 @@ holdInAnnulus([520, 440], [540, 440]);
 elapse(400); app._updateGestures();
 ok(app._drag.active && app._drag.kind === 'wire', 'D/blank: a hold still launches the arrow');
 ok(app.uiState.menu === null, 'D/blank: no programming chooser from a hold');
+app._onMouseUp([540, 440], {});
 clearHands();
 
 // =========================================================================
-// Jammer — targeting only (B path), with a jam-target finder.
+// Jammer — targeting only: a hold launches the arrow; a plain click on a gate
+// (anywhere along the segment) marks it, and re-marking another gate overwrites.
 // =========================================================================
-clearHands();
+clearHands(); w.jam_links.clear();
 w.player = [470, 380];
 ok(app._pickItem({ kind: 'jammer', id: 'jam_a' }), 'J: picked up the jammer');
 holdInAnnulus([470, 380], [490, 380]);
 elapse(400); app._updateGestures();
-app.uiState.mouse = [478, 380];
-forceDecide(); app._updateGestures();
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'jammer', 'J: jammer enters click-by-click');
+ok(app._drag.active && app._drag.kind === 'wire', 'J: a hold launches the golden arrow');
+app._onMouseUp([490, 380], {});
 const ffMid = w.ffs[0].mid();
 ok(!!targetSpec('jammer').targetAt(w, 'jam_a', ffMid[0], ffMid[1]),
    'J: a force field is a valid jam target');
-clearHands();
+clearHands(); w.jam_links.clear();
 
 // brief click in the annulus is still a drop (no hold) ------------------------
 clearHands();
@@ -256,22 +261,20 @@ w.player = [470, 500]; w.carry_box = [470, 500];
 app._playClick(RAY_MID[0], RAY_MID[1]);
 ok(w.links.size === 1, 'ray-delete: carrying a box, a ray click does not erase');
 
-// click-by-click targeting → a node click toggles the link; a click on con_c's
-// OWN bare wire erases it; a click on a ray NOT owned by con_c does NOT erase it.
+// Plain carrying → a node click toggles the link; a click on con_c's OWN bare
+// wire erases it; a click on a ray NOT owned by con_c does NOT erase it.
 clearHands();
 w.links.clear();
 w.player = [445, 293]; w.nodes.con_c.pos = [445, 293]; w.carrying = 'con_c';
-app.uiState.targeting = { id: 'con_c', kind: 'connector' };
 app._playClick(w.nodes.con_1.pos[0], w.nodes.con_1.pos[1]);   // node → create con_c↔con_1
-ok(w.links.size === 1, 'ray-delete: in targeting, a node click creates a link');
+ok(w.links.size === 1, 'ray-delete: a node click creates a link');
 const tgMid = [(445 + w.nodes.con_1.pos[0]) / 2, (293 + w.nodes.con_1.pos[1]) / 2];
 app._playClick(tgMid[0], tgMid[1]);                          // con_c's own bare wire → erase
-ok(w.links.size === 0, "ray-delete: in targeting, a click on the device's own bare wire erases it");
-app.uiState.targeting = { id: 'con_c', kind: 'connector' };
+ok(w.links.size === 0, "ray-delete: a click on the device's own bare wire erases it");
 w.toggle_link('con_1', 'con_2');                             // a ray NOT owned by con_c
 app._playClick(RAY_MID[0], RAY_MID[1]);                      // bare ray of someone else
 ok(w.links.has(w._link_key('con_1', 'con_2')),
-   "ray-delete: in targeting, a click does not erase another device's intent");
+   "ray-delete: a click does not erase another device's intent");
 clearHands(); w.links.clear();
 
 
@@ -289,40 +292,42 @@ ok(w.carrying === null, 'drop-gate: a click inside the activation radius drops')
 clearHands(); w.links.clear();
 
 // =========================================================================
-// E as the operating tool — a ~1/3 s E hold mirrors the mouse tree (straight
-// to the end state, no golden arrow); a brief E drops or exits targeting.
+// E while carrying — the hold no longer has a special role (targeting moved to a
+// plain click on a target). A hold does nothing and is NOT consumed, so the
+// release drops the item like a brief tap.
 // =========================================================================
-// targeting only (connector) → click-by-click directly, no arrow
+// targeting device (connector) → a hold does nothing (no arrow, no mode, no menu)
+// and is CONSUMED, so the hold's release does NOT drop (only a brief tap drops).
 clearHands();
 w.player = [445, 293];
 app._pickItem({ kind: 'connector', id: 'con_c' });
 eHold();
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'connector', 'E/B: hold enters click-by-click');
-ok(!app._drag.active, 'E/B: no golden arrow from an E hold');
-// brief E exits targeting
-eTap();
-ok(app.uiState.targeting === null, 'E: a brief E exits click-by-click');
-ok(w.carrying === 'con_c', 'E: still carrying after the exit tap');
+ok(app.uiState.menu === null && !app._drag.active, 'E/B: a hold while carrying does nothing');
+ok(app._carryConsumed === true, 'E/B: the hold is consumed (release will not drop)');
+ok(w.carrying === 'con_c', 'E/B: still carrying through the hold');
+// the physical release of the consumed hold is swallowed → no drop
+app.input.carryHeldSince = null;
+app._handleAction('carry_release', performance.now());
+ok(w.carrying === 'con_c', 'E/B: releasing the held E does not drop the item');
 
-// programmable only (mine) → swallowed (programming moved to the Forge)
+// programmable only (mine) → also nothing (programming is at the Forge)
 clearHands();
 w.player = [430, 440];
 app._pickItem({ kind: 'mine', id: 'mine_a' });
 eHold();
-ok(app.uiState.menu === null && app.uiState.targeting === null, 'E/C: an E hold on a programmable-only device does nothing');
+ok(app.uiState.menu === null, 'E/C: an E hold on a programmable-only device does nothing');
 clearHands();
 
-// both (rewirer) → click-by-click targeting (the reqT path)
+// rewirer (programmable + targeting) → likewise nothing from a hold
 clearHands();
 w.player = [520, 440];
 app._pickItem({ kind: 'rewirer', id: 'rw_a' });
 w.nodes['rw_a'].color = 'red';
 eHold();
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'rewirer', 'E/D: an E hold enters click-by-click targeting');
-ok(!app._drag.active, 'E/D: no golden arrow from an E hold');
-app.uiState.targeting = null;
+ok(app.uiState.menu === null && !app._drag.active, 'E/D: an E hold while carrying the rewirer does nothing');
+clearHands();
 
-// brief E while carrying (not targeting) drops
+// brief E while carrying drops
 clearHands();
 w.player = [445, 293];
 app._pickItem({ kind: 'connector', id: 'con_c' });
@@ -384,30 +389,29 @@ w.nodes['con_c'].color = null;            // leave con_c clean for later section
 forge.uses = 3;
 
 // =========================================================================
-// Jammer targeting — the two paths the player actually uses.
+// Jammer targeting — the two paths the player actually uses (a plain click on a
+// gate, and the golden-arrow sweep).
 // =========================================================================
 
-// Click-by-click: a click ANYWHERE along a gate segment marks it (not just the
+// Plain carrying: a click ANYWHERE along a gate segment marks it (not just the
 // midpoint — that midpoint-only hit zone was the bug).
 clearHands(); w.jam_links.clear();
 w.player = [470, 380];
 app._pickItem({ kind: 'jammer', id: 'jam_a' });
-app._enterTargeting('jammer');
-ok(app.uiState.targeting && app.uiState.targeting.kind === 'jammer', 'jammer entered click-by-click');
 app._playClick(820, 380);                       // left end of ff_mid (786..1005), NOT its centre
-ok(w.jam_links.get('jam_a') === 'ff_mid', 'click-by-click: a click on the gate body marks the gate');
+ok(w.jam_links.get('jam_a') === 'ff_mid', 'carry-click: a click on the gate body marks the gate');
 
 // Re-marking a different gate overwrites (one intent, last wins).
 app._playClick(820, 250);                       // ff_top
-ok(w.jam_links.get('jam_a') === 'ff_top' && w.jam_links.size === 1, 'click-by-click: re-mark overwrites');
+ok(w.jam_links.get('jam_a') === 'ff_top' && w.jam_links.size === 1, 'carry-click: re-mark overwrites');
 clearHands(); w.jam_links.clear();
 
-// A click on empty space (no gate / mine / ray) leaves targeting.
+// A click on empty space (no gate / mine / ray) just aims/drops — it never marks
+// a jam target, and the existing mark (if any) is left alone.
 w.player = [470, 380];
 app._pickItem({ kind: 'jammer', id: 'jam_a' });
-app._enterTargeting('jammer');
-app._playClick(470, 200);                        // nothing there
-ok(app.uiState.targeting === null, 'click-by-click: an empty click exits targeting');
+app._playClick(470, 200);                        // nothing there → no mark made
+ok(!w.jam_links.has('jam_a'), 'carry-click: an empty click marks nothing');
 clearHands(); w.jam_links.clear();
 
 // Golden arrow: a wire-drag sweep onto a gate marks it.
@@ -453,7 +457,7 @@ clearHands(); w.links.clear(); w.jam_links.clear();
 
 // =========================================================================
 // C clears the carried targeting device's intents — connector links AND a
-// jammer's jam mark, in both carrying and click-by-click modes.
+// jammer's jam mark — while carrying.
 // =========================================================================
 clearHands(); w.links.clear(); w.jam_links.clear();
 
@@ -463,15 +467,6 @@ app._pickItem({ kind: 'jammer', id: 'jam_a' });
 w.set_jam('jam_a', 'ff_mid');
 app._handleAction('clear', performance.now());
 ok(!w.jam_links.has('jam_a'), 'C clears a carried jammer\u2019s jam mark');
-clearHands(); w.jam_links.clear();
-
-// Jammer, in click-by-click.
-w.player = [470, 380];
-app._pickItem({ kind: 'jammer', id: 'jam_a' });
-app._enterTargeting('jammer');
-w.set_jam('jam_a', 'ff_top');
-app._handleAction('clear', performance.now());
-ok(!w.jam_links.has('jam_a'), 'C clears the jam mark in click-by-click too');
 clearHands(); w.jam_links.clear();
 
 // Connector regression: C still clears its light links.

@@ -62,22 +62,21 @@ If you have Node.js available, `npx serve .` also works.
 | Key / action | Effect |
 |---|---|
 | WASD / arrow keys | Move player |
-| E (brief tap) | Empty-handed: pick up the nearest object in radius. Carrying: set it down at its live preview spot (the "shadow"). In click-by-click: exit the mode |
-| E (hold ~1/3 s) while carrying a targeting device | Drops straight into click-by-click targeting (no golden arrow). Programming is no longer on this hold — it lives at a Forge (see F) |
+| E (brief tap) | Empty-handed: pick up the nearest object in radius. Carrying: set it down at its live preview spot (the "shadow") |
 | Boxes | Solid and not pushable — walk around them, or carry them to move them |
 | Click an object in radius (empty-handed) | Pick up the top item, armed (ready) |
 | Hold the mouse (or E) ~1/3 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
-| Targeting a carried device | Press & hold in the operating ring — see "Targeting & programming" below |
+| Click another item while carrying a targeting device | Makes (or toggles off) an intent toward it — a connector link, a jammer's jam mark, a rewirer's recolour target. This is the everyday way to target |
+| Press & hold in the operating ring (carrying a targeting device) | Draws the **golden arrow**; pull it onto a target and release to wire that intent. A handy sweep alternative to single clicks |
 | F (or the panel's hidden **Program** button) | Program the carried device — opens its chooser, but only while standing in a **Forge**'s radius with uses left; each applied value spends one of that Forge's uses. **Escape** closes the menu for free |
-| Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius; a click outside the ring is just an aim and never drops |
+| Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius and not on a valid target; a click outside the ring is just an aim and never drops |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
 | Drag the character while carrying a ready connector | Auto-wires to nodes it passes over |
-| Click on an intent ray (while carrying a targeting device, or in click-by-click) | Erases that intent; every ray in the small hit zone goes at once |
-| Exit click-by-click | A brief click on empty space (not a target), or a tap of E |
-| C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark (works while carrying or in click-by-click) |
-| Hold Shift | Highlight what the carried item can target (rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
+| Click on an intent ray while carrying its device | Erases that intent; every ray in the small hit zone goes at once |
+| C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark |
+| Hold Shift | Make the targetable-item contours more visible (bright rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
 | Hold Space | Highlight where the carried item's ray can travel (a translucent area). Inverts the panel "Ray reach" toggle while held |
 | Z | Rewind — undo the last meaningful action (up to 6 steps) |
 | Hold R (2s) | Full reset — rebuild the entire playfield from scratch |
@@ -117,15 +116,17 @@ There is also one stationary fixture:
 A small translucent panel sits in the upper-left corner of the playfield. Its
 header chevron collapses it vertically. The controls are:
 
-- **Targets** — sticky toggle: highlight everything the carried item can target.
-  A bright ring marks a target with a clear shot; a faint dashed ring marks one
-  the ray cannot currently reach. Equivalent to holding **Shift** momentarily —
-  and when the toggle is on, holding Shift *suppresses* it.
+- **Targets** — sticky toggle for the targetable-item contours. While you carry a
+  targeting device, a **faint dotted golden contour** always rings everything it
+  can target (extremely unobtrusive — never hidden). This toggle makes those
+  contours **more visible**: a bright ring marks a target with a clear shot, a
+  faint dashed ring one the ray cannot currently reach. Equivalent to holding
+  **Shift** momentarily — and when the toggle is on, holding Shift *suppresses*
+  the prominent version (the faint contour remains).
 - **Ray reach** — sticky toggle: highlight the whole area the carried item's ray
   could travel to from where the robot stands (as if she were a light source
   whose rays stop on whatever that item cannot pass). Equivalent to holding
   **Space**, with the same invert-while-held behaviour.
-- **Targeting** — enter or leave click-by-click targeting of the carried device.
 - **Program** — *hidden* until programming is actually available (a programmable
   item carried within a Forge's range); then it appears and, like **F**, summons
   the programming chooser.
@@ -139,28 +140,29 @@ header chevron collapses it vertically. The controls are:
   where you are. Switching levels (and a full reset afterwards) starts the chosen
   level fresh.
 
-If the panel happens to cover an item you are trying to target — while sweeping
-the golden link arrow or in click-by-click — and you move the cursor onto the
-panel, it politely fades out after a second so you can reach what is behind it,
-then fades back the moment the conflict is resolved.
+If the panel happens to cover an item you are trying to target while sweeping
+the golden link arrow, and you move the cursor onto the panel, it politely fades
+out after a second so you can reach what is behind it, then fades back the moment
+the conflict is resolved.
 
 ## Targeting & programming
 
-A brief click while carrying just **drops** the item (inside the ring). To target a carried device, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second, **or hold E** for the same time. The mouse hold draws the golden arrow first; **E goes straight to click-by-click** (no arrow). Programming is summoned separately, at a Forge — see below.
+While carrying a targeting device, **clicking another item makes (or toggles off) an intent toward it** — a connector link, a jammer's jam mark, a rewirer's recolour target. That is the everyday way to target: no separate mode to enter or leave. A click on empty ground inside the operating ring just **drops** the item; a click outside the ring is only an aim. Programming is summoned separately, at a Forge — see below.
+
+For wiring several links in one motion, **press and hold in the operating ring** (off the character, inside the circle) for about a third of a second to draw the **golden arrow**, then pull it onto a target and release to wire that intent — a sweep alternative to single clicks.
 
 **The targeting interaction is one shared framework**, identical for every object that can have targets — you never learn it twice. Any such object follows the same core:
 
-- a long press (E or mouse) begins targeting;
-- the **golden arrow** is available in the window from ~0.333 s to ~0.833 s into a mouse press — pull out of the ring to keep drawing it to a target, or stay inside to drop into **click-by-click** (an E hold enters click-by-click directly);
-- a click on an **intent ray deletes** it (every ray in the small hit zone goes at once);
+- a click on a target **makes / toggles** the intent (and the golden-arrow sweep does the same);
+- a click on one of the device's own **intent rays deletes** it (every ray in the small hit zone goes at once);
 - **C clears** every intent of the carried device.
 
 What differs per object is *only* its data, declared in one spec in `js/sim/targeting.js`: how many intents it may hold, what it is allowed to target, and how an intent is stored, drawn, and cleared. Today:
 
-- **Connector** — many intents; targets sources / receivers / connectors; the arrow (and a character-drag) toggle light links.
-- **Jammer** — one intent; targets a force field or a jammable node; the arrow sets the single target.
-- **Rewirer** — one intent; targets a source / receiver / connector; the arrow sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
+- **Connector** — many intents; targets sources / receivers / connectors; a click (or the arrow, or a character-drag) toggles light links.
+- **Jammer** — one intent; targets a force field or a jammable node; a click sets the single target.
+- **Rewirer** — one intent; targets a source / receiver / connector; a click sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
 
 Programmable devices add a programming step on top, and it is **its own shared framework** (`js/sim/programming.js`): picking a value sets one of the device's fields. Only the menu *contents* differ per object, declared in one spec — the mine's offers fuse seconds, the rewirer's a colour, the connector's clean-or-corrupt; a future device could offer, say, a movement axis. To add a new programmable object, give its type `programmable: true` and add one spec entry (plus its menu/flash strings) — the core does not change. (`test_programming.mjs` enforces that every `programmable` kind has a conforming spec, and `test_targeting.mjs` does the same for targeting.)
 
-**Where programming happens has changed: it is gated behind Forges.** A long press no longer opens any programming menu — that hold is targeting-only now. Instead, carry a programmable device into a **Forge**'s radius and press **F** (or the panel's hidden **Program** button) to summon its chooser. Each *applied* value spends one of that Forge's limited uses; **Escape** closes the menu without spending anything. When a Forge's uses reach zero it grays out and is spent. A Forge is a stationary, material fixture (it occludes light and blocks movement), so where it sits is itself part of the puzzle.
+**Where programming happens: it is gated behind Forges.** The annulus hold draws the wiring arrow and nothing else — it never opens a programming menu. Instead, carry a programmable device into a **Forge**'s radius and press **F** (or the panel's hidden **Program** button) to summon its chooser. Each *applied* value spends one of that Forge's limited uses; **Escape** closes the menu without spending anything. When a Forge's uses reach zero it grays out and is spent. A Forge is a stationary, material fixture (it occludes light and blocks movement), so where it sits is itself part of the puzzle.

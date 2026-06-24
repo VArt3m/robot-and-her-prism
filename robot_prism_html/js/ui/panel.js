@@ -9,9 +9,11 @@
  * callbacks in `actions` and reflects state pushed back via `refresh()`.
  *
  *   Buttons
- *     • Targets   — sticky toggle: highlight what the carried item can target.
+ *     • Targets   — sticky toggle: a carried targeting device ALWAYS shows a
+ *                   faint dotted contour around what it can target; this toggle
+ *                   makes those contours more visible (and distinguishes
+ *                   reachable from blocked). Inverted while Shift is held.
  *     • Ray reach — sticky toggle: highlight where its ray can travel.
- *     • Targeting — toggle: enter / leave click-by-click targeting.
  *     • Program   — hidden until a programmable item is carried in a Forge's
  *                   range; pressing it summons the programming menu (like F).
  *     • Reset     — press-and-hold (2 s) to rebuild the playfield.
@@ -21,8 +23,8 @@
  *   transition), leaving just the title bar.
  *
  *   Polite fade: app.js calls setConflict(true) when the panel is covering a
- *   currently-targetable item and the pointer is over the panel during a
- *   targeting gesture. After ~1 s of sustained conflict the panel fades out
+ *   currently-targetable item and the pointer is over the panel during the
+ *   golden-arrow link drag. After ~1 s of sustained conflict the panel fades out
  *   (and stops intercepting pointer events, so the item beneath becomes
  *   reachable); it fades back the moment the conflict clears.
  */
@@ -70,7 +72,6 @@ export class Panel {
       <div class="ui-panel-body">
         <button type="button" class="ui-btn ui-toggle" data-act="targets"></button>
         <button type="button" class="ui-btn ui-toggle" data-act="passable"></button>
-        <button type="button" class="ui-btn ui-toggle" data-act="targeting"></button>
         <button type="button" class="ui-btn ui-forge" data-act="forge" hidden></button>
         <button type="button" class="ui-btn ui-discharge" data-act="discharge" hidden></button>
         <button type="button" class="ui-btn ui-hold" data-act="reset"><span class="ui-fill"></span><span class="ui-label"></span></button>
@@ -94,7 +95,6 @@ export class Panel {
     };
     label(this.btn.targets,   P.targets,   P.targetsHint);
     label(this.btn.passable,  P.passable,  P.passableHint);
-    label(this.btn.targeting, P.targeting, P.targetingHint);
     label(this.btn.forge,     P.forge,     P.forgeHint);
     label(this.btn.discharge, P.discharge, P.dischargeHint);
     label(this.btn.reset,     P.reset,     P.resetHint);
@@ -113,7 +113,6 @@ export class Panel {
     });
     click('targets',   () => this.actions.toggleTargets?.());
     click('passable',  () => this.actions.togglePassable?.());
-    click('targeting', () => this.actions.toggleTargeting?.());
     click('forge',     () => this.actions.forge?.());
     click('discharge', () => this.actions.discharge?.());
     click('undo',      () => this.actions.undo?.());
@@ -135,19 +134,15 @@ export class Panel {
   // Push current game state onto the buttons. `s` carries:
   //   targets, passable      sticky toggle prefs (button "on" state)
   //   targetsFlip, passFlip   true when a modifier is momentarily inverting it
-  //   targetingActive         click-by-click targeting is live
-  //   canTarget               a targeting device is carried (or targeting is on)
   //   resetProgress           0..1 fill of the reset hold
   refresh(s) {
     if (!this.el) return;
     const set = (b, on) => b.classList.toggle('active', !!on);
     set(this.btn.targets,   s.targets);
     set(this.btn.passable,  s.passable);
-    set(this.btn.targeting, s.targetingActive);
-    // A small dot cue when Alt/Ctrl are flipping a toggle from its sticky value.
+    // A small dot cue when Shift/Space are flipping a toggle from its sticky value.
     this.btn.targets.classList.toggle('flip', !!s.targetsFlip);
     this.btn.passable.classList.toggle('flip', !!s.passFlip);
-    this.btn.targeting.disabled = !s.canTarget && !s.targetingActive;
     // The Forge button is entirely hidden until programming is actually available
     // (a programmable item in hand, a Forge with uses in range); then it appears.
     this.btn.forge.hidden = !s.canForge;

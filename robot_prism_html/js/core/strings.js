@@ -88,7 +88,6 @@ const en = {
 
   // Small badges drawn above a carried / placed object on the canvas.
   badge: {
-    targeting: '(targeting)',
     stackHere: '(stack here)',
     dropHere: '(drop here)',
     raised: '(raised)',
@@ -99,11 +98,9 @@ const en = {
     title: 'Tools',
     collapseHint: 'Collapse / expand',
     targets: 'Targets',
-    targetsHint: 'Highlight what the carried item can target (or hold Shift)',
+    targetsHint: 'Make the targetable-item contours more visible (or hold Shift)',
     passable: 'Ray reach',
     passableHint: 'Highlight where the carried item’s ray can travel (or hold Space)',
-    targeting: 'Targeting',
-    targetingHint: 'Enter / leave click-by-click targeting of the carried device',
     forge: 'Program',
     forgeHint: 'Program the carried item at this Forge (or press F)',
     discharge: 'Discharge',
@@ -158,16 +155,6 @@ const en = {
     accumFilled: 'Accumulator charged — it is now a portable source; its feeder links dropped, other links kept',
     accumDischarged: 'Accumulator emptied — it can be charged again',
     noLineOfSight: 'No line of sight',
-    targeting: (what) => `Targeting — click ${what}; click empty or tap E to finish`,
-    doneTargeting: 'Done targeting',
-  },
-
-  // What the click-by-click targeting prompt should tell the player to click.
-  targetWhat: {
-    connector: 'a node',
-    accumulator: 'a node',
-    rewirer: 'a source/receiver',
-    default: 'a field or mine',
   },
 
   // Stack-chooser / programming menu labels.

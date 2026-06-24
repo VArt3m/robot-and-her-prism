@@ -4,9 +4,9 @@
  * Every object whose type sets `requiresTarget` shares ONE interaction core,
  * which lives in the UI and is identical for all of them:
  *
- *   • a long-press on E, or a long left-mouse press, begins targeting;
- *   • a golden arrow is available in the window 0.333 s … 0.833 s into the press;
- *   • staying in the ring through that window drops into click-by-click;
+ *   • while carrying the device, a click on a target MAKES / toggles the intent;
+ *   • a press-and-hold in the operating ring draws the golden arrow (a sweep
+ *     alternative): pull it onto a target and release to mark the same intent;
  *   • a click on one of the device's OWN intent rays deletes that ray;
  *   • C clears every intent of the carried device.
  *

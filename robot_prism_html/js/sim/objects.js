@@ -12,7 +12,7 @@ import { BOX_R, CONN_R, MINE_R, FORGE_R } from '../core/constants.js';
 //   carriable : can be picked up and carried.
 //   requiresTarget : the object is aimed at a target node when carried (a
 //               connector wires to nodes; a box just sits). Drives the
-//               wire-drag / click-by-click targeting gesture in the UI.
+//               click-to-target / golden-arrow wiring interaction in the UI.
 //   programmable   : the object holds a player-settable value (a fuse time, a
 //               colour, …) configured via the programming sequence in the UI.
 //   jammable  : a jammer can target it. When a live jam ray reaches it, it is
