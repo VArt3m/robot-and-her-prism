@@ -1,6 +1,6 @@
 import { BOX_R, CONN_R, PLAYER_R, CONNECT_REACH } from '../core/constants.js';
 import { dist, pt_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES, kindIsJammable, isRelay, isAccumulatorKind } from './objects.js';
+import { OBJECT_TYPES, kindIsJammable, isRelay, isAccumulatorKind, isMaterialKind } from './objects.js';
 import { Engine } from './engine.js';
 import { Motion } from './motion.js';
 
@@ -79,6 +79,29 @@ export class World {
   // bare [x,y] points, not nodes.
   carriable_nodes() {
     return Object.values(this.nodes).filter(n => OBJECT_TYPES[n.kind]?.carriable && !n.spent);
+  }
+
+  // Every node that occupies physical space — the one set that blocks the player
+  // and object placement. It is the union of the carriable devices (connector /
+  // inverter / mixer / mine / rewirer / jammer / accumulator), the forge, and the
+  // source / receiver fixtures: i.e. every kind flagged `material` (objects.js).
+  // Buttons and logic gates are NOT material (the robot stands on them) and so
+  // are absent. Spent (destroyed) nodes are gone. This is the single source of
+  // truth that replaced the old per-kind movement/placement enumerations, so a
+  // new material kind needs no edit in motion / world to become solid.
+  material_nodes() {
+    return Object.values(this.nodes).filter(n => !n.spent && isMaterialKind(n.kind));
+  }
+
+  // The material footprint radius of a node — what its body physically occupies,
+  // shared by movement collision, placement, and the kiss-sweep. A charging
+  // accumulator reports its GROWN external layer (so its larger body blocks too);
+  // every other material kind reports its declared radius.
+  nodeFootprintRadius(nid) {
+    const n = this.nodes[nid];
+    if (!n) return 0;
+    if (isAccumulatorKind(n.kind)) return this.engine.accumFootprintRadius(nid);
+    return OBJECT_TYPES[n.kind]?.radius ?? CONN_R;
   }
 
   // The nearest in-reach, unobstructed pickable to the player: a carriable node
@@ -256,20 +279,18 @@ export class World {
 
   // Would a material object of radius r placed at `pos` overlap anything solid
   // (walls / barriers / closed force fields), another material object, or the
-  // player? Validates where dropped or placed objects may legally rest.
+  // player? Validates where dropped or placed objects may legally rest. Every
+  // material NODE is consulted via material_nodes() — the carriable devices, the
+  // forge, and the source / receiver fixtures alike — at its own footprint radius.
   object_pos_blocked(pos, r, opts = {}) {
     const { ignoreConn = null, ignoreBox = null } = opts;
     const segs = this.staticBlockerSegs({ barriers: 'all' });
     for (const [s1, s2] of segs) if (pt_seg_dist(pos, s1, s2) < r) return true;
     const boxR = OBJECT_TYPES.box.radius;
     for (const b of this.boxes) { if (b === ignoreBox) continue; if (dist(pos, b) < r + boxR) return true; }
-    for (const c of this.carriable_nodes()) {
-      if (c.id === this.carrying || c.id === ignoreConn) continue;
-      const cr = OBJECT_TYPES[c.kind].radius;
-      if (dist(pos, c.pos) < r + cr) return true;
-    }
-    for (const f of this.forges()) {
-      if (dist(pos, f.pos) < r + OBJECT_TYPES.forge.radius) return true;
+    for (const n of this.material_nodes()) {
+      if (n.id === this.carrying || n.id === ignoreConn) continue;
+      if (dist(pos, n.pos) < r + this.nodeFootprintRadius(n.id)) return true;
     }
     if (this.player && dist(pos, this.player) < r + PLAYER_R) return true;
     return false;

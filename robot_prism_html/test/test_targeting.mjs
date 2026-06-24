@@ -6,7 +6,7 @@
 import { World } from '../js/sim/world.js';
 import { Node, ForceField } from '../js/core/entities.js';
 import { OBJECT_TYPES } from '../js/sim/objects.js';
-import { TARGET_SPECS, targetSpec, allIntentRays } from '../js/sim/targeting.js';
+import { TARGET_SPECS, targetSpec, allIntentRays, sweepKissTarget } from '../js/sim/targeting.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
@@ -57,7 +57,42 @@ for (const [kind, spec] of Object.entries(TARGET_SPECS)) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Jammer spec: single intent, set-overwrites, one ray, clear.
+// 3b. sweepKissTarget — the character-drag sweep marks on body CONTACT (a kiss),
+//     not centre proximity. Now that wire targets are MATERIAL the robot's centre
+//     stops ~a radius short, so a target whose body the carried device touches
+//     must mark even though her centre never reaches the old HIT (18) proximity.
+// ---------------------------------------------------------------------------
+{
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('c', 'connector', [100, 100]));      // the carried device
+  const spec = targetSpec('connector');
+  const devR = OBJECT_TYPES.connector.radius;          // 12
+  const srcR = OBJECT_TYPES.source.radius;             // 13 → bodies meet within 25
+
+  w.add(new Node('near', 'source', [100, 100 + devR + srcR - 1], { color: 'red' }));   // 24 apart: kissing
+  ok(sweepKissTarget(w, spec, 'c', [100, 100], devR) === 'near',
+     'a target whose body the device touches is kissed');
+  w.remove_node('near');
+
+  w.add(new Node('far', 'source', [100, 100 + devR + srcR + 2], { color: 'red' }));    // 27 apart: clear
+  ok(sweepKissTarget(w, spec, 'c', [100, 100], devR) === null,
+     'a target a hair beyond the summed radii is NOT kissed');
+  w.remove_node('far');
+
+  // The crux: a target beyond HIT-style centre proximity (so targetAt misses it)
+  // is still kissed — exactly the shot the old "pass-through" sweep needed.
+  w.add(new Node('s', 'source', [100, 122], { color: 'red' }));                        // 22 apart: > HIT(18), still kissing
+  ok(spec.targetAt(w, 'c', 100, 100) === null, 'the source is beyond HIT centre proximity (targetAt misses)');
+  ok(sweepKissTarget(w, spec, 'c', [100, 100], devR) === 's',
+     'kissing marks it where passing-through used to be required');
+
+  // A device that does not auto-wire on drag (the jammer) carries no kiss risk:
+  // it has candidates, but the drag branch never calls kiss for it (dragAutoWire
+  // is off). The helper itself is generic, so spec choice is the only gate.
+  ok(typeof sweepKissTarget === 'function', 'sweepKissTarget is exported');
+}
+
+
 // ---------------------------------------------------------------------------
 {
   const w = new World(); w.player = null; w._uid = 1;

@@ -261,6 +261,29 @@ export function targetSpec(kind) {
   return TARGET_SPECS[kind] || null;
 }
 
+// The target a carried device is currently KISSING — its body (a disc of radius
+// `deviceR` centred at `pos`, i.e. on the robot) touching a candidate target's
+// body. This is what the character-drag sweep marks on, INSTEAD of `targetAt`'s
+// cursor-style HIT proximity: now that every wire target is material, the robot
+// can no longer walk her centre through one (collision stops her ~a radius short),
+// so an intent must be born the instant the carried object's body meets the
+// target's — a kiss — not when her centre reaches the target's centre.
+//
+// It is fully spec-driven: it reuses the device's own `candidates()` (so each
+// device's valid target kinds are honoured — an empty accumulator, a charged one,
+// a connector all keep their own lists) and the shared material footprint radius
+// (`world.nodeFootprintRadius`). Returns the nearest kissed target's id, or null.
+export function sweepKissTarget(world, spec, deviceId, pos, deviceR) {
+  if (!spec || !spec.candidates) return null;
+  let best = null, bd = Infinity;
+  for (const c of spec.candidates(world, deviceId, pos)) {
+    const touch = deviceR + world.nodeFootprintRadius(c.id);   // bodies meet within the sum of radii
+    const d = dist(pos, c.pos);
+    if (d <= touch && d < bd) { bd = d; best = c.id; }
+  }
+  return best;
+}
+
 // Every stored intent ray across all targetable kinds, for click-deletion. Each
 // carries a `key` (so a ray shared by two devices is offered once) and a bound
 // `remove()`.

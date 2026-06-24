@@ -13,7 +13,7 @@ import { Renderer2D } from './renderer2d.js';
 import { InputHandler } from './input.js';
 import { Panel } from './panel.js';
 import { objType, isRelay } from '../sim/objects.js';
-import { targetSpec, allIntentRays } from '../sim/targeting.js';
+import { targetSpec, allIntentRays, sweepKissTarget } from '../sim/targeting.js';
 import { programSpec, programOptions, stampProgramDefaults, sameProgramValue } from '../sim/programming.js';
 import { carriedRayType, visibilityPolygon, rayProfile } from '../sim/occlusion.js';
 import { STR } from '../core/strings.js';
@@ -731,14 +731,16 @@ export class App {
         const cid = w.carrying;
         w.nodes[cid].pos[0] = w.player[0];
         w.nodes[cid].pos[1] = w.player[1];
-        // Auto-mark on pass-over while a device that opts into it (the connector)
-        // is "ready" (selected). Spec-driven: same targetAt as the arrow, and the
-        // same enables-only sweep — a character-drag wires exactly what a golden-
-        // arrow sweep would, and never un-wires. Other carried devices never auto-mark.
+        // Auto-mark on KISS while a device that opts into it (the connector) is
+        // "ready" (selected). Spec-driven: it reuses the same candidate kinds and
+        // the same enables-only sweep, but marks the instant the carried object's
+        // BODY touches a target's — not when her centre reaches it. Targets are
+        // material now, so she can't walk her centre through one; kissing is how a
+        // character-drag wires exactly what a golden-arrow sweep would, never un-wires.
         const dragSpec = targetSpec(this._carriedKind());
         if (dragSpec && dragSpec.dragAutoWire && ui.sel === cid) {
-          const tgt = dragSpec.targetAt(w, cid, w.player[0], w.player[1]);
-          const tid = tgt ? tgt.id : null;
+          const r = objType(this._carriedKind())?.radius ?? CONN_R;
+          const tid = sweepKissTarget(w, dragSpec, cid, w.player, r);
           if (tid && tid !== this._drag.linkHit) {
             (dragSpec.sweepApply || dragSpec.apply)(w, cid, tid);
             this._drag.linkHit = tid;

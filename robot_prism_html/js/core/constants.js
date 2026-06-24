@@ -8,6 +8,12 @@ export const PLAYER_R = 9;
 export const BOX_R = 12;
 export const CONN_R = 12;
 export const MINE_R = 10;
+// Sources and receivers are material fixtures (the robot may not walk through
+// them, and nothing may be placed overlapping them) — these are their circular
+// collision half-extents. They occlude NOTHING (rays must reach them to target
+// them), so this radius drives movement / placement only, never light.
+export const SOURCE_R = 13;     // matches the drawn diamond's reach
+export const RECEIVER_R = 13;   // covers the drawn box's taller half-extent
 export const MINE_FUSE_DEFAULT = 3;   // seconds; reprogrammable, counts from first drop
 export const BTN_R = 16;
 export const BEAM_TOUCH = PLAYER_R + 1;

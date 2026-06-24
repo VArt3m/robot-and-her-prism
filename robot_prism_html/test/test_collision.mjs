@@ -6,9 +6,16 @@
 //     only; never crossing) unless she is carefully manipulating it (cursor
 //     inside her activation ring),
 //   • the upper-left wall extension that makes the src_red sightline from the
-//     purple-field lip barely-but-surely impossible.
+//     purple-field lip barely-but-surely impossible,
+//   • MATERIALITY: every `material` object (objects.js) stops the player and
+//     blocks placement — the carriable devices (jammer / accumulator idle OR
+//     charging / …) and the source / receiver fixtures alike — while NONE of the
+//     newly-solid fixtures occlude light (rays must still reach a source /
+//     receiver to target them).
 // Run: node test_collision.mjs
 import { LEVELS } from '../js/sim/level.js';
+import { World } from '../js/sim/world.js';
+import { Node } from '../js/core/entities.js';
 import { pt_seg_dist } from '../js/core/geometry.js';
 import { PLAYER_R, CONN_R, CONNECT_REACH, FORGE_REACH } from '../js/core/constants.js';
 
@@ -187,6 +194,83 @@ ok(!reaches(true,  [760, 560], [815, 560]),  'cannot carry an object across the 
     app._syncCarried();
     app._tick(performance.now() / 1000);
     ok(w.carrying === 'con_1', 'with the cursor in her activation ring the object is NOT dropped');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. MATERIALITY: every `material` object stops the player — not just relays /
+//    forges. A jammer, an IDLE accumulator (the "half-way" charging-only case is
+//    now whole), a source and a receiver are all solid: the robot can no longer
+//    walk her centre through their bodies. Yet the source / receiver fixtures
+//    occlude NO light, so a ray can still reach (target) them.
+// ---------------------------------------------------------------------------
+{
+  const mk = () => { const w = new World(); w._uid = 1; return w; };
+  // Walk straight from `from` toward `to` (through the object centred between
+  // them). Returns true only if she gets all the way (i.e. nothing stopped her).
+  const walksThrough = (w, from, to) => {
+    w.player = [...from];
+    for (let i = 0; i < 400; i++) {
+      const dx = to[0]-w.player[0], dy = to[1]-w.player[1], d = Math.hypot(dx, dy) || 1;
+      if (d < 1) return true;
+      const before = [...w.player];
+      w.move_player(dx/d*3, 0); w.move_player(0, dy/d*3);
+      if (w.player[0] === before[0] && w.player[1] === before[1]) return false;   // stopped at the body
+    }
+    return Math.hypot(w.player[0]-to[0], w.player[1]-to[1]) < 1;
+  };
+
+  for (const [kind, extra] of [
+    ['jammer',      {}],
+    ['accumulator', { color: null }],                       // IDLE — not charging
+    ['rewirer',     {}],
+    ['mine',        { fuse: 3 }],
+    ['source',      { color: 'red' }],
+    ['receiver',    { color: 'red', fill_time: 1 }],
+  ]) {
+    const w = mk();
+    w.add(new Node('M', kind, [300, 300], extra));
+    ok(!walksThrough(w, [300, 270], [300, 330]),
+       `a ${kind} is material — the robot cannot walk through its body`);
+    // She is stopped, but never trapped INSIDE the skin: her centre stays at
+    // least (radius - 2) clear of the body she pressed against.
+    ok(Math.hypot(w.player[0]-300, w.player[1]-300) > PLAYER_R + CONN_R - 4,
+       `the robot stops at the ${kind}'s surface, not inside it`);
+  }
+
+  // A charging accumulator blocks at its GROWN footprint (already true; now via
+  // the unified material path) — strictly larger than the idle body.
+  {
+    const w = mk();
+    w.add(new Node('gs', 'source', [0, 300], { color: 'green' }));
+    w.add(new Node('bs', 'source', [600, 300], { color: 'blue' }));
+    w.add(new Node('A', 'accumulator', [300, 300], { color: null }));
+    w.toggle_link('gs', 'A'); w.toggle_link('bs', 'A');
+    w.solve(true); w.step(0); w.step(0.3);                  // begin charging → grows
+    ok(w.engine.accumFootprintRadius('A') > CONN_R, 'the accumulator is charging (grown)');
+    ok(w.nodeFootprintRadius('A') === w.engine.accumFootprintRadius('A'),
+       'movement reads the grown footprint while charging');
+  }
+
+  // Sources & receivers are SOLID — material to the robot AND (now) standard
+  // light obstacles. The pass-through-vs-deliver nuance + outer-contour reach are
+  // pinned in test_occlusion; here we just confirm both facets are present.
+  {
+    const w = mk();
+    w.add(new Node('src', 'source',   [100, 100], { color: 'red' }));
+    w.add(new Node('rcv', 'receiver', [500, 100], { color: 'red', fill_time: 1 }));
+    ok(w.material_nodes().length === 2, 'both fixtures are material (block the robot & placement)');
+    ok(w.light_blockers().length > 0, 'sources & receivers now occlude light too (obstacle rules)');
+  }
+
+  // Placement honours the new fixtures: a connector may not be dropped overlapping
+  // a source, but a spot a hair past their combined radii is fine.
+  {
+    const w = mk();
+    w.add(new Node('src', 'source', [300, 300], { color: 'red' }));
+    ok(w.object_pos_blocked([300, 300], CONN_R, {}) === true,  'cannot place a connector on a source');
+    ok(w.object_pos_blocked([300, 300 + CONN_R + 13 + 1], CONN_R, {}) === false,
+       'a placement just clear of the source is legal');
   }
 }
 

@@ -1,13 +1,22 @@
-import { BOX_R, CONN_R, MINE_R, FORGE_R } from '../core/constants.js';
+import { BOX_R, CONN_R, MINE_R, FORGE_R, SOURCE_R, RECEIVER_R } from '../core/constants.js';
 
 // Central description of the physical objects that live on the field — the
 // "logical space" for object rules. Add new kinds and new properties here as
 // the game grows (e.g. immaterial objects, pushable objects, heavier items).
 //
-//   material  : occupies space — nothing may overlap it (the player, walls,
-//               barriers, or other material objects). Immaterial objects can
-//               be added later with material:false. Materiality does NOT stop
-//               the player from carrying the object.
+//   material  : occupies physical space — nothing may overlap it (the player,
+//               walls, barriers, or other material objects). This is the SINGLE
+//               source of truth for movement + placement blocking: the player
+//               cannot walk through a material object and nothing may be dropped
+//               overlapping one (see motion.move_player / world.material_nodes /
+//               world.object_pos_blocked). Materiality is a SEPARATE concern from
+//               light occlusion — what a ray passes through is governed by
+//               RAY_OCCLUSION (sim/occlusion.js) and the engine's blocker builder
+//               (`_leveled_blockers`), which decide independently which material
+//               kinds also block light (carriable devices, forges, and now sources
+//               / receivers do; buttons would not, were they material). Immaterial
+//               objects use material:false. Materiality does NOT stop the player
+//               from carrying the object.
 //   pushable  : can be shoved by the player walking into it. None today.
 //   carriable : can be picked up and carried.
 //   requiresTarget : the object is aimed at a target node when carried (a
@@ -71,10 +80,28 @@ export const OBJECT_TYPES = {
   // same base footprint as a relay. NOT a relay (`relay` unset) so it stays out of
   // the relay machinery — its intake is handled by a dedicated engine pass.
   accumulator: { material: true, pushable: false, carriable: true, requiresTarget: true, programmable: false, jammable: false, radius: CONN_R },
+  // A light SOURCE and a RECEIVER — stationary environment fixtures (like the
+  // forge: not carriable, not pushable). They are MATERIAL (the robot may not walk
+  // through them and nothing may be placed overlapping them) AND they occlude light
+  // like any standard obstacle: a beam passing THROUGH one toward something else is
+  // stopped at its near face. What keeps their function intact is the solver's
+  // owner filter — a beam a fixture is a genuine ENDPOINT of (a source it emits
+  // from, a receiver it delivers to) is not blocked by its own body — so "what they
+  // actually take, they take", and a delivering beam is drawn only to the fixture's
+  // outer contour (see engine `_leveled_blockers` / `_endpointBodyCap`).
+  source:    { material: true, pushable: false, carriable: false, requiresTarget: false, programmable: false, jammable: false, radius: SOURCE_R },
+  receiver:  { material: true, pushable: false, carriable: false, requiresTarget: false, programmable: false, jammable: false, radius: RECEIVER_R },
 };
 
 export function objType(kind) {
   return OBJECT_TYPES[kind] || null;
+}
+
+// Does this kind occupy physical space (block the player and object placement)?
+// Single source of truth, read straight off the table above. Buttons / logic
+// gates have no entry, so they are immaterial (the robot stands on them).
+export function isMaterialKind(kind) {
+  return Boolean(OBJECT_TYPES[kind]?.material);
 }
 
 // Is this an accumulator (a portable source)? One physical source of truth.

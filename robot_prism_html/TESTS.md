@@ -6,7 +6,7 @@ engine can still follow along. If you only remember one thing: the tests are tin
 standalone scripts that build a toy world, ask the simulation a question, and
 assert the answer — no test framework, no browser, no magic.
 
-- **20 suites, ~980 assertions, run in a few seconds.**
+- **20 suites, ~1062 assertions, run in a few seconds.**
 - Everything is headless Node (`.mjs` ES modules); the few UI tests fake just
   enough of a browser to construct the app object.
 - Source of truth for behaviour lives in `CLAUDE.md` (architecture) and the per-file
@@ -89,21 +89,21 @@ prefer the cheaper, deterministic cold solve.
 
 | Suite | Checks | Area |
 |---|--:|---|
-| `test_occlusion` | 34 | Beam physics |
+| `test_occlusion` | 46 | Beam physics |
 | `test_directional` | 51 | Beam physics |
 | `test_rank_feeders` | 23 | Beam physics |
-| `test_ray_occlusion` | 15 | Beam physics |
+| `test_ray_occlusion` | 29 | Beam physics |
 | `test_player_block` | 12 | Beam physics |
-| `test_collision` | 25 | Collision & carry |
+| `test_collision` | 43 | Collision & carry |
 | `test_inverter` | 62 | Devices |
 | `test_mixer` | 61 | Devices |
-| `test_accumulator` | 26 | Devices |
+| `test_accumulator` | 55 | Devices |
 | `test_rewirer` | 25 | Devices |
 | `test_jam` | 24 | Devices |
-| `test_targeting` | 68 | Frameworks |
-| `test_programming` | 187 | Frameworks |
+| `test_targeting` | 75 | Frameworks |
+| `test_programming` | 189 | Frameworks |
 | `test_integration` | 108 | UI / app |
-| `test_tree` | 93 | UI / app |
+| `test_tree` | 96 | UI / app |
 | `test_placement` | 70 | UI / app |
 | `test_highlight` | 31 | UI / app |
 | `test_levelselect` | 18 | UI / app |
@@ -137,7 +137,11 @@ The occlusion model: a beam is stopped by every *material* object (boxes, relays
 forges, closed force fields, the robot when blocking), while a deliberate link
 *endpoint* still re-emits rather than being treated as a wall. Confirms walls vs.
 barriers vs. force fields behave as intended, and basic line-of-sight
-(`world.ray_clear`).
+(`world.ray_clear`). §5 adds **sources & receivers as obstacles**: a fixture standing
+between a connector and a farther target blocks the beam (the far one stays dark, the
+unwired blocker takes nothing), yet a beam that actually *targets* a fixture still
+delivers ("what they take, they take"), and that delivering beam stops at the
+fixture's **outer contour** (centre − r) rather than plunging into the body.
 
 ### `test_directional` — which way light flows
 The directional rank law, organised into numbered cases that read like a spec:
@@ -203,7 +207,13 @@ the near side (it never crosses) and she continues empty-handed — unless the c
 inside her activation ring, the "careful manipulation" exception, in which case it is
 not dropped. The same suite also asserts the **upper-left wall** now reaches `y=146`,
 that this closes the `src_red` sightline from the purple-field lip, and that the player
-doorway below stays wide.
+doorway below stays wide. **Materiality** rounds it out: every `material` kind — the
+carriable devices (jammer, idle *and* charging accumulator, rewirer, mine) and the
+source / receiver fixtures — now stops the robot's body (she can't walk her centre
+through one) without trapping her inside the skin, placement refuses to drop an object
+overlapping a source, and the fixtures are confirmed to occlude light too (the
+pass-through-blocks-vs-endpoint-delivers nuance and the outer-contour reach live in
+`test_occlusion`).
 
 ---
 
@@ -259,10 +269,14 @@ spec entry), with no new per-kind code in the core. They're contract tests.
 ### `test_targeting` — every "needs a target" device is spec-driven
 Pins that targeting is entirely spec-driven: the candidate enumeration,
 reachability, and wiring all come from a registry entry, so a new targetable object
-passes simply by registering. No per-kind branches allowed in the core path.
+passes simply by registering. No per-kind branches allowed in the core path. It also
+pins `sweepKissTarget` — the character-drag's body-contact (kiss) target finder:
+a target is marked when the carried device's body touches it (within the sum of
+footprint radii), and crucially a target *beyond* the old `HIT` centre-proximity (the
+shot the now-blocked pass-through used to need) is still kissed.
 
 ### `test_programming` — every programmable device is spec-driven
-The largest suite (187 checks). The programming system models each device as a set
+The largest suite (189 checks). The programming system models each device as a set
 of **facets**; the suite pins that every facet resolves to real menu labels and
 flashes, that the chooser-building rules behave (no-op options are hidden,
 corruption options are gated to the right kind of Forge, multi-facet devices
@@ -291,7 +305,11 @@ hold launches the arrow, which draws until release; there is no click-by-click
 mode and no E-hold targeting) plus the **click-to-intent** path (a plain click on
 a target while carrying makes / toggles / erases an intent) and the Forge
 programming gateway, by **back-dating timestamps** so the timers fire
-deterministically, then asserts each branch of the state machine.
+deterministically, then asserts each branch of the state machine. It also pins the
+**character-drag kiss auto-wire** end-to-end: parked at the materiality-stop distance
+from a source (her centre beyond the old `HIT` proximity), a player-drag into it still
+wires the link — body contact, not centre-overlap, is what marks now that targets are
+solid.
 
 ### `test_placement` — the carried-item drop shadow
 Headless checks that the continuously-computed, guaranteed-legal, in-reach drop

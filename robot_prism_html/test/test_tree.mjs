@@ -6,6 +6,7 @@
 import { dist } from '../js/core/geometry.js';
 import { CONNECT_REACH } from '../js/core/constants.js';
 import { targetSpec } from '../js/sim/targeting.js';
+import { Node } from '../js/core/entities.js';
 
 // --- minimal DOM mocks (same as the integration harness) ---
 const noop = () => {};
@@ -445,6 +446,29 @@ app._onMouseMove([445, 293], {});                // dragged onto con_c's spot
 ok(w.links.size === jamLinksBefore, 'a carried jammer never auto-wires light links');
 clearHands(); w.links.clear(); w.jam_links.clear();
 app._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+
+// Character-drag KISS auto-wire: targets are MATERIAL now, so the robot cannot
+// walk her centre through one — collision stops her ~a radius short. The drag must
+// therefore wire on body CONTACT (a kiss), not on her centre reaching the target.
+// Park her at the materiality-stop distance from a source (centre ~20px away —
+// BEYOND the old HIT=18 proximity that the pass-through sweep relied on) and
+// confirm a drag still wires it.
+{
+  w.add(new Node('ks', 'source', [600, 300], { color: 'red' }));
+  const stop = 9 + 13 - 2;                          // PLAYER_R + SOURCE_R - 2 = 20 (closest collision allows)
+  w.player = [600 - stop, 300];
+  app._pickItem({ kind: 'connector', id: 'con_c' });
+  app.uiState.sel = 'con_c';
+  w.nodes['con_c'].pos = [...w.player];             // the carried device rides on her
+  ok(dist(w.player, w.nodes['ks'].pos) > 18, 'her centre is beyond the old HIT proximity (pass-through would miss)');
+  ok(!w.links.has(w._link_key('con_c', 'ks')), 'kiss-wire: no link yet');
+  app._drag = { active: true, kind: 'player', ref: null, moved: false, linkHit: null,
+                preSnap: app._captureState(), preSig: app._sig(), committed: false };
+  app._onMouseMove([600, 300], {});                 // drag INTO the source; collision keeps her short, the body kisses it
+  ok(w.links.has(w._link_key('con_c', 'ks')), 'kiss-wire: dragging her body into a source wires it');
+  app._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
+  clearHands(); w.links.clear(); w.remove_node('ks');
+}
 
 // Regression: the connector golden arrow still links a node on sweep.
 w.player = [445, 293];

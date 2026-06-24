@@ -114,6 +114,19 @@ export class Engine {
       const r = objType(f.kind)?.radius ?? CONN_R;
       for (const [s1,s2] of squareSegs(f.pos, r)) segs.push([s1,s2,null,f.id]);
     }
+    // Sources and receivers are material fixtures too — a beam passing THROUGH one
+    // toward something ELSE is stopped by standard obstacle rules. Each carries its
+    // own id as owner, so the owner filter in _beams_and_cross still lets a beam it
+    // is a genuine ENDPOINT of through unblocked (a source it emits from; a receiver
+    // it delivers to) — "what they actually take, they take" — while a THIRD fixture
+    // standing in the path cuts the beam at its near face. They never re-emit, so
+    // they always block any beam they are not an endpoint of. Level 0 (ground
+    // fixtures, like boxes / mines), so an elevated beam still passes over them.
+    for (const n of Object.values(w.nodes)) {
+      if (n.kind !== 'source' && n.kind !== 'receiver') continue;
+      const r = objType(n.kind)?.radius ?? CONN_R;
+      for (const [s1,s2] of squareSegs(n.pos, r)) segs.push([s1,s2,0,n.id]);
+    }
     if (w.player_block && w.player) {
       for (const [s1,s2] of squareSegs(w.player, PLAYER_R))
         segs.push([s1,s2,0,PLAYER_OWNER]);
@@ -1018,6 +1031,19 @@ export class Engine {
     return Math.max(0, b.dl - this.accumFootprintRadius(b.t));
   }
 
+  // A beam whose TARGET is a source or receiver stops at the fixture's OUTER
+  // CONTOUR, not its centre — so the ray never plunges into the body and no
+  // crossing is ever drawn inside it (the occlusion already keeps pass-through
+  // beams out; this trims the DELIVERING beam too). Returns the centre→contour
+  // length, or null when the target is not such a fixture. Delivery is unaffected
+  // (the fixture still takes the light — the beam is merely drawn to its surface).
+  _endpointBodyCap(b) {
+    const nt = this.world.nodes[b.t];
+    if (!nt || (nt.kind !== 'source' && nt.kind !== 'receiver')) return null;
+    const r = objType(nt.kind)?.radius ?? CONN_R;
+    return Math.max(0, b.dl - r);
+  }
+
   // ---- cut animation ----
   _animate_beams(beams, length, delivery, now = null) {
     if (now === null) now = performance.now() / 1000;
@@ -1045,6 +1071,10 @@ export class Engine {
       let vdeliv = full ? true : st.deliv;
       const cap = this._accumLayerCap(b);
       if (cap !== null && vlen > cap) { vlen = cap; vdeliv = false; }
+      // Trim a delivering beam to a source/receiver's outer contour (keeps the
+      // delivered look — the fixture is still fed; the ray just stops at its skin).
+      const bodyCap = this._endpointBodyCap(b);
+      if (bodyCap !== null && vlen > bodyCap) vlen = bodyCap;
       out.push([[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug]);
     }
     for (const key of [...this.beam_anim.keys()])
@@ -1156,6 +1186,8 @@ export class Engine {
       let vdeliv = full ? true : (L >= b.dl - 1e-6);
       const cap = this._accumLayerCap(b);
       if (cap !== null && vlen > cap) { vlen = cap; vdeliv = false; }
+      const bodyCap = this._endpointBodyCap(b);
+      if (bodyCap !== null && vlen > bodyCap) vlen = bodyCap;
       return [[...b.O], [b.O[0]+b.dx*vlen, b.O[1]+b.dy*vlen], b.color, vdeliv, b.tug];
     });
   }

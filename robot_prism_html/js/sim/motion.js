@@ -1,6 +1,6 @@
-import { PLAYER_R, BOX_R, CONN_R } from '../core/constants.js';
+import { PLAYER_R, BOX_R } from '../core/constants.js';
 import { first_block_t, dist, segments_cross, seg_seg_dist } from '../core/geometry.js';
-import { OBJECT_TYPES, isAccumulatorKind } from './objects.js';
+import { OBJECT_TYPES } from './objects.js';
 
 export class Motion {
   constructor(world, engine) {
@@ -159,22 +159,16 @@ export class Motion {
         return;   // non-pushable: the box simply stops the player
       }
     }
-    // Ground relays (connectors / inverters) are material and not pushable, too.
-    for (const c of w.relays()) {
-      if (c.id === w.carrying) continue;
-      if (dist(new_, c.pos) < PLAYER_R + CONN_R - 2) return;
-    }
-    // A charging accumulator grows a larger external body (its layer). While grown
-    // it stops the player like any solid object. (Actively SHOVING other objects /
-    // nudging itself off walls is deferred — see ACCUM_LAYER_* in constants.js.)
-    for (const a of w.carriable_nodes()) {
-      if (!isAccumulatorKind(a.kind) || a.id === w.carrying) continue;
-      const r = this.engine.accumFootprintRadius(a.id);
-      if (r > CONN_R && dist(new_, a.pos) < PLAYER_R + r - 2) return;
-    }
-    // Forges are material fixtures — they stop the player like any solid object.
-    for (const f of w.forges()) {
-      if (dist(new_, f.pos) < PLAYER_R + OBJECT_TYPES.forge.radius - 2) return;
+    // Every MATERIAL node stops the player: the carriable devices (connectors,
+    // inverters, mixers, mines, rewirers, jammers, and accumulators — idle OR
+    // charging, the grown layer included via its footprint radius), the forges,
+    // and the source / receiver fixtures. One loop over world.material_nodes()
+    // is the single source of truth, so a new material kind is solid for free.
+    // The carried object is in hand (not on the field), so it is skipped.
+    for (const n of w.material_nodes()) {
+      if (n.id === w.carrying) continue;
+      const r = w.nodeFootprintRadius(n.id);
+      if (dist(new_, n.pos) < PLAYER_R + r - 2) return;
     }
     if (this._static_blocked(old, new_, carry)) return;
     if (this._theft_blocked(old, new_, null, w.boxes)) return;

@@ -4,6 +4,7 @@
 import { World } from '../js/sim/world.js';
 import { Node, Wall, Barrier, ForceField } from '../js/core/entities.js';
 import { RAY_OCCLUSION, rayProfile, rayBlockerSegments } from '../js/sim/occlusion.js';
+import { RECEIVER_R } from '../js/core/constants.js';
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL:', m); } };
@@ -129,6 +130,76 @@ function scene() {
   w.solve(true);
   ok(!!e.lit['RR'], 'with A off the path, B\u2019s beam reaches RR');
   ok(!!e.lit['GR'], 'and the green chain is unaffected by A\u2019s move');
+}
+
+// ---------------------------------------------------------------------------
+// 5. Sources & receivers are OBSTACLES too: a fixture in a beam's path (toward
+//    something ELSE) blocks it by standard obstacle rules, while a beam that
+//    actually TARGETS a fixture still delivers — and a delivering beam stops at
+//    the fixture's OUTER CONTOUR, never plunging into the body.
+// ---------------------------------------------------------------------------
+// (A) A receiver standing between a connector and a farther receiver blocks the
+//     beam: the far one stays dark, and the (unwired) blocker takes nothing.
+{
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('RS', 'source',    [300, 100], { color: 'red' }));
+  w.add(new Node('C',  'connector', [300, 200]));
+  w.add(new Node('R1', 'receiver',  [300, 300], { color: 'red' }));   // the closer one (between)
+  w.add(new Node('R2', 'receiver',  [300, 430], { color: 'red' }));   // the farther one
+  w.toggle_link('RS', 'C'); w.toggle_link('C', 'R2');                 // C fires toward the FAR receiver
+  w.solve(true);
+  const e = w.engine;
+  ok(e.emit['C'] === 'red', 'the connector emits red toward the far receiver');
+  ok(!e.lit['R2'], 'the near receiver blocks the beam — the far receiver stays dark');
+  ok(!e.lit['R1'], 'the blocking receiver is a pure obstacle here (unwired → takes nothing)');
+
+  // Wire the near one too: it now TAKES the light — "what they actually take, they
+  // take" — yet the far one is still occluded by it.
+  w.toggle_link('C', 'R1');
+  w.solve(true);
+  ok(!!e.lit['R1'], 'wiring the near receiver lights it (delivery is unaffected by its solidity)');
+  ok(!e.lit['R2'], 'the far receiver is still occluded by the near one');
+
+  // Unwire the near one and slide it off the line → the far one finally lights.
+  w.toggle_link('C', 'R1');
+  w.nodes['R1'].pos = [500, 300];
+  w.solve(true);
+  ok(!!e.lit['R2'], 'with the blocker off the path, the far receiver lights');
+}
+
+// (B) A delivering beam stops at the receiver's OUTER CONTOUR (centre − r), not
+//     its centre, and is still drawn DELIVERED.
+{
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('S', 'source',    [100, 100], { color: 'red' }));
+  w.add(new Node('C', 'connector', [200, 100]));
+  w.add(new Node('R', 'receiver',  [400, 100], { color: 'red' }));
+  w.toggle_link('S', 'C'); w.toggle_link('C', 'R');
+  w.solve(true);
+  ok(!!w.engine.lit['R'], 'the receiver is fed (delivers)');
+  const beam = w.engine.beams_draw.find(([O]) => Math.abs(O[0] - 200) < 1 && Math.abs(O[1] - 100) < 1);
+  ok(!!beam, 'the connector\u2192receiver beam is drawn');
+  if (beam) {
+    const [, E, , deliv] = beam;
+    ok(Math.abs(E[0] - (400 - RECEIVER_R)) < 1.5,
+       `the beam stops at the receiver's outer contour (x\u2248${400 - RECEIVER_R}, got ${E[0].toFixed(1)})`);
+    ok(deliv === true, 'and it is still drawn as delivered');
+  }
+}
+
+// (C) A SOURCE in the path is an obstacle too (not just receivers).
+{
+  const w = new World(); w.player = null; w._uid = 1;
+  w.add(new Node('S',  'source',    [100, 100], { color: 'red' }));
+  w.add(new Node('C',  'connector', [200, 100]));
+  w.add(new Node('R',  'receiver',  [500, 100], { color: 'red' }));
+  w.add(new Node('SB', 'source',    [350, 100], { color: 'green' }));   // an unrelated source, in the path
+  w.toggle_link('S', 'C'); w.toggle_link('C', 'R');
+  w.solve(true);
+  ok(!w.engine.lit['R'], 'a source standing in the beam path blocks it (R dark)');
+  w.nodes['SB'].pos = [350, 400];
+  w.solve(true);
+  ok(!!w.engine.lit['R'], 'clearing the source restores delivery');
 }
 
 console.log(`\nocclusion tests: ${pass} passed, ${fail} failed`);

@@ -73,7 +73,7 @@ If you have Node.js available, `npx serve .` also works.
 | Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius and not on a valid target; a click outside the ring is just an aim and never drops |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
-| Drag the character while carrying a ready connector | Auto-wires to nodes it passes over (enables-only — it adds links, never un-wires) |
+| Drag the character while carrying a ready connector | Auto-wires to nodes her carried device **touches** (enables-only — it adds links, never un-wires) |
 | Click on an intent ray while carrying its device | Erases that intent; every ray in the small hit zone goes at once |
 | C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark |
 | Hold Shift | Make the targetable-item contours more visible (bright rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
@@ -100,6 +100,8 @@ Beyond the connector and the box, several devices live on the field:
   Wiring, boxes and buttons work as for any relay. A mixer automatically ranks **downstream** of whatever feeds it — you no longer place it at a manually higher rank. While it still has too few colours to combine it is *confused*, and a confused tool looks for food before it pushes back: it accepts incoming light from any direction until it can complete its mix, then settles above its feeders (see directionality below).
 
   This expands the palette to seven colours — the three primaries, the three secondaries, and white.
+
+Every carriable device, the Forge, and the **sources and receivers** are **solid** — the robot walks around them, not through them, and nothing may be set down overlapping one. They are also ordinary **light obstacles**: a beam aimed past a fixture toward something farther is stopped by any *other* fixture standing in its path (the one it actually targets still takes the light, and a delivering beam simply stops at that fixture's outer edge rather than passing into it).
 
 Light is **directional**: although links have no arrows, light flows *outward* from a source and never loops back upstream along a completed connection. A node's **rank** is set by what feeds it — a source is rank 0, and a relay sits one step below the weakest colour it consumes — and a higher-rank node won't send light back to a lower-rank one that already feeds it. Only when a wall sits between two linked nodes — so the connection is *incomplete* — do both ends radiate at it. Two relays of the **same rank** are peers: on a clear link each beam stops at the **midpoint** and feeds neither end. If they carry **different colours** the ray splits there into a two-tone clash; if they carry the **same colour** it is instead drawn as one smooth connected ray — but it still delivers nothing across (each peer is already lit by its own feed). The exception is a **confused** tool — one that has taken light but cannot yet make a valid output: it looks for food before it pushes back, so it accepts light from *any* direction (even a longer, weaker chain) until it completes, then re-ranks above its feeders. This lets an inverter or mixer pull in everything it needs without confusing itself or starving, and keeps combiner chains stable.
 
@@ -159,7 +161,7 @@ For wiring several links in one motion, **press and hold in the operating ring**
 
 What differs per object is *only* its data, declared in one spec in `js/sim/targeting.js`: how many intents it may hold, what it is allowed to target, and how an intent is stored, drawn, and cleared. Today:
 
-- **Connector** — many intents; targets sources / receivers / connectors. A click toggles a light link; the arrow and a character-drag add links on pass-over (never remove).
+- **Connector** — many intents; targets sources / receivers / connectors. A click toggles a light link; the golden arrow adds a link when its tip reaches a target, and a character-drag adds one the moment her carried device **touches** a target (never removes).
 - **Jammer** — one intent; targets a force field or a jammable node; a click sets the single target.
 - **Rewirer** — one intent; targets a source / receiver / connector; a click sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
 
