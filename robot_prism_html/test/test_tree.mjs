@@ -446,13 +446,32 @@ ok(w.links.size === jamLinksBefore, 'a carried jammer never auto-wires light lin
 clearHands(); w.links.clear(); w.jam_links.clear();
 app._drag = { active: false, kind: null, ref: null, moved: false, linkHit: null };
 
-// Regression: the connector golden arrow still toggles a light link.
+// Regression: the connector golden arrow still links a node on sweep.
 w.player = [445, 293];
 app._pickItem({ kind: 'connector', id: 'con_c' });
 app._startAimArrow();
 app._onMouseMove(w.nodes['src_g1'].pos.slice(), {});   // sweep onto a source
 ok(w.links.has(w._link_key('con_c', 'src_g1')), 'connector golden arrow still links nodes');
 app._onMouseUp(w.nodes['src_g1'].pos.slice(), {});
+clearHands(); w.links.clear(); w.jam_links.clear();
+
+// Enables-only: a sweep ADDS but never REMOVES. Sweeping onto an already-wired
+// node leaves it wired (it does not toggle off), and sweeping out and back in
+// keeps it wired. (A single click is still the way to remove a link.)
+w.player = [445, 293];
+app._pickItem({ kind: 'connector', id: 'con_c' });
+w.toggle_link('con_c', 'src_g1');                       // pre-existing link
+ok(w.links.has(w._link_key('con_c', 'src_g1')), 'enables-only: setup — link exists');
+app._startAimArrow();
+app._onMouseMove(w.nodes['src_g1'].pos.slice(), {});   // sweep onto the wired node
+ok(w.links.has(w._link_key('con_c', 'src_g1')), 'enables-only: a sweep onto a wired node does NOT remove it');
+app._onMouseMove([700, 100], {});                       // leave all targets
+app._onMouseMove(w.nodes['src_g1'].pos.slice(), {});   // re-enter the same node
+ok(w.links.has(w._link_key('con_c', 'src_g1')), 'enables-only: sweeping out and back in keeps it wired');
+app._onMouseUp(w.nodes['src_g1'].pos.slice(), {});
+// a single click, by contrast, still toggles the link off
+app._playClick(w.nodes['src_g1'].pos[0], w.nodes['src_g1'].pos[1]);
+ok(!w.links.has(w._link_key('con_c', 'src_g1')), 'enables-only: a single click still removes the link');
 clearHands(); w.links.clear(); w.jam_links.clear();
 
 // =========================================================================

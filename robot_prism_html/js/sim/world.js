@@ -122,6 +122,16 @@ export class World {
     if (this.links.has(key)) this.links.delete(key); else this.links.add(key);
   }
 
+  // Enables-only variant of toggle_link: adds the link if absent, but NEVER
+  // removes one. Used by the sweep gestures (golden arrow / character-drag), so a
+  // sweep can only ever turn links ON — re-crossing a wired node leaves it wired.
+  add_link(a, b) {
+    if (a === b || !this.nodes[a] || !this.nodes[b]) return;
+    const wireable = (k) => isRelay(k) || isAccumulatorKind(k);
+    if (!wireable(this.nodes[a].kind) && !wireable(this.nodes[b].kind)) return;
+    this.links.add(this._link_key(a, b));
+  }
+
   clear_links_of(nid) {
     for (const key of [...this.links])
       if (key.split('\x00').includes(nid)) this.links.delete(key);

@@ -17,16 +17,22 @@
  *               for clarity; `apply` is what actually enforces it.
  *   persistent   does marking record undoable world state (and re-run the sim)?
  *               A `false` device is "mark-only": it has no stored intent yet.
- *   sweep        how the golden arrow marks on pass-over: 'toggle' (link-style —
- *               re-entering a target flips it) or 'set' (last target wins). Omit
- *               for a device that does not mark on a sweep.
+ *   sweep        whether/how the device marks on pass-over (golden arrow or a
+ *               character-drag): 'toggle' (a link device — see `sweepApply`) or
+ *               'set' (last target wins). Omit for a device that does not sweep.
+ *               A sweep is ENABLES-ONLY: it never removes an intent. (Removal is
+ *               a single-click affordance via `apply` / an intent-ray click.)
  *   dragAutoWire may dragging the character past targets mark them too? (A
  *               connector convenience; off for everything else.)
  *   flash        optional key into STR.flash, shown after a successful mark.
  *   targetAt(world, deviceId, x, y) -> { id, pos } | null
  *               the targetable thing under the cursor; `pos` is where its ray ends.
  *   apply(world, deviceId, targetId)
- *               record the intent, honouring maxIntents.
+ *               record the intent (a single click); for a link device this TOGGLES.
+ *   sweepApply(world, deviceId, targetId)
+ *               OPTIONAL enables-only variant used by the sweep instead of `apply`
+ *               (a link device adds-without-removing); falls back to `apply` when
+ *               absent (a 'set' device's apply already only overwrites, never removes).
  *   intentRays(world) -> [{ from, to, key, owners, remove() }]
  *               every stored intent ray of THIS kind, globally, for click-delete.
  *               `key` dedupes a ray shared by two devices; `owners` lists the
@@ -103,6 +109,10 @@ function WIRE_SPEC({ kindsFor = () => WIRE_KINDS, dragAutoWire = true } = {}) {
       return n ? { id: n.id, pos: n.pos } : null;
     },
     apply(world, deviceId, targetId) { world.toggle_link(deviceId, targetId); },
+    // A sweep (golden arrow / character-drag) is enables-only: passing a node
+    // turns its link ON and never off, so re-crossing a wired node can't undo it.
+    // A single click still TOGGLES (via apply) — that is the way to remove a link.
+    sweepApply(world, deviceId, targetId) { world.add_link(deviceId, targetId); },
     // A light link can be wired regardless of obstruction (the beam simply will
     // not deliver through a wall) — so every wireable node is a reachable candidate.
     candidates(world, deviceId) {

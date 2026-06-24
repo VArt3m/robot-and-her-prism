@@ -732,15 +732,15 @@ export class App {
         w.nodes[cid].pos[0] = w.player[0];
         w.nodes[cid].pos[1] = w.player[1];
         // Auto-mark on pass-over while a device that opts into it (the connector)
-        // is "ready" (selected). Spec-driven: same targetAt/apply as the arrow,
-        // so a character-drag wires exactly what a sweep would. Other carried
-        // devices never auto-mark.
+        // is "ready" (selected). Spec-driven: same targetAt as the arrow, and the
+        // same enables-only sweep — a character-drag wires exactly what a golden-
+        // arrow sweep would, and never un-wires. Other carried devices never auto-mark.
         const dragSpec = targetSpec(this._carriedKind());
         if (dragSpec && dragSpec.dragAutoWire && ui.sel === cid) {
           const tgt = dragSpec.targetAt(w, cid, w.player[0], w.player[1]);
           const tid = tgt ? tgt.id : null;
           if (tid && tid !== this._drag.linkHit) {
-            dragSpec.apply(w, cid, tid);
+            (dragSpec.sweepApply || dragSpec.apply)(w, cid, tid);
             this._drag.linkHit = tid;
           } else if (!tid) {
             this._drag.linkHit = null;
@@ -775,13 +775,16 @@ export class App {
         const tgt = spec.targetAt(w, cid, x, y);
         const tid = tgt ? tgt.id : null;
         if (tid && tid !== this._drag.linkHit) {
-          if (!this._drag.committed && this._drag.preSnap) {
+          // Enables-only: a sweep adds but never removes (see WIRE_SPEC.sweepApply).
+          (spec.sweepApply || spec.apply)(w, cid, tid);
+          // Commit one undo point per drag, the first time it actually changes
+          // state (an enables-only sweep over an already-wired node is a no-op).
+          if (!this._drag.committed && this._drag.preSnap && this._sig() !== this._drag.preSig) {
             this._pushUndo(this._drag.preSnap); this._drag.committed = true;
           }
-          spec.apply(w, cid, tid);
           this._drag.linkHit = tid;
         } else if (!tid && spec.sweep === 'toggle') {
-          this._drag.linkHit = null;          // re-entering a target flips it again
+          this._drag.linkHit = null;          // left a target; re-entering re-adds (a no-op if already wired)
         }
       }
       ui.live = true; w.step(performance.now() / 1000);

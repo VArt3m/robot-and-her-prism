@@ -68,12 +68,12 @@ If you have Node.js available, `npx serve .` also works.
 | Hold the mouse (or E) ~1/3 s on a stack | Open a chooser to pick which item (top connector or the box) |
 | Take the box from under a connector | The connector de-elevates (drops to the ground) |
 | Click another item while carrying a targeting device | Makes (or toggles off) an intent toward it — a connector link, a jammer's jam mark, a rewirer's recolour target. This is the everyday way to target |
-| Press & hold in the operating ring (carrying a targeting device) | Draws the **golden arrow**; pull it onto a target and release to wire that intent. A handy sweep alternative to single clicks |
+| Press & hold in the operating ring (carrying a targeting device) | Draws the **golden arrow**; pull it onto a target and release to wire that intent. Sweeping is **enables-only** — it only ever adds links, never removes one (use a click to remove) |
 | F (or the panel's hidden **Program** button) | Program the carried device — opens its chooser, but only while standing in a **Forge**'s radius with uses left; each applied value spends one of that Forge's uses. **Escape** closes the menu for free |
 | Click while carrying | Drops the item at the shadow — but only when the click is **inside** the activation radius and not on a valid target; a click outside the ring is just an aim and never drops |
 | Disallowed stack (e.g. onto another connector) | Beep + "My hands are full", nothing happens |
 | Drag player | Walk toward cursor |
-| Drag the character while carrying a ready connector | Auto-wires to nodes it passes over |
+| Drag the character while carrying a ready connector | Auto-wires to nodes it passes over (enables-only — it adds links, never un-wires) |
 | Click on an intent ray while carrying its device | Erases that intent; every ray in the small hit zone goes at once |
 | C | Clear every intent of the carried targeting device — a connector's links, a jammer's jam mark |
 | Hold Shift | Make the targetable-item contours more visible (bright rings; dashed = no clear shot). Inverts the panel "Targets" toggle while held |
@@ -153,13 +153,13 @@ For wiring several links in one motion, **press and hold in the operating ring**
 
 **The targeting interaction is one shared framework**, identical for every object that can have targets — you never learn it twice. Any such object follows the same core:
 
-- a click on a target **makes / toggles** the intent (and the golden-arrow sweep does the same);
+- a click on a target **makes / toggles** the intent; the golden-arrow sweep (and a character-drag) does the same but **enables-only** — a sweep adds links and never removes one;
 - a click on one of the device's own **intent rays deletes** it (every ray in the small hit zone goes at once);
 - **C clears** every intent of the carried device.
 
 What differs per object is *only* its data, declared in one spec in `js/sim/targeting.js`: how many intents it may hold, what it is allowed to target, and how an intent is stored, drawn, and cleared. Today:
 
-- **Connector** — many intents; targets sources / receivers / connectors; a click (or the arrow, or a character-drag) toggles light links.
+- **Connector** — many intents; targets sources / receivers / connectors. A click toggles a light link; the arrow and a character-drag add links on pass-over (never remove).
 - **Jammer** — one intent; targets a force field or a jammable node; a click sets the single target.
 - **Rewirer** — one intent; targets a source / receiver / connector; a click sets the single target (a new mark overwrites the old). When its charge completes it recolours that target once and is spent. The single-intent-overwrite behaviour is the rewirer's own choice, not a framework assumption — the spec still declares its `maxIntents`, leaving room for a future object that must hold exactly two.
 

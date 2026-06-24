@@ -103,7 +103,7 @@ prefer the cheaper, deterministic cold solve.
 | `test_targeting` | 68 | Frameworks |
 | `test_programming` | 187 | Frameworks |
 | `test_integration` | 108 | UI / app |
-| `test_tree` | 89 | UI / app |
+| `test_tree` | 93 | UI / app |
 | `test_placement` | 70 | UI / app |
 | `test_highlight` | 31 | UI / app |
 | `test_levelselect` | 18 | UI / app |
