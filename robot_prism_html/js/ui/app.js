@@ -255,6 +255,10 @@ export class App {
     const snap = this._undo.pop();
     this._restoreState(snap);
     ui.sel = null;
+    // Drop carry previews — nothing clears them once `carrying` is gone, so a
+    // stale shadow/wire would keep drawing (a re-carried item repopulates next tick).
+    ui.placePreview = null;
+    ui.wireDrag = null;
     ui.live = true;
     this._pushRun = false;
     const left = this._undo.length;
